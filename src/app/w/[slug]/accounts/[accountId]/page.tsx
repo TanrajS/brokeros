@@ -13,6 +13,7 @@ import { ActivitySection } from "@/components/activity/ActivitySection";
 import { TasksSection } from "@/components/tasks/TasksSection";
 import { formatDate } from "@/lib/format";
 import { listAccountActivities, listAccountTasks } from "@/server/renewals/queries";
+import { countAccountClaims } from "@/server/lossRuns/queries";
 import { ACCOUNT_STATUS_LABELS } from "@/lib/constants";
 import { formatCurrency, formatInteger, titleCase } from "@/lib/format";
 import { getAccountDetail } from "@/server/accounts/queries";
@@ -33,7 +34,11 @@ export default async function AccountPage({ params }: { params: Params }) {
   const detail = await getAccountDetail(ws.id, accountId);
   if (!detail) notFound();
   const { account, contacts, policies } = detail;
-  const [tasks, activities] = await Promise.all([listAccountTasks(ws.id, account.id), listAccountActivities(ws.id, account.id)]);
+  const [tasks, activities, claimCount] = await Promise.all([
+    listAccountTasks(ws.id, account.id),
+    listAccountActivities(ws.id, account.id),
+    countAccountClaims(ws.id, account.id),
+  ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -59,7 +64,7 @@ export default async function AccountPage({ params }: { params: Params }) {
                 Edit
               </Link>
             </Button>
-            <DeleteAccountButton slug={slug} accountId={account.id} accountName={account.name} contactCount={contacts.length} policyCount={policies.length} />
+            <DeleteAccountButton slug={slug} accountId={account.id} accountName={account.name} contactCount={contacts.length} policyCount={policies.length} claimCount={claimCount} />
           </div>
         </div>
       </div>

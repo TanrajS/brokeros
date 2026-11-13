@@ -1,6 +1,6 @@
 /** Enumerations shared by the database schema, Zod schemas and the UI. */
 
-export const APP_VERSION = "v0.3";
+export const APP_VERSION = "v0.4";
 
 export const ACCOUNT_STATUSES = ["prospect", "active", "lost"] as const;
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
@@ -122,3 +122,8 @@ export const ACTIVITY_KIND_LABELS: Record<ActivityKind, string> = {
   outcome_recorded: "Outcome recorded",
   outcome_undone: "Outcome undone",
 };
+
+/* ---------- v0.4 Loss runs ---------- */
+
+export const CLAIM_STATUSES = ["open", "closed"] as const;
+export type ClaimStatus = (typeof CLAIM_STATUSES)[number];

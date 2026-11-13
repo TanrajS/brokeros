@@ -24,9 +24,10 @@ interface Props {
   accountName: string;
   contactCount: number;
   policyCount: number;
+  claimCount: number;
 }
 
-export function DeleteAccountButton({ slug, accountId, accountName, contactCount, policyCount }: Props) {
+export function DeleteAccountButton({ slug, accountId, accountName, contactCount, policyCount, claimCount }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
@@ -55,8 +56,8 @@ export function DeleteAccountButton({ slug, accountId, accountName, contactCount
         <AlertDialogHeader>
           <AlertDialogTitle>Delete {accountName}?</AlertDialogTitle>
           <AlertDialogDescription>
-            This also deletes its {contactCount} {contactCount === 1 ? "contact" : "contacts"} and {policyCount}{" "}
-            {policyCount === 1 ? "policy" : "policies"}. This cannot be undone.
+            This also deletes its {contactCount} {contactCount === 1 ? "contact" : "contacts"}, {policyCount} {policyCount === 1 ? "policy" : "policies"} and{" "}
+            {claimCount} {claimCount === 1 ? "claim" : "claims"}. This cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

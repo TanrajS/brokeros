@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.4 — Loss runs (2026-11-12)
+
+Loss runs: claims, CSV import, policy-year summary, trend and development, large loss and open claims.
+
+- **Placement** opens with an account picker, then tabs: Loss Runs (now),
+  Program (v0.5), Marketing (v0.6) and Strategy (v0.7), with placeholders.
+- **Claims** (new `claims` table, migration `0002_claims`): line, claim number,
+  loss and report dates, description, paid, reserved, status and an optional
+  linked policy. Incurred and the policy year are derived, never stored. Add,
+  edit and delete with validation. Closed claims with a reserve need
+  confirmation, and duplicate claim numbers are warned about and flagged.
+- **CSV import** with a downloadable template. Columns may be in any order and
+  are parsed in the browser with papaparse. A preview marks each row valid or
+  invalid with the reason. Only valid rows are imported, in one transaction,
+  with a result such as "Imported 23 of 25 rows; 2 skipped" and the skipped rows
+  listed.
+- **Policy-year summary** per account and line: the current year plus up to five
+  earlier ones, with claims, open claims, paid, reserved, incurred, earned
+  premium (earned to date for the running year), loss ratio, frequency (basis
+  labelled) and severity. Adds five-year total and average rows, a chart of
+  incurred with loss ratio on a second axis, and the table.
+- **Trend and development** (optional, off by default, kept in the URL): raw and
+  adjusted figures side by side, the active basis labelled, and the trend
+  exponent, age and factor shown per year.
+- **Large losses** with a threshold and cap (capped loss ratio beside the full
+  one), **open claims** by reserve, and a **data quality** panel.
+- **Demo book:** Harbourline Foods and Cedar Ridge Mechanical each have five GL
+  policy years (PY2022–PY2026) chained by previous-policy links, with 12 and 3
+  claims. A seed test checks Harbourline PY2023 (incurred $135,000, loss ratio
+  0.9643, severity $67,500, frequency 0.08 per $1M) and the five-year totals (12
+  claims, $305,000). The Bluewater umbrella prior term was removed and the
+  Kestrel and Greyhawk prior premiums lowered, so the Dashboard still shows
+  87.5% / 80.0% retention.
+- **Other changes:** Undo outcome now refuses when the renewal policy has claims.
+  Deleting an account says how many claims go with it. Export JSON includes
+  claims.
+
 ## v0.3 — Dashboard (2026-11-12)
 
 Dashboard: book, retention, expiring premium, revenue forecast, concentration.

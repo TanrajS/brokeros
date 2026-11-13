@@ -9,7 +9,7 @@ const items = [
   { href: "", label: "Book", icon: BookOpen },
   { href: "/renewals", label: "Renewals", icon: CalendarClock },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/placement", label: "Placement", icon: Briefcase, hint: "v0.4" },
+  { href: "/placement", label: "Placement", icon: Briefcase },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -20,10 +20,9 @@ export function WorkspaceNav({ slug }: { slug: string }) {
   return (
     <nav aria-label="Workspace" className="md:w-52 md:shrink-0">
       <ul className="flex gap-1 overflow-x-auto px-2 py-2 md:flex-col md:px-3 md:py-4">
-        {items.map(({ href, label, icon: Icon, ...rest }) => {
+        {items.map(({ href, label, icon: Icon }) => {
           const full = `${base}${href}`;
           const active = href === "" ? pathname === base || pathname.startsWith(`${base}/accounts`) : pathname.startsWith(full);
-          const hint = "hint" in rest ? rest.hint : undefined;
           return (
             <li key={label} className="shrink-0">
               <Link
@@ -36,7 +35,6 @@ export function WorkspaceNav({ slug }: { slug: string }) {
               >
                 <Icon className="size-4" aria-hidden="true" />
                 <span>{label}</span>
-                {hint ? <span className="ml-auto text-xs opacity-70">{hint}</span> : null}
               </Link>
             </li>
           );

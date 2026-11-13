@@ -11,7 +11,8 @@ describe("demo book through the dashboard", () => {
     const r = retention(policies, accounts, lookbackWindow(asOf, 12).value, asOf).value;
     // 8 renewed + 1 lost + 1 non-renewed = 10, none unresolved
     expect([r.resolvedCount, r.renewedCount, r.lostCount, r.nonRenewedCount, r.unresolvedCount]).toEqual([10, 8, 1, 1, 0]);
-    // renewed: 100,000 + 71,500 + 38,700 + 52,100 + 380,000 + 352,000 + 69,500 + 21,200 = 1,085,000
+    // renewed: Cedar 100,000 + Northfield 71,500 + Maple 38,700 + 52,100 + Kestrel 360,000 + Greyhawk 293,500
+    //          + Tidewater 21,200 + Harbourline PY2025 148,000 = 1,085,000
     expect(r.renewedExpiringPremium).toBe(1_085_000);
     // + lost 58,800 + non-renewed 96,200 = 1,240,000
     expect(r.resolvedPremium).toBe(1_240_000);

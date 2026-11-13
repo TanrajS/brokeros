@@ -68,7 +68,7 @@ before changing anything, and keep it current when the rules change.
 | Zod schemas | `src/lib/schemas/*.ts` (`z.input` = form strings, `z.output` = parsed values) |
 | Display formatting | `src/lib/format/` (returns `null` for missing, never a fake value) |
 | Enumerations | `src/lib/constants.ts` (shared by schema, Zod and UI) |
-| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of) and `demoBook.ts` (writes it) |
+| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` map it for tests |
 | Pages | `src/app/w/[slug]/…`; pages call `requireWorkspace(slug)` from `src/app/w/[slug]/lib.ts` |
 | UI components | `src/components/<area>/`; shadcn primitives in `src/components/ui/` |
 
@@ -150,12 +150,37 @@ before changing anything, and keep it current when the rules change.
   passing.
 - Charts: one series uses `#2a78d6`, columns ≤ 24px with 4px rounded tops,
   hairline grid, and always a table view with the same data and links. The
-  chart itself is `aria-hidden`.
+  chart itself is `aria-hidden`. A second series uses `#eb6834`.
+
+## Loss runs rules (v0.4)
+
+- **All loss-run logic is in `src/lib/domain/lossRuns.ts`** (`LRPolicy[]`,
+  `LRClaim[]`, as-of date in). `src/server/lossRuns/queries.ts` only maps rows.
+  Incurred and policy year are never stored.
+- **Policy periods** come from the account's policies in the line plus their
+  `previous_policy_id` chain; a claim belongs to the period with effective ≤
+  loss < expiry. Claims outside every period are flagged and excluded from year
+  summaries.
+- **CSV import validation is one function, `validateImportRows`**, used by the
+  client preview and re-run by the `importClaims` action, which inserts all valid
+  rows in one `withTransaction`. Never insert row by row outside a transaction.
+- Claims with a blank policy are auto-linked on save/import to the policy whose
+  term contains the loss date.
+- Undo outcome refuses when the successor has claims (`checkUndoOutcome`).
+- The demo seed's Harbourline and Cedar Ridge GL chains and claims are the
+  hand-verification cases (`src/server/db/seed/__tests__/demoBookLossRuns.test.ts`);
+  they must keep passing alongside the v0.3 retention test.
+- The loss-ratio chart uses a second y-axis because the spec asked for it; the
+  dataviz guidance discourages dual axes, so keep both axes starting at zero,
+  the legend naming each axis, and the table beneath.
+- Browser tests: React `<Activity>` can keep the previous page hidden inside the
+  same `<main>`; use `.filter({ visible: true })` when text may appear on both.
 
 ## Commands
 
 `npm run dev` · `npm run build` · `npm run typecheck` · `npm run lint` ·
 `npm test` · `npm run db:generate` · `npm run db:migrate` · `npm run db:seed`
 (`SEED_AS_OF=YYYY-MM-DD` fixes the as-of date; `SEED_WORKSPACE_SLUG=…` seeds an
-existing empty workspace). Browser smoke tests: `scripts/e2e-renewals.cjs`, `scripts/e2e-dashboard.cjs`
+existing empty workspace). Browser smoke tests: `scripts/e2e-renewals.cjs`, `scripts/e2e-dashboard.cjs`,
+`scripts/e2e-lossruns.cjs`
 (see its header; Playwright is not a dependency).

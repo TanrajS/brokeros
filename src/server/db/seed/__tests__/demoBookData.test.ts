@@ -75,7 +75,7 @@ describe("buildDemoBook", () => {
     expect(a.industry).toBe("manufacturing");
     expect(a.annualRevenue).toBe(25_000_000);
     expect(a.employeeCount).toBe(210);
-    const gl = a.policies.find((p) => p.lineOfBusiness === "General Liability")!;
+    const gl = a.policies.find((p) => p.lineOfBusiness === "General Liability" && !p.priorTerm)!;
     expect(gl.occurrenceLimit).toBe(1_000_000);
     expect(gl.aggregateLimit).toBe(2_000_000);
     expect(gl.deductible).toBe(10_000);
@@ -121,18 +121,19 @@ describe("buildDemoBook — v0.2 renewals data", () => {
     expect(m.sentence).toBe("Premium rose 8.0% while exposure rose 15.0%, so the rate fell 6.1%.");
   });
 
-  it("carries 11 outcomes: 8 renewed with successors, 2 lost to price, 1 non-renewed", () => {
+  it("carries 17 outcomes: 14 renewed with successors, 2 lost to price, 1 non-renewed", () => {
+    // v0.4 adds 7 historical GL renewals (Harbourline PY2022–PY2025, Cedar Ridge PY2022–PY2024)
     const withOutcome = allPolicies.filter((p) => p.outcome);
-    expect(withOutcome).toHaveLength(11);
+    expect(withOutcome).toHaveLength(17);
     const renewed = withOutcome.filter((p) => p.outcome!.type === "renewed");
-    expect(renewed).toHaveLength(8);
+    expect(renewed).toHaveLength(14);
     expect(withOutcome.filter((p) => p.outcome!.type === "non_renewed")).toHaveLength(1);
     for (const r of renewed) {
       const o = r.outcome as { successorKey: string };
       const successor = allPolicies.find((p) => p.key === o.successorKey)!;
       expect(successor.previousKey).toBe(r.key);
-      // successors start not_started; older ones have since moved to in_progress
-      expect(["not_started", "in_progress"]).toContain(successor.renewalStatus);
+      // successors start not_started; older ones have moved on, and in a multi-year chain have renewed themselves
+      expect(["not_started", "in_progress", "renewed"]).toContain(successor.renewalStatus);
       expect(successor.effectiveDate).toBe(r.expiryDate);
     }
     const lost = withOutcome.filter((p) => p.outcome!.type === "lost");
@@ -164,7 +165,7 @@ describe("buildDemoBook — v0.2 renewals data", () => {
     const overdueByPolicy = allPolicies.filter((p) => p.tasks.some((t) => isTaskOverdue(asOf, t.dueDate, t.done).value));
     expect(overdueByPolicy.length).toBeGreaterThanOrEqual(4);
     // Harbourline GL: expiry +60, "Submit to market" due 60 − 90 = −30 days and not done → overdue
-    const harbour = allPolicies.find((p) => p.account === "Harbourline Foods Inc." && p.lineOfBusiness === "General Liability")!;
+    const harbour = allPolicies.find((p) => p.account === "Harbourline Foods Inc." && p.lineOfBusiness === "General Liability" && !p.priorTerm)!;
     const submit = harbour.tasks.find((t) => t.title === "Submit to market")!;
     expect(daysBetween(asOf, submit.dueDate).value).toBe(-30);
     expect(isTaskOverdue(asOf, submit.dueDate, submit.done).value).toBe(true);
@@ -180,7 +181,7 @@ describe("buildDemoBook — v0.2 renewals data", () => {
 
   it("writes an activity for each outcome and the completed checklist", () => {
     const acts = book.flatMap((a) => a.activities);
-    expect(acts.filter((a) => a.kind === "outcome_recorded")).toHaveLength(11);
+    expect(acts.filter((a) => a.kind === "outcome_recorded")).toHaveLength(17);
     expect(acts.filter((a) => a.kind === "checklist_complete")).toHaveLength(1);
   });
 });

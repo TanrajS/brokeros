@@ -8,8 +8,10 @@ can be built on top of numbers that are stable, explainable and testable.
 Version 0.1 laid the foundation: shared workspaces, the book, account and policy
 management, a fictional demo book and settings. Version 0.2 added the Renewals
 module: a stage board, readiness checklists, tasks, an activity log, renewal
-outcomes and rate-change math. Version 0.3 adds the Dashboard: the book in
+outcomes and rate-change math. Version 0.3 added the Dashboard: the book in
 force, retention, expiring premium, a revenue forecast and concentration.
+Version 0.4 opens Placement with Loss Runs: claims, CSV import and a
+policy-year summary with loss ratio, frequency and severity.
 
 ## Local setup
 
@@ -183,6 +185,61 @@ Each carrier's, line's and account's share of in-force premium. A carrier
 above 35% or an account above 15% is noted as a revenue risk to the brokerage,
 not a verdict on the carrier or client.
 
+### Loss runs
+
+Claims are recorded per account with paid and reserved amounts. **Incurred =
+paid + reserved**; it is always computed, never stored.
+
+- **Policy-year assignment.** For a claim's line, the account's policy periods
+  are its policies in that line plus any policy reached through
+  `previous_policy_id` links. A claim belongs to the period whose term contains
+  its date of loss: effective date ≤ date of loss < expiry date (a loss on the
+  expiry date belongs to the next term). The period is labelled by its effective
+  year, for example "PY2024: 2024-01-11 to 2025-01-11". If periods overlap, the
+  claim's linked policy wins, otherwise the latest. A claim no period contains is
+  kept but flagged "outside known policy periods" and left out of the year
+  summaries until it is fixed.
+- **Years shown.** The current policy year (the one containing the as-of date)
+  and up to five before it. Totals and averages cover the five most recent years,
+  the current one included. Periods that start after the as-of date are left out.
+- **Earned premium** is the year's policy premium. For the running year it is
+  pro-rated by days elapsed: premium × (days from effective date to as-of date ÷
+  days in the term), labelled "earned to date".
+- **Loss ratio** = incurred ÷ earned premium.
+- **Frequency** = claims ÷ exposure units, where a unit is $1M of revenue or
+  payroll, or 100 employees or vehicles. Other bases (square feet, other) show no
+  frequency. The running year's exposure is pro-rated like its premium.
+- **Severity** = incurred ÷ claim count, an em dash when there are no claims.
+- On the **average** row, counts and dollars are the five-year totals ÷ the
+  number of years; loss ratio, frequency and severity are the five-year
+  aggregates (total ÷ total), not averages of the yearly ratios.
+- **Trend** (optional, off by default): trended incurred = incurred × (1 + trend)
+  ^ (prospective year − policy year). The prospective year is the renewal year,
+  the year in which the current term expires.
+- **Development** (optional, off by default): developed incurred = incurred ×
+  the factor for the policy year's age. Age is whole months from the policy
+  year's effective date to the as-of date, bucketed down to 12, 24, 36, 48 or
+  60+; anything under 24 months uses the 12-month factor. Factors come from the
+  carrier or an actuary and are entered, not calculated. With both on: incurred ×
+  trend factor × development factor. Example: 100,000 at 5% trend over two years
+  is 110,250; with a 1.15 factor, 126,787.50.
+- **Large losses** are claims at or above the threshold (default $25,000), shown
+  with their share of five-year incurred. **Capped incurred** = Σ min(incurred,
+  cap), with the cap defaulting to the threshold; the capped loss ratio sits
+  beside the full one.
+- **Open claims** are sorted by reserve, with total open reserves and their share
+  of the line's total incurred.
+- **Validation and flags.** Paid and reserved must be non-negative. The report
+  date must be on or after the loss date and not after the as-of date. A closed
+  claim with a reserve is allowed only after confirming it (reopened files
+  exist). Duplicate claim numbers on an account are allowed but flagged. The data
+  quality panel lists claims outside policy periods, duplicates, closed with a
+  reserve, reported before the loss, or dated after the as-of date.
+- **CSV import** takes the template columns in any order. Every row is checked
+  for missing or malformed dates (YYYY-MM-DD), future dates, an unknown line,
+  missing or non-numeric amounts, an unknown status and duplicate numbers. Only
+  valid rows are imported, all in one database transaction.
+
 ## Changelog
 
 v0.1 — Foundation: workspaces, accounts, contacts, policies, demo book, settings.
@@ -190,5 +247,7 @@ v0.1 — Foundation: workspaces, accounts, contacts, policies, demo book, settin
 v0.2 — Renewals: stages, readiness checklist, tasks, activities, outcomes, rate change math.
 
 v0.3 — Dashboard: book, retention, expiring premium, revenue forecast, concentration.
+
+v0.4 — Loss runs: claims, CSV import, policy-year summary, trend and development, large loss and open claims.
 
 Full details in [CHANGELOG.md](CHANGELOG.md).

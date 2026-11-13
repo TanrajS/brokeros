@@ -70,7 +70,7 @@ const main = (page) => page.locator("main:visible");
   await page.waitForURL(/dir=desc/);
   await main(page).locator("tbody tr").first().waitFor();
   const firstDesc = await main(page).locator("tbody tr").first().locator("td").nth(5).innerText();
-  check("list sorts by days to expiry both ways", /-350/.test(firstAsc) && /4\d\d|3\d\d/.test(firstDesc), `${firstAsc.trim()} then ${firstDesc.trim()}`);
+  check("list sorts by days to expiry both ways", /^-\d{3,4} days/.test(firstAsc.trim()) && /4\d\d|3\d\d/.test(firstDesc), `${firstAsc.trim()} then ${firstDesc.trim()}`);
 
   // Cedar rate example on first load
   await page.goto(`${BASE}/w/${SEED}/renewals?view=list&stage=120-day%3A+Strategy`);
@@ -106,7 +106,8 @@ const main = (page) => page.locator("main:visible");
   await main(w).getByRole("link", { name: "Harbourline Foods Inc." }).click();
   await main(w).getByRole("heading", { name: "Harbourline Foods Inc." }).waitFor();
   const accountUrl = w.url();
-  await main(w).locator("tr", { hasText: "General Liability" }).getByRole("link", { name: "Dominion Shield Insurance", exact: true }).click();
+  // v0.4: Harbourline has five GL policy years; take the current one (60 days out)
+  await main(w).locator("tr", { hasText: "General Liability" }).filter({ hasText: "60 days" }).getByRole("link", { name: "Dominion Shield Insurance", exact: true }).click();
   await w.waitForURL(/\/policies\/[0-9a-f-]{36}$/);
   const policyUrl = w.url();
 
@@ -158,7 +159,10 @@ const main = (page) => page.locator("main:visible");
 
   // Successor page: not_started, prior-term panel
   await main(w).getByRole("link", { name: "Open the renewal policy" }).click();
-  await main(w).getByText("Prior term vs this term").waitFor();
+  // v0.4: the expiring policy has its own prior term, so wait for the URL, not the panel title
+  await w.waitForURL((u) => u.toString() !== policyUrl);
+  // Activity keeps the previous page hidden inside the same <main>; match only the visible panel
+  await main(w).getByText("Prior term vs this term").filter({ visible: true }).waitFor();
   check("successor shows Not started and links back", (await main(w).getByText("Not started", { exact: true }).count()) >= 1);
   const successorUrl = w.url();
 
@@ -173,6 +177,7 @@ const main = (page) => page.locator("main:visible");
 
   // Successor gets its own outcome → undo on the original is refused
   await w.goto(successorUrl);
+  await w.waitForLoadState("networkidle");
   await main(w).getByRole("button", { name: "Record outcome" }).click();
   await w.getByRole("dialog").getByLabel("Lost").check();
   await w.getByRole("dialog").getByLabel("Reason").selectOption("price");

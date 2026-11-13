@@ -7,9 +7,9 @@
  *  - created_at / updated_at: timestamps with time zone
  *  - money: numeric(14,2); rates: numeric(6,3); calendar dates: date (YYYY-MM-DD strings)
  *
- * v0.2 added checklist_items, tasks, activities and renewal_outcomes. Later
- * versions add claims, tower_layers, contract_requirements, certificates,
- * submissions, quotes and quote_options via new migrations.
+ * v0.2 added checklist_items, tasks, activities and renewal_outcomes; v0.4
+ * added claims. Later versions add tower_layers, contract_requirements,
+ * certificates, submissions, quotes and quote_options via new migrations.
  * Keep the helper column factories below so those tables stay consistent.
  */
 import { relations, sql } from "drizzle-orm";
@@ -31,6 +31,7 @@ import {
   ACCOUNT_STATUSES,
   ACTIVITY_KINDS,
   CHECKLIST_SOURCES,
+  CLAIM_STATUSES,
   ENDORSEMENTS,
   LOST_REASONS,
   OUTCOME_TYPES,
@@ -48,6 +49,7 @@ export const checklistSourceEnum = pgEnum("checklist_source", CHECKLIST_SOURCES)
 export const activityKindEnum = pgEnum("activity_kind", ACTIVITY_KINDS);
 export const outcomeTypeEnum = pgEnum("outcome_type", OUTCOME_TYPES);
 export const lostReasonEnum = pgEnum("lost_reason", LOST_REASONS);
+export const claimStatusEnum = pgEnum("claim_status", CLAIM_STATUSES);
 
 /** Column helpers so every table shares the same audit columns and types. */
 const timestamps = {
@@ -240,6 +242,43 @@ export const renewalOutcomes = pgTable(
   (t) => [uniqueIndex("renewal_outcomes_policy_uq").on(t.policyId), index("renewal_outcomes_workspace_idx").on(t.workspaceId)],
 );
 
+/* ---------- v0.4 Loss runs ---------- */
+
+/**
+ * Claims from loss runs. Incurred (paid + reserved) and the policy year are
+ * derived in src/lib/domain/lossRuns.ts and never stored. Claim numbers are not
+ * unique: duplicates are allowed and flagged.
+ */
+export const claims = pgTable(
+  "claims",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    /** Optional link to the account's policy in the same line; kept when the policy is deleted. */
+    policyId: uuid("policy_id").references(() => policies.id, { onDelete: "set null" }),
+    lineOfBusiness: lineOfBusinessEnum("line_of_business").notNull(),
+    claimNumber: text("claim_number").notNull(),
+    dateOfLoss: date("date_of_loss", { mode: "string" }).notNull(),
+    dateReported: date("date_reported", { mode: "string" }).notNull(),
+    description: text("description"),
+    paid: money("paid").notNull(),
+    reserved: money("reserved").notNull(),
+    status: claimStatusEnum("status").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    index("claims_account_line_idx").on(t.accountId, t.lineOfBusiness),
+    index("claims_account_number_idx").on(t.accountId, t.claimNumber),
+    index("claims_policy_idx").on(t.policyId),
+    index("claims_workspace_idx").on(t.workspaceId),
+  ],
+);
+
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   accounts: many(accounts),
   contacts: many(contacts),
@@ -276,3 +315,4 @@ export type ChecklistItem = typeof checklistItems.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Activity = typeof activities.$inferSelect;
 export type RenewalOutcome = typeof renewalOutcomes.$inferSelect;
+export type Claim = typeof claims.$inferSelect;

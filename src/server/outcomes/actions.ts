@@ -15,7 +15,7 @@ import {
 } from "@/lib/schemas/outcome";
 import { describeFailure, fail, fieldErrorsFromZod, ok, type ActionResult } from "@/server/actionResult";
 import { getDb } from "@/server/db/client";
-import { policies, renewalOutcomes, type Policy, type Workspace } from "@/server/db/schema";
+import { claims, policies, renewalOutcomes, type Policy, type Workspace } from "@/server/db/schema";
 import { withTransaction, type Executor } from "@/server/db/tx";
 import { logActivities, policyLabel } from "@/server/renewals/activityLog";
 import { syncStages } from "@/server/renewals/stages";
@@ -208,8 +208,8 @@ export async function undoOutcome(slug: string, policyId: string): Promise<Actio
         const [successor] = await tx.select().from(policies).where(eq(policies.id, outcome.successorPolicyId)).for("update");
         if (successor) {
           const own = await tx.select({ id: renewalOutcomes.id }).from(renewalOutcomes).where(eq(renewalOutcomes.policyId, successor.id));
-          // No claims table exists yet (it arrives in a later version), so the claim count is 0 for now.
-          const check = checkUndoOutcome({ successorHasOutcome: own.length > 0, successorClaimCount: 0 }).value;
+          const successorClaims = await tx.select({ id: claims.id }).from(claims).where(eq(claims.policyId, successor.id));
+          const check = checkUndoOutcome({ successorHasOutcome: own.length > 0, successorClaimCount: successorClaims.length }).value;
           if (!check.allowed) throw new OutcomeRefused(check.reason ?? "The renewal policy cannot be removed.");
           await tx.delete(policies).where(eq(policies.id, successor.id));
           successorNote = ` Removed the renewal policy with ${successor.carrier} (${successor.effectiveDate} to ${successor.expiryDate}).`;

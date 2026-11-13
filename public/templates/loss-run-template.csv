@@ -1,0 +1,3 @@
+claim_number,line,date_of_loss,date_reported,description,paid,reserved,status
+EX-GL-0001,General Liability,2025-03-14,2025-03-21,Visitor slipped on a wet floor,"8,000",0,closed
+EX-GL-0002,General Liability,2025-08-27,2025-09-08,Product recall costs claimed by a distributor,30000,90000,open

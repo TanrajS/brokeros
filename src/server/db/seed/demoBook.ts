@@ -129,6 +129,23 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
   ]);
   if (taskRows.length > 0) await db.insert(schema.tasks).values(taskRows);
 
+  const claimRows = book.flatMap((a) =>
+    a.claims.map((c) => ({
+      workspaceId,
+      accountId: accountIds.get(a.name)!,
+      policyId: pid(c.policyKey),
+      lineOfBusiness: c.lineOfBusiness,
+      claimNumber: c.claimNumber,
+      dateOfLoss: c.dateOfLoss,
+      dateReported: c.dateReported,
+      description: c.description,
+      paid: c.paid,
+      reserved: c.reserved,
+      status: c.status,
+    })),
+  );
+  if (claimRows.length > 0) await db.insert(schema.claims).values(claimRows);
+
   const activityRows = book.flatMap((a) =>
     a.activities.map((x) => ({
       workspaceId,
