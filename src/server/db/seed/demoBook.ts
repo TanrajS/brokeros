@@ -4,7 +4,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { NeonHttpDatabase } from "drizzle-orm/neon-http";
-import { daysBetween } from "@/lib/domain/dates";
+import { addDays, daysBetween } from "@/lib/domain/dates";
 import { getRenewalStage } from "@/lib/domain/renewals";
 import type { ISODate } from "@/lib/domain/types";
 import * as schema from "../schema";
@@ -79,6 +79,8 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
       notes: p.notes,
       // Seeded silently: stage changes are only logged when they happen later.
       lastLoggedStage: getRenewalStage(daysBetween(asOf, p.expiryDate).value, p.renewalStatus).value,
+      insurableValue: p.insurableValue,
+      coinsurancePercent: p.coinsurancePercent,
     })),
   );
   // Predecessors first so the self-referencing foreign key is always satisfied.
@@ -145,6 +147,43 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
     })),
   );
   if (claimRows.length > 0) await db.insert(schema.claims).values(claimRows);
+
+  const participantRows = book.flatMap((a) => a.policies.flatMap((p) => p.participants.map((x) => ({ workspaceId, policyId: pid(p.key), ...x, notes: null }))));
+  if (participantRows.length > 0) await db.insert(schema.policyParticipants).values(participantRows);
+  const sublimitRows = book.flatMap((a) => a.policies.flatMap((p) => p.sublimits.map((x) => ({ workspaceId, policyId: pid(p.key), ...x, notes: null }))));
+  if (sublimitRows.length > 0) await db.insert(schema.policySublimits).values(sublimitRows);
+
+  const layerRows = book.flatMap((a) =>
+    a.towerLayers.map((t) => ({
+      workspaceId,
+      accountId: accountIds.get(a.name)!,
+      lineGroup: t.lineGroup,
+      layerType: t.layerType,
+      attachment: t.attachment,
+      limit: t.limit,
+      premium: t.premium,
+      carrier: t.carrier,
+      policyId: t.policyKey ? pid(t.policyKey) : null,
+    })),
+  );
+  if (layerRows.length > 0) await db.insert(schema.towerLayers).values(layerRows);
+
+  const requirementRows = book.flatMap((a) => a.requirements.map((r) => ({ workspaceId, accountId: accountIds.get(a.name)!, ...r })));
+  if (requirementRows.length > 0) await db.insert(schema.contractRequirements).values(requirementRows);
+
+  const certificateRows = book.flatMap((a) =>
+    a.certificates.map((c) => ({
+      workspaceId,
+      accountId: accountIds.get(a.name)!,
+      holder: c.holder,
+      operationsDescription: c.operationsDescription,
+      coverages: c.coverages,
+      requiredBy: c.requiredByOffset === null ? null : addDays(asOf, c.requiredByOffset).value,
+      issuedOn: c.issuedOnOffset === null ? null : addDays(asOf, c.issuedOnOffset).value,
+      notes: null,
+    })),
+  );
+  if (certificateRows.length > 0) await db.insert(schema.certificates).values(certificateRows);
 
   const activityRows = book.flatMap((a) =>
     a.activities.map((x) => ({

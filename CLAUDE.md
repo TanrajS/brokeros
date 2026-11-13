@@ -68,7 +68,7 @@ before changing anything, and keep it current when the rules change.
 | Zod schemas | `src/lib/schemas/*.ts` (`z.input` = form strings, `z.output` = parsed values) |
 | Display formatting | `src/lib/format/` (returns `null` for missing, never a fake value) |
 | Enumerations | `src/lib/constants.ts` (shared by schema, Zod and UI) |
-| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` map it for tests |
+| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` / `demoBookProgram.ts` map it for tests |
 | Pages | `src/app/w/[slug]/…`; pages call `requireWorkspace(slug)` from `src/app/w/[slug]/lib.ts` |
 | UI components | `src/components/<area>/`; shadcn primitives in `src/components/ui/` |
 
@@ -176,11 +176,34 @@ before changing anything, and keep it current when the rules change.
 - Browser tests: React `<Activity>` can keep the previous page hidden inside the
   same `<main>`; use `.filter({ visible: true })` when text may appear on both.
 
+## Program rules (v1)
+
+- **All program logic is in `src/lib/domain/program.ts`**: `analyzeTower`,
+  `checkRequirements`, `certificateStatus`, `coinsurancePayment`,
+  `analyzeParticipation`. `src/server/program/queries.ts` maps rows with
+  `toProgramPolicy` / `toTowerInput` / `toRequirementInput` /
+  `toCertificateInput`; the Program page does the computing.
+- **Certificate status is derived, never stored.** `listCertificatesDue` feeds
+  the Renewals panel; `listAccountCertificates` the Account page.
+- **The checker uses current terms only** (no successor, expiry after as-of)
+  and the selected line group's tower for umbrella/excess limits. Umbrella never
+  counts toward an aggregate.
+- **Checker and adequacy never say compliant / adequate.** Labels are Meets,
+  Shortfall $X, Missing coverage, or the arithmetic; the decision is the user's.
+- **Tower diagram:** blocks are `flex: span 1 0%` so one markup works as a
+  column (md+) and a row (mobile); gaps hatched red, overlaps amber; the table
+  beside carries every figure.
+- **Participants and sub-limits** cascade with their policy. The policy's own
+  `carrier` is the lead insurer; participants are the full schedule.
+- The demo program cases (Harbourline tower/contract/certificates, Cedar gap and
+  adequacy, Kestrel participants) are checked in
+  `src/server/db/seed/__tests__/demoBookProgram.test.ts`.
+
 ## Commands
 
 `npm run dev` · `npm run build` · `npm run typecheck` · `npm run lint` ·
 `npm test` · `npm run db:generate` · `npm run db:migrate` · `npm run db:seed`
 (`SEED_AS_OF=YYYY-MM-DD` fixes the as-of date; `SEED_WORKSPACE_SLUG=…` seeds an
 existing empty workspace). Browser smoke tests: `scripts/e2e-renewals.cjs`, `scripts/e2e-dashboard.cjs`,
-`scripts/e2e-lossruns.cjs`
+`scripts/e2e-lossruns.cjs`, `scripts/e2e-program.cjs`
 (see its header; Playwright is not a dependency).

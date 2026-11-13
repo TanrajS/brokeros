@@ -128,6 +128,8 @@ export async function recordRenewedOutcome(slug: string, policyId: string, input
         renewalStatus: "not_started",
         previousPolicyId: old.id,
         notes: null,
+        insurableValue: old.insurableValue,
+        coinsurancePercent: old.coinsurancePercent,
       })
       .returning({ id: policies.id });
     return {

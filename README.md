@@ -10,8 +10,10 @@ management, a fictional demo book and settings. Version 0.2 added the Renewals
 module: a stage board, readiness checklists, tasks, an activity log, renewal
 outcomes and rate-change math. Version 0.3 added the Dashboard: the book in
 force, retention, expiring premium, a revenue forecast and concentration.
-Version 0.4 opens Placement with Loss Runs: claims, CSV import and a
-policy-year summary with loss ratio, frequency and severity.
+Version 0.4 opened Placement with Loss Runs: claims, CSV import and a
+policy-year summary with loss ratio, frequency and severity. Version 1 adds the
+Program tab: tower analysis, a contract requirements checker, certificates of
+insurance and property adequacy, plus co-insurers and sub-limits on policies.
 
 ## Local setup
 
@@ -240,6 +242,60 @@ paid + reserved**; it is always computed, never stored.
   missing or non-numeric amounts, an unknown status and duplicate numbers. Only
   valid rows are imported, all in one database transaction.
 
+### Program: tower, contract requirements, certificates, adequacy
+
+- **Tower layers** are the primary, umbrella and excess layers of a casualty
+  program (General Liability or Commercial Auto, each with Umbrella/Excess).
+  Layers are sorted by attachment. For each layer, **exhaustion** = attachment
+  + limit; **rate on line** = premium ÷ limit (shown as a percent); **premium
+  per $1M** = premium ÷ limit × 1,000,000; **relative rate** = this layer's rate
+  on line ÷ the primary's.
+- A **gap** is where a layer attaches above the exhaustion of the layer below
+  it; the gap size is attachment − exhaustion below. An **overlap** is where a
+  layer attaches below that exhaustion; the overlap size is exhaustion below −
+  attachment. The tower is **continuous** only with no gaps or overlaps, and
+  only then does it have a total limit (the sum of the limits). A primary that
+  attaches above zero and a layer whose rate on line exceeds the layer below it
+  are flagged as worth a question, not as errors.
+- **Contract requirements** compare each required coverage with the account's
+  current policies. Provided per-occurrence and aggregate limits are the largest
+  found among policies in that line; endorsements are the union of the line's
+  endorsements. **Shortfall** = required − provided (never below zero). Status is
+  Meets, Shortfall or Missing coverage (no policy in the line). Workers
+  Compensation is statutory: it is met by having a policy. An Umbrella/Excess
+  requirement is met by the tower's umbrella and excess layers (or an umbrella
+  policy).
+- **Counting the umbrella** is an option, off by default: when on, the tower's
+  umbrella and excess limits are added to the primary's per-occurrence limit for
+  the comparison. They never count toward an aggregate requirement. Whether a
+  contract accepts an umbrella toward its limit is contract-specific, so both
+  bases are shown and the decision is left to you.
+- **Certificates of insurance** have a derived status, never stored:
+  **Requested** until an issue date is set (and the required-by date has not
+  passed); **Expired** when the required-by date is before the as-of date and no
+  certificate was issued; **Issued** while every underlying policy (the policies
+  in the requested lines that were in force on the issue date) is still in force
+  at the as-of date with no successor; **Reissue needed** once any underlying
+  policy has expired, has been renewed with a successor policy, or a requested
+  line had no policy in force on the issue date. Issue and Reissue stamp the
+  as-of date. The Renewals page lists every certificate needing reissue.
+- **Property adequacy (coinsurance):** required limit = insurable value ×
+  coinsurance percent. If the limit carried is at least the required limit, the
+  insurer pays min(loss, carried) − deductible. Otherwise it pays (carried ÷
+  required) × loss − deductible, capped at the carried limit. Payment never goes
+  below zero. The client absorbs loss − payment; the penalty share is 1 −
+  carried ÷ required; the additional limit needed is required − carried.
+  Example: $1,000,000 value at 80% with $600,000 carried, a $100,000 loss and a
+  $5,000 deductible: required $800,000, payment (600,000 ÷ 800,000) × 100,000 −
+  5,000 = $70,000, client absorbs $30,000, $200,000 more limit needed.
+- **Larger placements:** a policy can list the insurers sharing it, each with a
+  role (lead or follow), signed line (percent of the placement) and premium
+  share. Signed lines should total 100%; the app flags short or over-placement
+  and premiums that do not add up to the policy premium. Share of limit = limit
+  × signed line; rate on line = premium ÷ share of limit. A policy can also list
+  sub-limits with their own deductibles; the policy's limit and deductible stay
+  the defaults for everything not listed.
+
 ## Changelog
 
 v0.1 — Foundation: workspaces, accounts, contacts, policies, demo book, settings.
@@ -249,5 +305,7 @@ v0.2 — Renewals: stages, readiness checklist, tasks, activities, outcomes, rat
 v0.3 — Dashboard: book, retention, expiring premium, revenue forecast, concentration.
 
 v0.4 — Loss runs: claims, CSV import, policy-year summary, trend and development, large loss and open claims.
+
+v1 — Program: tower analysis, contract requirements checker, certificates, property adequacy. Additional updates to support large policies.
 
 Full details in [CHANGELOG.md](CHANGELOG.md).

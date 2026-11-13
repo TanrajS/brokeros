@@ -34,6 +34,8 @@ export default async function EditPolicyPage({ params }: { params: Promise<{ slu
     renewalStatus: p.renewalStatus,
     previousPolicyId: p.previousPolicyId ?? "",
     notes: p.notes ?? "",
+    insurableValue: str(p.insurableValue),
+    coinsurancePercent: p.coinsurancePercent === null ? "" : String(p.coinsurancePercent),
   };
   const previousOptions = detail.policies
     .filter((other) => other.id !== p.id)

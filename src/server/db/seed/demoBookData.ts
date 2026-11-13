@@ -18,7 +18,9 @@ import type {
   Province,
   RenewalStatus,
   ClaimStatus,
+  ParticipantRole,
 } from "@/lib/constants";
+import type { LayerType, LineGroup, RequirementCoverage } from "@/lib/domain/program";
 import { LOST_REASON_LABELS } from "@/lib/constants";
 
 export interface DemoContact {
@@ -45,6 +47,49 @@ export type DemoOutcome =
   | { type: "renewed"; successorKey: string; recordedAsOf: ISODate }
   | { type: "lost"; lostReason: LostReason; competingPremium: number | null; recordedAsOf: ISODate }
   | { type: "non_renewed"; reason: string; recordedAsOf: ISODate };
+
+export interface DemoParticipant {
+  carrier: string;
+  role: ParticipantRole;
+  signedLine: number;
+  premium: number | null;
+}
+
+export interface DemoSublimit {
+  name: string;
+  limit: number | null;
+  deductible: number | null;
+}
+
+export interface DemoTowerLayer {
+  lineGroup: LineGroup;
+  layerType: LayerType;
+  attachment: number;
+  limit: number;
+  premium: number;
+  carrier: string;
+  /** Key of the linked policy, if any. */
+  policyKey: string | null;
+}
+
+export interface DemoRequirement {
+  contractName: string;
+  counterparty: string;
+  coverage: RequirementCoverage;
+  requiredOccurrence: number | null;
+  requiredAggregate: number | null;
+  requiredEndorsements: Endorsement[];
+  notes: string | null;
+}
+
+export interface DemoCertificate {
+  holder: string;
+  operationsDescription: string | null;
+  coverages: LineOfBusiness[];
+  /** Days from the as-of date (negative = past). */
+  requiredByOffset: number | null;
+  issuedOnOffset: number | null;
+}
 
 export interface DemoClaim {
   claimNumber: string;
@@ -75,6 +120,11 @@ export interface DemoPolicy {
   priorTerm: boolean;
   /** Null means the checklist has not been opened yet (it is generated on first open). */
   checklist: DemoChecklistItem[] | null;
+  /** v1: co-insurers on a larger placement, sub-limits, and the property adequacy inputs. */
+  participants: DemoParticipant[];
+  sublimits: DemoSublimit[];
+  insurableValue: number | null;
+  coinsurancePercent: number | null;
   tasks: DemoTask[];
   outcome: DemoOutcome | null;
   carrier: string;
@@ -112,6 +162,9 @@ export interface DemoAccount {
   accountTasks: DemoTask[];
   activities: DemoActivity[];
   claims: DemoClaim[];
+  towerLayers: DemoTowerLayer[];
+  requirements: DemoRequirement[];
+  certificates: DemoCertificate[];
 }
 
 export const DEMO_WORKSPACE_NAME = "Demo brokerage";
@@ -178,6 +231,10 @@ interface PolicySpec {
   outcome?: DemoOutcome;
   /** Every checklist item ticked (Ready to market). */
   checklistComplete?: boolean;
+  participants?: DemoParticipant[];
+  sublimits?: DemoSublimit[];
+  insurableValue?: number;
+  coinsurancePercent?: number;
 }
 
 let policySeq = 0;
@@ -205,6 +262,10 @@ function policy(asOf: ISODate, owner: string | null, spec: PolicySpec): DemoPoli
     checklist,
     tasks,
     outcome: spec.outcome ?? null,
+    participants: spec.participants ?? [],
+    sublimits: spec.sublimits ?? [],
+    insurableValue: spec.insurableValue ?? null,
+    coinsurancePercent: spec.coinsurancePercent ?? null,
     carrier: spec.carrier,
     lineOfBusiness: spec.line,
     policyNumber: `${CARRIER_CODE[spec.carrier]}-${LINE_CODE[spec.line]}-${seq}`,
@@ -227,11 +288,14 @@ function policy(asOf: ISODate, owner: string | null, spec: PolicySpec): DemoPoli
 const M = 1_000_000;
 const K = 1_000;
 
-type AccountSpec = Omit<DemoAccount, "policies" | "accountTasks" | "activities" | "claims"> & {
+type AccountSpec = Omit<DemoAccount, "policies" | "accountTasks" | "activities" | "claims" | "towerLayers" | "requirements" | "certificates"> & {
   policies: PolicySpec[];
   accountTasks?: DemoTask[];
   noteLog?: string[];
   claims?: DemoClaim[];
+  towerLayers?: DemoTowerLayer[];
+  requirements?: DemoRequirement[];
+  certificates?: DemoCertificate[];
 };
 
 interface ClaimSpec {
@@ -323,6 +387,16 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       status: "active",
       notes: "Mechanical contractor: HVAC and plumbing for commercial builds. Later versions attach loss runs, towers and quotes here.",
       noteLog: ["Owen asked whether a higher umbrella limit is needed for the new hospital project. Discuss at the strategy meeting."],
+      towerLayers: [
+        { lineGroup: "gl", layerType: "primary", attachment: 0, limit: 1 * M, premium: 108_000, carrier: C.northgate, policyKey: "cedar-gl" },
+        // Attaches at $2M over a $1M primary: a $1M gap the program should close.
+        { lineGroup: "gl", layerType: "umbrella", attachment: 2 * M, limit: 5 * M, premium: 27_800, carrier: C.boreal, policyKey: "cedar-um" },
+      ],
+      requirements: [
+        { contractName: "Mechanical subcontract — Northgate Hospital expansion (fictional)", counterparty: "Harrow & Finch Construction Ltd. (fictional)", coverage: "Umbrella/Excess", requiredOccurrence: 5 * M, requiredAggregate: null, requiredEndorsements: [], notes: "General contractor requires a $5M umbrella above primary liability." },
+        { contractName: "Mechanical subcontract — Northgate Hospital expansion (fictional)", counterparty: "Harrow & Finch Construction Ltd. (fictional)", coverage: "General Liability", requiredOccurrence: 1 * M, requiredAggregate: 2 * M, requiredEndorsements: ["additional_insured"], notes: null },
+      ],
+      certificates: [{ holder: "Harrow & Finch Construction Ltd. (fictional)", operationsDescription: "HVAC and plumbing installation, Northgate Hospital expansion, Burnaby.", coverages: ["General Liability", "Umbrella/Excess"], requiredByOffset: -40, issuedOnOffset: -35 }],
       claims: claimsFor("General Liability", cedarKeys, cedarEff, [
         { year: 0, number: "NGM-GL-22-0715", lossDay: 157, lag: 11, description: "Failed pipe fitting flooded a client's tenant space after a mechanical retrofit.", paid: 11_000, reserved: 0, status: "closed" },
         { year: 2, number: "NGM-GL-24-0288", lossDay: 58, lag: 6, description: "Unsecured ladder slid off a service van roof onto a client's parked car.", paid: 4_200, reserved: 0, status: "closed" },
@@ -338,9 +412,9 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
         p(histGl(cedarKeys, cedarEff, 2, C.northgate, 94_000, 15, 18_500_000, 5_000, ["additional_insured"])),
         p({ key: "cedar-gl-prior", previousKey: "cedar-gl-2024", priorTerm: true, line: "General Liability", carrier: C.northgate, expires: daysBetween(asOf, cedarCurrentEffective).value, premium: 100_000, commission: 15, occ: 1 * M, agg: 2 * M, ded: 5_000, basis: "revenue", exposure: 20 * M, endorsements: ["additional_insured"], status: "renewed", outcome: { type: "renewed", successorKey: "cedar-gl", recordedAsOf: addDays(cedarCurrentEffective, -14).value }, notes: "Prior-year term: $100,000 on $20,000,000 revenue." }),
         p({ key: "cedar-gl", previousKey: "cedar-gl-prior", line: "General Liability", carrier: C.northgate, expires: 120, premium: 108_000, commission: 15, occ: 1 * M, agg: 2 * M, ded: 5_000, basis: "revenue", exposure: 23 * M, endorsements: ["additional_insured"], notes: "Expires exactly 120 days after the as-of date. Renewed from the prior year: premium up 8% on 15% more revenue." }),
-        p({ line: "Property", carrier: C.northgate, expires: 120, premium: 42_500, commission: 15, occ: null, agg: null, ded: 10_000, basis: "square_feet", exposure: 38_000 }),
+        p({ key: "cedar-pr", line: "Property", carrier: C.northgate, expires: 120, premium: 42_500, commission: 15, occ: 600_000, agg: null, ded: 5_000, basis: "square_feet", exposure: 38_000, insurableValue: 1_000_000, coinsurancePercent: 80, sublimits: [{ name: "Building", limit: 600_000, deductible: 5_000 }, { name: "Contractor's equipment", limit: 250_000, deductible: 2_500 }, { name: "Sewer backup", limit: 50_000, deductible: 5_000 }], notes: "Shop and office building insured for $600,000 against a $1,000,000 insurable value, 80% coinsurance." }),
         p({ line: "Commercial Auto", carrier: C.dominion, expires: 120, premium: 61_200, commission: 12.5, occ: 2 * M, agg: null, ded: 2_500, basis: "vehicles", exposure: 34 }),
-        p({ line: "Umbrella/Excess", carrier: C.boreal, expires: 120, premium: 27_800, commission: 12, occ: 5 * M, agg: 5 * M, ded: null, basis: "revenue", exposure: 23 * M, endorsements: ["additional_insured"] }),
+        p({ key: "cedar-um", line: "Umbrella/Excess", carrier: C.boreal, expires: 120, premium: 27_800, commission: 12, occ: 5 * M, agg: 5 * M, ded: null, basis: "revenue", exposure: 23 * M, endorsements: ["additional_insured"] }),
         p({ line: "Equipment Breakdown", carrier: C.tamarack, expires: 150, premium: 9_400, commission: 17.5, occ: 500 * K, agg: 500 * K, ded: 2_500, basis: "other", exposure: null }),
       ],
     },
@@ -392,6 +466,23 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       status: "active",
       notes: "Frozen seafood processor with two plants. Later versions attach loss runs, towers and quotes here.",
       noteLog: ["Plant expansion in the first quarter will add roughly 20% to payroll. Update exposure figures before marketing."],
+      towerLayers: [
+        { lineGroup: "gl", layerType: "primary", attachment: 0, limit: 1 * M, premium: 150_000, carrier: C.dominion, policyKey: "harbour-gl" },
+        { lineGroup: "gl", layerType: "umbrella", attachment: 1 * M, limit: 5 * M, premium: 22_000, carrier: C.boreal, policyKey: null },
+        { lineGroup: "gl", layerType: "excess", attachment: 6 * M, limit: 10 * M, premium: 18_000, carrier: C.aurora, policyKey: null },
+      ],
+      requirements: [
+        { contractName: "Supply agreement — Westbay Grocers (fictional)", counterparty: "Westbay Grocers Ltd. (fictional)", coverage: "General Liability", requiredOccurrence: 2 * M, requiredAggregate: 4 * M, requiredEndorsements: ["additional_insured", "waiver_of_subrogation", "primary_noncontributory"], notes: "Private-label frozen seafood supply, five-year term." },
+        { contractName: "Supply agreement — Westbay Grocers (fictional)", counterparty: "Westbay Grocers Ltd. (fictional)", coverage: "Umbrella/Excess", requiredOccurrence: 5 * M, requiredAggregate: null, requiredEndorsements: [], notes: null },
+        { contractName: "Supply agreement — Westbay Grocers (fictional)", counterparty: "Westbay Grocers Ltd. (fictional)", coverage: "Commercial Auto", requiredOccurrence: 1 * M, requiredAggregate: null, requiredEndorsements: ["additional_insured"], notes: "$1,000,000 combined single limit." },
+        { contractName: "Supply agreement — Westbay Grocers (fictional)", counterparty: "Westbay Grocers Ltd. (fictional)", coverage: "Workers Compensation", requiredOccurrence: null, requiredAggregate: null, requiredEndorsements: ["waiver_of_subrogation"], notes: "Statutory limits." },
+      ],
+      certificates: [
+        // Rests on the Commercial Auto policy, which runs 95 more days: issued.
+        { holder: "Westbay Grocers Ltd. (fictional)", operationsDescription: "Deliveries to Westbay distribution centres under the supply agreement.", coverages: ["Commercial Auto"], requiredByOffset: -50, issuedOnOffset: -45 },
+        // Rests on the GL policy expiring in 60 days: issued now, reissue needed once the GL renewal is recorded.
+        { holder: "Port of Halverston Authority (fictional)", operationsDescription: "Cold-storage lease, Pier 4 processing plant.", coverages: ["General Liability"], requiredByOffset: -20, issuedOnOffset: -18 },
+      ],
       claims: claimsFor("General Liability", harbourKeys, harbourEff, [
         { year: 0, number: "DSI-GL-22-0147", lossDay: 62, lag: 7, description: "Visitor slipped on a wet floor in the packing hall during a supplier plant tour.", paid: 8_000, reserved: 0, status: "closed" },
         { year: 0, number: "DSI-GL-22-0311", lossDay: 178, lag: 10, description: "Product contamination recall: distributor's recall costs and customer illness complaints from one smoked-fish batch.", paid: 32_000, reserved: 0, status: "closed" },
@@ -435,7 +526,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       contacts: [{ name: "Noor Haddad", role: "Controller", email: "nhaddad@kestrelprecision.example", phone: "514-555-0126" }],
       policies: [
         p({ key: "kestrel-pr-prior", priorTerm: true, line: "Property", carrier: C.aurora, expires: priorOf(90), premium: 360_000, commission: 10, occ: null, agg: null, ded: 50_000, basis: "square_feet", exposure: 205_000, status: "renewed", outcome: { type: "renewed", successorKey: "kestrel-pr", recordedAsOf: addDays(d(priorOf(90)), -10).value } }),
-        p({ key: "kestrel-pr", previousKey: "kestrel-pr-prior", line: "Property", carrier: C.aurora, expires: 90, premium: 420_000, commission: 10, occ: null, agg: null, ded: 50_000, basis: "square_feet", exposure: 210_000, standardTasksDone: ["Strategy meeting"], checklistComplete: true, notes: "Expires exactly 90 days after the as-of date. Largest premium in the book." }),
+        p({ key: "kestrel-pr", previousKey: "kestrel-pr-prior", participants: [{ carrier: C.aurora, role: "lead", signedLine: 50, premium: 210_000 }, { carrier: C.dominion, role: "follow", signedLine: 30, premium: 126_000 }, { carrier: C.boreal, role: "follow", signedLine: 20, premium: 84_000 }], sublimits: [{ name: "Earthquake", limit: 5 * M, deductible: 250_000 }, { name: "Flood", limit: 2 * M, deductible: 50_000 }, { name: "Stock in process", limit: 1_500_000, deductible: 10_000 }, { name: "Business interruption", limit: 8 * M, deductible: null }], insurableValue: 48 * M, coinsurancePercent: 90, line: "Property", carrier: C.aurora, expires: 90, premium: 420_000, commission: 10, occ: null, agg: null, ded: 50_000, basis: "square_feet", exposure: 210_000, standardTasksDone: ["Strategy meeting"], checklistComplete: true, notes: "Expires exactly 90 days after the as-of date. Largest premium in the book." }),
         p({ line: "General Liability", carrier: C.aurora, expires: 90, premium: 134_000, commission: 12.5, occ: 2 * M, agg: 4 * M, ded: 25_000, basis: "revenue", exposure: 58 * M, endorsements: stdGl }),
         p({ line: "Umbrella/Excess", carrier: C.boreal, expires: 90, premium: 88_000, commission: 12, occ: 25 * M, agg: 25 * M, ded: null, basis: "revenue", exposure: 58 * M }),
         p({ line: "Equipment Breakdown", carrier: C.tamarack, expires: 90, premium: 46_000, commission: 15, occ: 10 * M, agg: 10 * M, ded: 25_000, basis: "other" }),
@@ -703,6 +794,9 @@ function finalizeBook(asOf: ISODate, specs: AccountSpec[]): DemoAccount[] {
       policies: built,
       accountTasks: spec.accountTasks ?? [],
       claims: spec.claims ?? [],
+      towerLayers: spec.towerLayers ?? [],
+      requirements: spec.requirements ?? [],
+      certificates: spec.certificates ?? [],
       activities,
     };
   });

@@ -1,5 +1,50 @@
 # Changelog
 
+## v1 — Program (2026-11-13)
+
+Program: tower analysis, contract requirements checker, certificates, property adequacy. Additional updates to support large policies.
+
+- **Program tab** in Placement, per account, with a line-group switch (General
+  Liability or Commercial Auto, each with Umbrella/Excess).
+- **Tower** (new `tower_layers` table): layers with attachment, limit, premium,
+  carrier and an optional linked policy. `analyzeTower` gives exhaustion, rate
+  on line, premium per $1M and the rate relative to the primary, and finds
+  gaps, overlaps, a primary attaching above zero and rate inversions. The tower
+  is drawn to scale (vertical on wide screens, horizontal on phones) with gaps
+  hatched red and overlaps amber, beside a table. Editing a layer previews the
+  whole tower's findings as you type.
+- **Contract requirements checker** (new `contract_requirements` table):
+  required limits and endorsements per coverage against the account's current
+  policies and tower, showing provided limits, the dollar gap, endorsements
+  present and missing, and Meets / Shortfall / Missing coverage. A toggle counts
+  umbrella and excess limits toward the per-occurrence requirement, explained on
+  screen as a contract-specific question.
+- **Certificates of insurance** (new `certificates` table) with a derived
+  status: Requested, Issued, Expired or Reissue needed. Issue and Reissue stamp
+  the as-of date. The Account page lists them; the Renewals page shows a
+  **Certificates due** panel of every certificate needing reissue.
+- **Property adequacy panel** on Property policies: insurable value,
+  coinsurance clause, limit carried, hypothetical loss and deductible, with the
+  payment, what the client absorbs, the penalty share and the additional limit
+  needed. Property policies gained optional insurable value and coinsurance
+  fields that seed the panel.
+- **Larger placements:** a policy can list the insurers sharing it (new
+  `policy_participants` table) with role, signed line and premium; the app
+  totals the lines and premiums and flags short or over-placement. Policy rows
+  show "+N insurers", and a tower layer linked to a policy shows its insurers.
+  Policies can also carry **sub-limits with their own deductibles** (new
+  `policy_sublimits` table), with the policy limit and deductible as defaults.
+- **Demo book:** Harbourline has the three-layer tower, the Westbay Grocers
+  supply agreement and two certificates (one flips to Reissue needed once its
+  GL renews). Cedar Ridge has a two-layer tower with a $1M gap, a construction
+  contract whose $5M umbrella requirement it meets, and a Property policy with a
+  $1,000,000 building insured for $600,000 at 80% coinsurance. Kestrel's
+  property policy is shared by three insurers (50/30/20) with four sub-limits.
+- **Migration** `0003_program`: the five tables above plus
+  `policies.insurable_value` and `policies.coinsurance_percent`.
+- Export JSON includes the new tables. Undo outcome keeps working: a successor's
+  insurers and sub-limits are deleted with it.
+
 ## v0.4 — Loss runs (2026-11-12)
 
 Loss runs: claims, CSV import, policy-year summary, trend and development, large loss and open claims.

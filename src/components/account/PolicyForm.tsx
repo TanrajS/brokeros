@@ -13,6 +13,7 @@ import { Field, fieldA11y } from "@/components/form/Field";
 import { NativeSelect } from "@/components/form/NativeSelect";
 import { NativeCheckbox } from "@/components/form/Checkbox";
 import {
+  COINSURANCE_PERCENTS,
   ENDORSEMENTS,
   ENDORSEMENT_LABELS,
   EXPOSURE_BASES,
@@ -62,6 +63,7 @@ export function PolicyForm({ slug, accountId, policyId, defaultValues, previousO
     premium !== null && rateRaw !== "" && Number.isFinite(rate) && rate >= 0 && rate <= 100 ? commissionAmount(premium, rate) : null;
 
   const effective = useWatch({ control, name: "effectiveDate" });
+  const line = useWatch({ control, name: "lineOfBusiness" });
   const expiry = useWatch({ control, name: "expiryDate" });
 
   function onSubmit() {
@@ -163,6 +165,25 @@ export function PolicyForm({ slug, accountId, policyId, defaultValues, previousO
           <Input {...register("commissionRate")} {...fieldA11y("commissionRate", msg("commissionRate"), "0 to 100")} inputMode="decimal" />
         </Field>
       </fieldset>
+
+      {line === "Property" ? (
+        <fieldset className="grid gap-4 sm:grid-cols-2">
+          <legend className="mb-3 text-base font-semibold">Property adequacy (optional)</legend>
+          <Field id="insurableValue" label="Insurable value (CAD)" error={msg("insurableValue")} hint="Replacement value of the insured property; the Adequacy panel starts from it">
+            <Input {...register("insurableValue")} {...fieldA11y("insurableValue", msg("insurableValue"), "hint")} inputMode="decimal" />
+          </Field>
+          <Field id="coinsurancePercent" label="Coinsurance clause" error={msg("coinsurancePercent")}>
+            <NativeSelect {...register("coinsurancePercent")} {...fieldA11y("coinsurancePercent", msg("coinsurancePercent"))}>
+              <option value="">None</option>
+              {COINSURANCE_PERCENTS.map((c) => (
+                <option key={c} value={String(c)}>
+                  {c}%
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+        </fieldset>
+      ) : null}
 
       <fieldset className="grid gap-4 sm:grid-cols-2">
         <legend className="mb-3 text-base font-semibold">Exposure</legend>

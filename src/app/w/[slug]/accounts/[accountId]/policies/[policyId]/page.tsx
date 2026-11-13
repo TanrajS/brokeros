@@ -18,6 +18,10 @@ import { commissionAmount, formatLimit } from "@/lib/domain/money";
 import { getRenewalStage } from "@/lib/domain/renewals";
 import { formatCurrency, formatDate, formatInteger, formatPercent } from "@/lib/format";
 import { getPolicyPageData } from "@/server/renewals/queries";
+import { loadPolicyExtras } from "@/server/program/queries";
+import { AdequacyPanel } from "@/components/program/AdequacyPanel";
+import { ParticipantsSection } from "@/components/program/ParticipantsSection";
+import { SublimitsSection } from "@/components/program/SublimitsSection";
 import { requireWorkspace } from "../../../../lib";
 
 type Params = Promise<{ slug: string; accountId: string; policyId: string }>;
@@ -30,6 +34,7 @@ export default async function PolicyPage({ params }: { params: Params }) {
   const data = await getPolicyPageData(ws, accountId, policyId);
   if (!data) notFound();
   const { account, policy, checklist, tasks, outcome, predecessor, successor, successorHasOutcome, accountPolicies } = data;
+  const extras = await loadPolicyExtras(ws.id, policy.id);
 
   const days = daysBetween(ws.asOfDate, policy.expiryDate).value;
   const stage = getRenewalStage(days, policy.renewalStatus).value;
@@ -171,6 +176,27 @@ export default async function PolicyPage({ params }: { params: Params }) {
         defaultOwner={account.accountManager ?? account.producer}
         tasks={tasks.map((t) => ({ id: t.id, title: t.title, dueDate: t.dueDate, owner: t.owner, done: t.done, policyId: t.policyId }))}
         policyOptions={accountPolicies.map((p) => ({ id: p.id, label: label(p) }))}
+      />
+
+      {policy.lineOfBusiness === "Property" ? (
+        <AdequacyPanel defaults={{ insurableValue: policy.insurableValue, coinsurancePercent: policy.coinsurancePercent, carriedLimit: policy.occurrenceLimit, deductible: policy.deductible }} />
+      ) : null}
+
+      <ParticipantsSection
+        slug={slug}
+        policyId={policy.id}
+        policyCarrier={policy.carrier}
+        policyPremium={policy.annualPremium}
+        occurrenceLimit={policy.occurrenceLimit}
+        rows={extras.participants.map((p) => ({ id: p.id, carrier: p.carrier, role: p.role, signedLine: p.signedLine, premium: p.premium, notes: p.notes }))}
+      />
+
+      <SublimitsSection
+        slug={slug}
+        policyId={policy.id}
+        policyLimit={policy.occurrenceLimit}
+        policyDeductible={policy.deductible}
+        rows={extras.sublimits.map((s) => ({ id: s.id, name: s.name, limit: s.limit, deductible: s.deductible, notes: s.notes }))}
       />
     </div>
   );

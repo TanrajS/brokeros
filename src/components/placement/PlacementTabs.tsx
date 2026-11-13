@@ -6,7 +6,7 @@ import { cn } from "cn";
 
 const tabs = [
   { segment: "loss-runs", label: "Loss Runs" },
-  { segment: "program", label: "Program", hint: "v0.5" },
+  { segment: "program", label: "Program" },
   { segment: "marketing", label: "Marketing", hint: "v0.6" },
   { segment: "strategy", label: "Strategy", hint: "v0.7" },
 ] as const;

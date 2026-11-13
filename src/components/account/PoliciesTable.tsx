@@ -20,9 +20,11 @@ interface Props {
   accountId: string;
   asOf: string;
   policies: Policy[];
+  /** Co-insurer count per policy id, shown as "+N insurers" beside the carrier. */
+  coinsurerCounts?: Record<string, number>;
 }
 
-export function PoliciesTable({ slug, accountId, asOf, policies }: Props) {
+export function PoliciesTable({ slug, accountId, asOf, policies, coinsurerCounts = {} }: Props) {
   const addHref = `/w/${slug}/accounts/${accountId}/policies/new`;
 
   return (
@@ -85,6 +87,7 @@ export function PoliciesTable({ slug, accountId, asOf, policies }: Props) {
                       >
                         {p.carrier}
                       </Link>
+                      {coinsurerCounts[p.id] ? <span className="ml-1 text-xs text-muted-foreground">+{coinsurerCounts[p.id]} insurers</span> : null}
                       {p.policyNumber ? <span className="block text-xs text-muted-foreground">{p.policyNumber}</span> : null}
                     </TableCell>
                     <TableCell>{p.lineOfBusiness}</TableCell>

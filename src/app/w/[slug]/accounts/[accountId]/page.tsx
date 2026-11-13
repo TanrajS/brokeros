@@ -14,6 +14,8 @@ import { TasksSection } from "@/components/tasks/TasksSection";
 import { formatDate } from "@/lib/format";
 import { listAccountActivities, listAccountTasks } from "@/server/renewals/queries";
 import { countAccountClaims } from "@/server/lossRuns/queries";
+import { countParticipants, listAccountCertificates } from "@/server/program/queries";
+import { CertificatesSection } from "@/components/program/CertificatesSection";
 import { ACCOUNT_STATUS_LABELS } from "@/lib/constants";
 import { formatCurrency, formatInteger, titleCase } from "@/lib/format";
 import { getAccountDetail } from "@/server/accounts/queries";
@@ -39,6 +41,7 @@ export default async function AccountPage({ params }: { params: Params }) {
     listAccountActivities(ws.id, account.id),
     countAccountClaims(ws.id, account.id),
   ]);
+  const [certificateRows, coinsurerCounts] = await Promise.all([listAccountCertificates(ws, account.id, policies), countParticipants(ws.id, policies.map((p) => p.id))]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -94,7 +97,29 @@ export default async function AccountPage({ params }: { params: Params }) {
       </Card>
 
       <ContactsSection slug={slug} accountId={account.id} contacts={contacts} />
-      <PoliciesTable slug={slug} accountId={account.id} asOf={ws.asOfDate} policies={policies} />
+      <PoliciesTable slug={slug} accountId={account.id} asOf={ws.asOfDate} policies={policies} coinsurerCounts={Object.fromEntries(coinsurerCounts)} />
+      <div className="flex flex-col gap-2">
+        <CertificatesSection
+          slug={slug}
+          accountId={account.id}
+          asOf={ws.asOfDate}
+          compact
+          rows={certificateRows.map(({ certificate: c, result: r }) => ({
+            id: c.id,
+            holder: c.holder,
+            operationsDescription: c.operationsDescription,
+            coverages: c.coverages,
+            requiredBy: c.requiredBy,
+            issuedOn: c.issuedOn,
+            notes: c.notes,
+            status: r.status,
+            reasons: r.reasons,
+          }))}
+        />
+        <Link href={`/w/${slug}/placement/${account.id}/program`} className="w-fit text-sm underline-offset-4 hover:underline">
+          Manage certificates, tower and contract requirements in Placement
+        </Link>
+      </div>
       <TasksSection
         slug={slug}
         accountId={account.id}

@@ -8,8 +8,9 @@
  *  - money: numeric(14,2); rates: numeric(6,3); calendar dates: date (YYYY-MM-DD strings)
  *
  * v0.2 added checklist_items, tasks, activities and renewal_outcomes; v0.4
- * added claims. Later versions add tower_layers, contract_requirements,
- * certificates, submissions, quotes and quote_options via new migrations.
+ * added claims; v1 added tower_layers, contract_requirements, certificates,
+ * policy_participants and policy_sublimits. Later versions add submissions,
+ * quotes and quote_options via new migrations.
  * Keep the helper column factories below so those tables stay consistent.
  */
 import { relations, sql } from "drizzle-orm";
@@ -27,11 +28,13 @@ import {
   uniqueIndex,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
+import { LAYER_TYPES, LINE_GROUPS, REQUIREMENT_COVERAGES } from "@/lib/domain/program";
 import {
   ACCOUNT_STATUSES,
   ACTIVITY_KINDS,
   CHECKLIST_SOURCES,
   CLAIM_STATUSES,
+  PARTICIPANT_ROLES,
   ENDORSEMENTS,
   LOST_REASONS,
   OUTCOME_TYPES,
@@ -50,6 +53,10 @@ export const activityKindEnum = pgEnum("activity_kind", ACTIVITY_KINDS);
 export const outcomeTypeEnum = pgEnum("outcome_type", OUTCOME_TYPES);
 export const lostReasonEnum = pgEnum("lost_reason", LOST_REASONS);
 export const claimStatusEnum = pgEnum("claim_status", CLAIM_STATUSES);
+export const lineGroupEnum = pgEnum("line_group", LINE_GROUPS);
+export const layerTypeEnum = pgEnum("layer_type", LAYER_TYPES);
+export const requirementCoverageEnum = pgEnum("requirement_coverage", REQUIREMENT_COVERAGES);
+export const participantRoleEnum = pgEnum("participant_role", PARTICIPANT_ROLES);
 
 /** Column helpers so every table shares the same audit columns and types. */
 const timestamps = {
@@ -141,6 +148,9 @@ export const policies = pgTable(
      * always derived from the as-of date; this only lets us detect changes.
      */
     lastLoggedStage: text("last_logged_stage"),
+    /** v1, Property policies: insurable value and coinsurance clause for the adequacy panel. */
+    insurableValue: money("insurable_value"),
+    coinsurancePercent: rate("coinsurance_percent"),
     ...timestamps,
   },
   (t) => [
@@ -279,6 +289,122 @@ export const claims = pgTable(
   ],
 );
 
+/* ---------- v1 Program ---------- */
+
+export const towerLayers = pgTable(
+  "tower_layers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    lineGroup: lineGroupEnum("line_group").notNull(),
+    layerType: layerTypeEnum("layer_type").notNull(),
+    attachment: money("attachment").notNull(),
+    limit: money("limit").notNull(),
+    premium: money("premium").notNull(),
+    carrier: text("carrier").notNull(),
+    policyId: uuid("policy_id").references(() => policies.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (t) => [index("tower_layers_account_group_idx").on(t.accountId, t.lineGroup), index("tower_layers_workspace_idx").on(t.workspaceId)],
+);
+
+export const contractRequirements = pgTable(
+  "contract_requirements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    contractName: text("contract_name").notNull(),
+    counterparty: text("counterparty").notNull(),
+    coverage: requirementCoverageEnum("coverage").notNull(),
+    requiredOccurrence: money("required_occurrence"),
+    requiredAggregate: money("required_aggregate"),
+    requiredEndorsements: endorsementEnum("required_endorsements")
+      .array()
+      .notNull()
+      .default(sql`'{}'::endorsement[]`),
+    notes: text("notes"),
+    ...timestamps,
+  },
+  (t) => [index("contract_requirements_account_idx").on(t.accountId), index("contract_requirements_workspace_idx").on(t.workspaceId)],
+);
+
+/** Certificate status (requested / issued / expired / reissue needed) is derived in src/lib/domain/program.ts, never stored. */
+export const certificates = pgTable(
+  "certificates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    holder: text("holder").notNull(),
+    operationsDescription: text("operations_description"),
+    coverages: lineOfBusinessEnum("coverages")
+      .array()
+      .notNull()
+      .default(sql`'{}'::line_of_business[]`),
+    requiredBy: date("required_by", { mode: "string" }),
+    issuedOn: date("issued_on", { mode: "string" }),
+    notes: text("notes"),
+    ...timestamps,
+  },
+  (t) => [index("certificates_account_idx").on(t.accountId), index("certificates_workspace_idx").on(t.workspaceId)],
+);
+
+/** Co-insurers on a larger placement. The policy's own carrier is the lead; rows here are the full signed-line schedule. */
+export const policyParticipants = pgTable(
+  "policy_participants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => policies.id, { onDelete: "cascade" }),
+    carrier: text("carrier").notNull(),
+    role: participantRoleEnum("role").notNull().default("follow"),
+    /** Percent of the placement, e.g. 50.000. */
+    signedLine: rate("signed_line").notNull(),
+    premium: money("premium"),
+    notes: text("notes"),
+    ...timestamps,
+  },
+  (t) => [index("policy_participants_policy_idx").on(t.policyId), index("policy_participants_workspace_idx").on(t.workspaceId)],
+);
+
+/** Sub-limits and their own deductibles (earthquake, flood, stock…). The policy's limit and deductible stay the defaults. */
+export const policySublimits = pgTable(
+  "policy_sublimits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => policies.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    limit: money("limit"),
+    deductible: money("deductible"),
+    notes: text("notes"),
+    ...timestamps,
+  },
+  (t) => [index("policy_sublimits_policy_idx").on(t.policyId), index("policy_sublimits_workspace_idx").on(t.workspaceId)],
+);
+
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   accounts: many(accounts),
   contacts: many(contacts),
@@ -316,3 +442,8 @@ export type Task = typeof tasks.$inferSelect;
 export type Activity = typeof activities.$inferSelect;
 export type RenewalOutcome = typeof renewalOutcomes.$inferSelect;
 export type Claim = typeof claims.$inferSelect;
+export type TowerLayer = typeof towerLayers.$inferSelect;
+export type ContractRequirement = typeof contractRequirements.$inferSelect;
+export type Certificate = typeof certificates.$inferSelect;
+export type PolicyParticipant = typeof policyParticipants.$inferSelect;
+export type PolicySublimit = typeof policySublimits.$inferSelect;

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ENDORSEMENTS, EXPOSURE_BASES, LINES_OF_BUSINESS, RENEWAL_STATUSES } from "@/lib/constants";
+import { COINSURANCE_PERCENTS, ENDORSEMENTS, EXPOSURE_BASES, LINES_OF_BUSINESS, RENEWAL_STATUSES } from "@/lib/constants";
 import { isExpiryAfterEffective } from "@/lib/domain/dates";
 import {
   currencySchema,
@@ -33,6 +33,20 @@ export const policyFormSchema = z
       .transform((s) => (s === "" ? null : s))
       .pipe(uuidSchema.nullable()),
     notes: optionalText(5000),
+    /** Property only: the adequacy panel's defaults. */
+    insurableValue: optionalCurrencySchema,
+    coinsurancePercent: z
+      .string()
+      .trim()
+      .transform((raw, ctx) => {
+        if (raw === "") return null;
+        const n = Number(raw.replace(/%$/, ""));
+        if (!(COINSURANCE_PERCENTS as readonly number[]).includes(n)) {
+          ctx.addIssue({ code: "custom", message: "Choose 80, 90 or 100" });
+          return z.NEVER;
+        }
+        return n;
+      }),
   })
   .superRefine((v, ctx) => {
     if (!isExpiryAfterEffective(v.effectiveDate, v.expiryDate).value) {
@@ -60,4 +74,6 @@ export const emptyPolicyForm = (effectiveDate: string, expiryDate: string): Poli
   renewalStatus: "not_started",
   previousPolicyId: "",
   notes: "",
+  insurableValue: "",
+  coinsurancePercent: "",
 });

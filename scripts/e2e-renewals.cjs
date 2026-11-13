@@ -84,7 +84,8 @@ const main = (page) => page.locator("main:visible");
   await page.waitForURL(/\/policies\/[0-9a-f-]{36}$/);
   await main(page).getByText("Premium rose 8.0% while exposure rose 15.0%, so the rate fell 6.1%.").waitFor();
   check("Cedar GL shows the rate-vs-exposure sentence", true);
-  await main(page).getByText("Show the math").click();
+  // v1: a hidden Property policy page (Activity) also has a "Show the math"; take the visible one in the rate panel
+  await main(page).getByText("Show the math").filter({ visible: true }).first().click();
   check("math lists the rate division to four decimals", (await main(page).getByText("Rate change = 4.6957 ÷ 5.0000 − 1 = −0.0609").count()) === 1);
   check("checklist generated on first open", (await main(page).getByRole("checkbox", { name: "Five-year loss runs" }).count()) === 1);
   await page.screenshot({ path: `${SHOTS}/policy-cedar.png`, fullPage: true });
@@ -236,6 +237,8 @@ const main = (page) => page.locator("main:visible");
 
   // Moving the as-of date logs stage changes
   await w.goto(`${BASE}/w/${slug}/settings`);
+  // The input fills on hydration; wait for a value before reading it.
+  await w.waitForFunction(() => document.querySelector("#as-of")?.value);
   const asOf = await main(w).getByLabel("As-of date").inputValue();
   const d = new Date(asOf + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + 31);
