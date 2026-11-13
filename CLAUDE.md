@@ -129,10 +129,33 @@ before changing anything, and keep it current when the rules change.
   is computed from the template as 0 of N.
 - Activities are ordered newest first by `as_of_date`, then `created_at`.
 
+## Dashboard rules (v0.3)
+
+- **All metrics are pure functions in `src/lib/domain/dashboard.ts`** taking
+  `DashPolicy[]` / `DashAccount[]`, the as-of date and `DateWindow`s.
+  `src/server/dashboard/queries.ts` only fetches rows and maps them to those
+  shapes. Never compute a metric in a component or query.
+- **Windows:** lookback = (as-of − N months + 1 day) … as-of; forward =
+  (as-of + 1 day) … (as-of + N months); both inclusive, never overlapping.
+- **In force** = effective ≤ as-of < expiry and status not lost/non-renewed.
+  **Open** = no outcome and status not_started/in_progress.
+- **Resolved** (retention) = expiry in the lookback window; an expired policy
+  without an outcome is "unresolved, treated as lost". Ratios return `null`
+  (never NaN) when the denominator is 0; render `<Missing>`.
+- Every tile shows `math.steps.lines` through `<ShowMath>`. Currency has no
+  decimals; percentages one decimal via `formatRatioPercent`.
+- The demo seed is tuned so the 12-month window gives exactly 87.5% / 80.0%
+  (`src/server/db/seed/__tests__/demoBookDashboard.test.ts`) and one carrier
+  holds about 40% of in-force premium. Any seed change must keep those tests
+  passing.
+- Charts: one series uses `#2a78d6`, columns ≤ 24px with 4px rounded tops,
+  hairline grid, and always a table view with the same data and links. The
+  chart itself is `aria-hidden`.
+
 ## Commands
 
 `npm run dev` · `npm run build` · `npm run typecheck` · `npm run lint` ·
 `npm test` · `npm run db:generate` · `npm run db:migrate` · `npm run db:seed`
 (`SEED_AS_OF=YYYY-MM-DD` fixes the as-of date; `SEED_WORKSPACE_SLUG=…` seeds an
-existing empty workspace). Browser smoke tests: `scripts/e2e-renewals.cjs`
+existing empty workspace). Browser smoke tests: `scripts/e2e-renewals.cjs`, `scripts/e2e-dashboard.cjs`
 (see its header; Playwright is not a dependency).

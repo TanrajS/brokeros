@@ -40,8 +40,9 @@ const main = (page) => page.locator("main:visible");
   const strategy = main(page).locator("section[aria-labelledby='col-120-day-strategy']");
   check("Cedar Ridge GL sits in 120-day: Strategy", (await strategy.getByText("Cedar Ridge Mechanical Ltd.").count()) >= 1);
   const expired = main(page).locator("section[aria-labelledby='col-expired-action-required']");
-  check("Expired column has Northfield Property and Maple & Mast", (await expired.getByText("Northfield Plastics Ltd.").count()) >= 1 && (await expired.getByText("Maple & Mast Hospitality Group").count()) >= 1);
-  check("summary strip shows overdue tasks = 8", (await main(page).getByText("Overdue tasks").locator("..").getByText("8", { exact: true }).count()) === 1);
+  // v0.3 seed: every expired policy in the trailing year has an outcome, so Expired is empty.
+  check("Expired column is empty in the v0.3 demo", (await expired.getByText("No policies").count()) === 1);
+  check("summary strip shows overdue tasks = 6", (await main(page).getByText("Overdue tasks").locator("..").getByText("6", { exact: true }).count()) === 1);
   await main(page).getByText("Stage rules").click();
   check("stage rules panel lists the 91–120 rule", (await main(page).getByText("91 to 120 days to expiry, inclusive.").count()) === 1);
   await page.screenshot({ path: `${SHOTS}/renewals-board.png`, fullPage: true });
@@ -69,7 +70,7 @@ const main = (page) => page.locator("main:visible");
   await page.waitForURL(/dir=desc/);
   await main(page).locator("tbody tr").first().waitFor();
   const firstDesc = await main(page).locator("tbody tr").first().locator("td").nth(5).innerText();
-  check("list sorts by days to expiry both ways", /-245/.test(firstAsc) && /4\d\d|3\d\d/.test(firstDesc), `${firstAsc.trim()} then ${firstDesc.trim()}`);
+  check("list sorts by days to expiry both ways", /-350/.test(firstAsc) && /4\d\d|3\d\d/.test(firstDesc), `${firstAsc.trim()} then ${firstDesc.trim()}`);
 
   // Cedar rate example on first load
   await page.goto(`${BASE}/w/${SEED}/renewals?view=list&stage=120-day%3A+Strategy`);

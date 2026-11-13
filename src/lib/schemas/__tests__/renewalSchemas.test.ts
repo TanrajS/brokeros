@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { forecastAssumptionsSchema, parseForward, parseLookback } from "../dashboard";
 import { lostOutcomeSchema, nonRenewedOutcomeSchema, renewedOutcomeSchema } from "../outcome";
 import { taskFormSchema } from "../task";
 import { customChecklistItemSchema } from "../checklist";
@@ -60,5 +61,23 @@ describe("task, checklist and note schemas", () => {
     expect(customChecklistItemSchema.safeParse({ label: "Fleet telematics report", required: false }).success).toBe(true);
     expect(customChecklistItemSchema.safeParse({ label: "  ", required: true }).success).toBe(false);
     expect(noteFormSchema.safeParse({ body: "" }).success).toBe(false);
+  });
+});
+
+
+describe("dashboard schemas", () => {
+  it("parses retention 0–100 and a signed rate change", () => {
+    const ok = forecastAssumptionsSchema.safeParse({ retention: "87.5", rateChange: "-5" });
+    expect(ok.success && ok.data).toEqual({ retention: 87.5, rateChange: -5 });
+    expect(forecastAssumptionsSchema.safeParse({ retention: "101", rateChange: "0" }).success).toBe(false);
+    expect(forecastAssumptionsSchema.safeParse({ retention: "-1", rateChange: "0" }).success).toBe(false);
+    expect(forecastAssumptionsSchema.safeParse({ retention: "85", rateChange: "-101" }).success).toBe(false);
+    expect(forecastAssumptionsSchema.safeParse({ retention: "85", rateChange: "abc" }).success).toBe(false);
+    const plus = forecastAssumptionsSchema.safeParse({ retention: "85", rateChange: "+3.5" });
+    expect(plus.success && plus.data.rateChange).toBe(3.5);
+  });
+  it("falls back to 12 months for unknown windows", () => {
+    expect([parseLookback("6"), parseLookback("24"), parseLookback("7"), parseLookback("")]).toEqual([6, 24, 12, 12]);
+    expect([parseForward("3"), parseForward("6"), parseForward("99")]).toEqual([3, 6, 12]);
   });
 });

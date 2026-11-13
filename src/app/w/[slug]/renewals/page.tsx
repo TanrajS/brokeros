@@ -29,13 +29,16 @@ export default async function RenewalsPage({ params, searchParams }: { params: P
     line: first(sp.line),
     carrier: first(sp.carrier),
     stage: isRenewalStage(stage) ? stage : "",
+    month: /^\d{4}-(0[1-9]|1[0-2])$/.test(first(sp.month)) ? first(sp.month) : "",
+    open: first(sp.open) === "1" ? "1" : "",
     view: first(sp.view) === "list" ? "list" : "board",
     dir: first(sp.dir) === "desc" ? "desc" : "asc",
   };
   // The filter form submits every select, including "All" (empty). Redirect to the
   // canonical URL so a shared link carries only the filters that are active.
-  const hasEmpty = (["producer", "manager", "line", "carrier", "stage"] as const).some((k) => k in sp && first(sp[k]) === "");
-  if (hasEmpty || (stage !== "" && query.stage === "")) redirect(renewalsHref(slug, query));
+  const hasEmpty = (["producer", "manager", "line", "carrier", "stage", "month", "open"] as const).some((k) => k in sp && first(sp[k]) === "");
+  const invalid = (stage !== "" && query.stage === "") || (first(sp.month) !== "" && query.month === "");
+  if (hasEmpty || invalid) redirect(renewalsHref(slug, query));
 
   const data = await listRenewals(ws, query, query.dir);
 

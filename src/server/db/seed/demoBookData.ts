@@ -42,7 +42,8 @@ export interface DemoTask {
 
 export type DemoOutcome =
   | { type: "renewed"; successorKey: string; recordedAsOf: ISODate }
-  | { type: "lost"; lostReason: LostReason; competingPremium: number | null; recordedAsOf: ISODate };
+  | { type: "lost"; lostReason: LostReason; competingPremium: number | null; recordedAsOf: ISODate }
+  | { type: "non_renewed"; reason: string; recordedAsOf: ISODate };
 
 export interface DemoActivity {
   kind: "note" | "outcome_recorded" | "checklist_complete";
@@ -56,7 +57,7 @@ export interface DemoPolicy {
   key: string;
   /** Key of the policy this one renewed, if any. */
   previousKey: string | null;
-  /** A prior-year term kept for history; excluded from the v0.1 date-range rules. */
+  /** A historical term (prior-year or lost before this year) kept for history; excluded from the v0.1 date-range rules. */
   priorTerm: boolean;
   /** Null means the checklist has not been opened yet (it is generated on first open). */
   checklist: DemoChecklistItem[] | null;
@@ -225,6 +226,10 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
 
   // Cedar Ridge's current GL ends 120 days out; its prior-year term ended when the current one began.
   const cedarCurrentEffective = addDays(d(120), -365).value;
+  // A prior-year term ends the day its current successor began (current expiry − 365 days).
+  const priorOf = (currentExpires: number) => daysBetween(asOf, addDays(d(currentExpires), -365).value).value;
+  // Maple & Mast's two policies expire on the as-of date and were renewed: successors run 12 months from today.
+  const mapleRenewal = planSuccessorTerm(asOf).value;
   // Northfield's GL expired 30 days ago and was renewed: successor runs 12 months from that expiry.
   const northfieldRenewal = planSuccessorTerm(d(-30)).value;
 
@@ -266,8 +271,9 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       notes: "Roads, bridges and municipal water works.",
       contacts: [{ name: "Grace Abernathy", role: "Risk Manager", email: "g.abernathy@bluewatercivil.example", phone: "905-555-0117" }],
       policies: [
-        p({ line: "General Liability", carrier: C.aurora, expires: 121, premium: 186_000, commission: 15, occ: 2 * M, agg: 4 * M, ded: 25_000, basis: "revenue", exposure: 41 * M, endorsements: stdGl, notes: "Expires exactly 121 days after the as-of date." }),
-        p({ line: "Umbrella/Excess", carrier: C.boreal, expires: 121, premium: 74_000, commission: 12, occ: 10 * M, agg: 10 * M, ded: null, basis: "revenue", exposure: 41 * M }),
+        p({ line: "General Liability", carrier: C.dominion, expires: 121, premium: 186_000, commission: 15, occ: 2 * M, agg: 4 * M, ded: 25_000, basis: "revenue", exposure: 41 * M, endorsements: stdGl, notes: "Expires exactly 121 days after the as-of date." }),
+        p({ key: "bluewater-um-prior", priorTerm: true, line: "Umbrella/Excess", carrier: C.boreal, expires: priorOf(121), premium: 69_500, commission: 12, occ: 10 * M, agg: 10 * M, ded: null, basis: "revenue", exposure: 38 * M, status: "renewed", outcome: { type: "renewed", successorKey: "bluewater-um", recordedAsOf: addDays(d(priorOf(121)), -21).value } }),
+        p({ key: "bluewater-um", previousKey: "bluewater-um-prior", line: "Umbrella/Excess", carrier: C.boreal, expires: 121, premium: 74_000, commission: 12, occ: 10 * M, agg: 10 * M, ded: null, basis: "revenue", exposure: 41 * M }),
         p({ line: "Commercial Auto", carrier: C.dominion, expires: 121, premium: 92_300, commission: 12.5, occ: 2 * M, agg: null, ded: 5_000, basis: "vehicles", exposure: 58 }),
         p({ line: "Workers Compensation", carrier: C.plains, expires: 200, premium: 31_000, commission: 10, occ: null, agg: null, ded: null, basis: "payroll", exposure: 14_200_000 }),
       ],
@@ -326,7 +332,8 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       notes: "Aerospace machining; ITAR-adjacent contracts.",
       contacts: [{ name: "Noor Haddad", role: "Controller", email: "nhaddad@kestrelprecision.example", phone: "514-555-0126" }],
       policies: [
-        p({ line: "Property", carrier: C.aurora, expires: 90, premium: 420_000, commission: 10, occ: null, agg: null, ded: 50_000, basis: "square_feet", exposure: 210_000, standardTasksDone: ["Strategy meeting"], checklistComplete: true, notes: "Expires exactly 90 days after the as-of date. Largest premium in the book." }),
+        p({ key: "kestrel-pr-prior", priorTerm: true, line: "Property", carrier: C.aurora, expires: priorOf(90), premium: 380_000, commission: 10, occ: null, agg: null, ded: 50_000, basis: "square_feet", exposure: 205_000, status: "renewed", outcome: { type: "renewed", successorKey: "kestrel-pr", recordedAsOf: addDays(d(priorOf(90)), -10).value } }),
+        p({ key: "kestrel-pr", previousKey: "kestrel-pr-prior", line: "Property", carrier: C.aurora, expires: 90, premium: 420_000, commission: 10, occ: null, agg: null, ded: 50_000, basis: "square_feet", exposure: 210_000, standardTasksDone: ["Strategy meeting"], checklistComplete: true, notes: "Expires exactly 90 days after the as-of date. Largest premium in the book." }),
         p({ line: "General Liability", carrier: C.aurora, expires: 90, premium: 134_000, commission: 12.5, occ: 2 * M, agg: 4 * M, ded: 25_000, basis: "revenue", exposure: 58 * M, endorsements: stdGl }),
         p({ line: "Umbrella/Excess", carrier: C.boreal, expires: 90, premium: 88_000, commission: 12, occ: 25 * M, agg: 25 * M, ded: null, basis: "revenue", exposure: 58 * M }),
         p({ line: "Equipment Breakdown", carrier: C.tamarack, expires: 90, premium: 46_000, commission: 15, occ: 10 * M, agg: 10 * M, ded: 25_000, basis: "other" }),
@@ -346,7 +353,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       policies: [
         p({ key: "northfield-gl", line: "General Liability", carrier: C.plains, expires: -30, premium: 71_500, commission: 15, occ: 1 * M, agg: 2 * M, ded: 10_000, basis: "revenue", exposure: 12_400_000, endorsements: ["additional_insured"], status: "renewed", outcome: { type: "renewed", successorKey: "northfield-gl-renewal", recordedAsOf: d(-38) }, notes: "Expired 30 days before the as-of date; renewed with Great Plains." }),
         p({ key: "northfield-gl-renewal", previousKey: "northfield-gl", line: "General Liability", carrier: C.plains, expires: daysBetween(asOf, northfieldRenewal.expiryDate).value, term: northfieldRenewal, premium: 75_800, commission: 15, occ: 1 * M, agg: 2 * M, ded: 10_000, basis: "revenue", exposure: 13_100_000, endorsements: ["additional_insured"], status: "not_started" }),
-        p({ line: "Property", carrier: C.plains, expires: -30, premium: 96_200, commission: 15, occ: null, agg: null, ded: 25_000, basis: "square_feet", exposure: 72_000, status: "in_progress", standardTasksDone: ["Strategy meeting", "Submit to market", "Compare quotes"], notes: "Expired 30 days before the as-of date with no renewal bound yet." }),
+        p({ line: "Property", carrier: C.plains, expires: -30, premium: 96_200, commission: 15, occ: null, agg: null, ded: 25_000, basis: "square_feet", exposure: 72_000, status: "non_renewed", outcome: { type: "non_renewed", reason: "Carrier withdrew from plastics manufacturing in Manitoba.", recordedAsOf: d(-75) }, notes: "Expired 30 days before the as-of date; non-renewed by the carrier." }),
         p({ line: "Commercial Auto", carrier: C.northgate, expires: 180, premium: 14_300, commission: 12.5, occ: 2 * M, agg: null, ded: 1_000, basis: "vehicles", exposure: 7 }),
       ],
     },
@@ -364,8 +371,10 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       notes: "Four waterfront restaurants and a boutique inn.",
       contacts: [{ name: "Camille Boudreau", role: "Owner", email: "camille@mapleandmast.example", phone: "902-555-0108" }],
       policies: [
-        p({ standardTasksDone: ["Strategy meeting", "Submit to market", "Compare quotes"], line: "General Liability", carrier: C.maritime, expires: 0, premium: 38_700, commission: 15, occ: 2 * M, agg: 4 * M, ded: 2_500, basis: "revenue", exposure: 9_600_000, endorsements: ["additional_insured", "notice_of_cancellation_30"], status: "in_progress", notes: "Expires on the as-of date (0 days)." }),
-        p({ line: "Property", carrier: C.maritime, expires: 0, premium: 52_100, commission: 15, occ: null, agg: null, ded: 5_000, basis: "square_feet", exposure: 24_500, status: "in_progress" }),
+        p({ key: "maple-gl", line: "General Liability", carrier: C.maritime, expires: 0, premium: 38_700, commission: 15, occ: 2 * M, agg: 4 * M, ded: 2_500, basis: "revenue", exposure: 9_600_000, endorsements: ["additional_insured", "notice_of_cancellation_30"], status: "renewed", outcome: { type: "renewed", successorKey: "maple-gl-renewal", recordedAsOf: d(-6) }, notes: "Expires on the as-of date (0 days); renewed." }),
+        p({ key: "maple-gl-renewal", previousKey: "maple-gl", line: "General Liability", carrier: C.maritime, expires: daysBetween(asOf, mapleRenewal.expiryDate).value, term: mapleRenewal, premium: 41_200, commission: 15, occ: 2 * M, agg: 4 * M, ded: 2_500, basis: "revenue", exposure: 10_100_000, endorsements: ["additional_insured", "notice_of_cancellation_30"], status: "not_started" }),
+        p({ key: "maple-pr", line: "Property", carrier: C.maritime, expires: 0, premium: 52_100, commission: 15, occ: null, agg: null, ded: 5_000, basis: "square_feet", exposure: 24_500, status: "renewed", outcome: { type: "renewed", successorKey: "maple-pr-renewal", recordedAsOf: d(-6) } }),
+        p({ key: "maple-pr-renewal", previousKey: "maple-pr", line: "Property", carrier: C.maritime, expires: daysBetween(asOf, mapleRenewal.expiryDate).value, term: mapleRenewal, premium: 55_900, commission: 15, occ: null, agg: null, ded: 5_000, basis: "square_feet", exposure: 24_500, status: "not_started" }),
         p({ line: "Cyber", carrier: C.lakeshore, expires: 240, premium: 7_900, commission: 17.5, occ: 500 * K, agg: 500 * K, ded: 2_500, basis: "revenue", exposure: 9_600_000 }),
       ],
     },
@@ -421,7 +430,8 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       notes: null,
       contacts: [{ name: "Leonard Mbeki", role: "Partner", email: "lmbeki@tidewatercpa.example", phone: "506-555-0112" }],
       policies: [
-        p({ line: "Professional Liability", carrier: C.maritime, expires: 330, premium: 28_600, commission: 15, occ: 2 * M, agg: 4 * M, ded: 10_000, basis: "revenue", exposure: 6_200_000 }),
+        p({ key: "tidewater-pl-prior", priorTerm: true, line: "Professional Liability", carrier: C.maritime, expires: priorOf(330), premium: 21_200, commission: 15, occ: 1 * M, agg: 2 * M, ded: 10_000, basis: "revenue", exposure: 5_100_000, status: "renewed", outcome: { type: "renewed", successorKey: "tidewater-pl", recordedAsOf: addDays(d(priorOf(330)), -9).value } }),
+        p({ key: "tidewater-pl", previousKey: "tidewater-pl-prior", line: "Professional Liability", carrier: C.maritime, expires: 330, premium: 28_600, commission: 15, occ: 2 * M, agg: 4 * M, ded: 10_000, basis: "revenue", exposure: 6_200_000 }),
         p({ line: "Cyber", carrier: C.lakeshore, expires: 330, premium: 8_400, commission: 17.5, occ: 1 * M, agg: 1 * M, ded: 5_000, basis: "revenue", exposure: 6_200_000 }),
       ],
     },
@@ -439,7 +449,8 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       notes: "Cross-border LTL carrier, 140 power units.",
       contacts: [{ name: "Agnes Thorvaldsen", role: "Safety Director", email: "athorvaldsen@greyhawkfreight.example", phone: "780-555-0176" }],
       policies: [
-        p({ standardTasksDone: ["Strategy meeting", "Submit to market"], line: "Commercial Auto", carrier: C.dominion, expires: 15, premium: 398_000, commission: 10, occ: 5 * M, agg: null, ded: 10_000, basis: "vehicles", exposure: 140, endorsements: ["additional_insured", "notice_of_cancellation_30"], status: "in_progress" }),
+        p({ key: "greyhawk-ca-prior", priorTerm: true, line: "Commercial Auto", carrier: C.dominion, expires: priorOf(15), premium: 352_000, commission: 10, occ: 5 * M, agg: null, ded: 10_000, basis: "vehicles", exposure: 128, status: "renewed", outcome: { type: "renewed", successorKey: "greyhawk-ca", recordedAsOf: addDays(d(priorOf(15)), -12).value } }),
+        p({ key: "greyhawk-ca", previousKey: "greyhawk-ca-prior", standardTasksDone: ["Strategy meeting", "Submit to market"], line: "Commercial Auto", carrier: C.dominion, expires: 15, premium: 398_000, commission: 10, occ: 5 * M, agg: null, ded: 10_000, basis: "vehicles", exposure: 140, endorsements: ["additional_insured", "notice_of_cancellation_30"], status: "in_progress" }),
         p({ line: "General Liability", carrier: C.dominion, expires: 15, premium: 44_000, commission: 12.5, occ: 2 * M, agg: 4 * M, ded: 5_000, basis: "revenue", exposure: 46 * M, endorsements: stdGl, status: "in_progress" }),
         p({ line: "Umbrella/Excess", carrier: C.boreal, expires: 15, premium: 96_500, commission: 12, occ: 10 * M, agg: 10 * M, ded: null, basis: "vehicles", exposure: 140, status: "in_progress" }),
         p({ line: "Workers Compensation", carrier: C.plains, expires: 220, premium: 52_000, commission: 10, occ: null, agg: null, ded: null, basis: "payroll", exposure: 19_800_000 }),
@@ -457,6 +468,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       notes: null,
       contacts: [{ name: "Delphine Arsenault", role: "Operations Manager", email: "darsenault@prairieloop.example", phone: "306-555-0121" }],
       policies: [
+        p({ key: "prairie-um-lost", priorTerm: true, line: "Umbrella/Excess", carrier: C.boreal, expires: -160, premium: 58_800, commission: 12, occ: 5 * M, agg: 5 * M, ded: null, basis: "vehicles", exposure: 46, status: "lost", outcome: { type: "lost", lostReason: "price", competingPremium: 49_500, recordedAsOf: d(-170) }, notes: "Moved to another broker's umbrella programme on price." }),
         p({ line: "Commercial Auto", carrier: C.plains, expires: 105, premium: 136_000, commission: 12.5, occ: 2 * M, agg: null, ded: 5_000, basis: "vehicles", exposure: 46 }),
         p({ line: "General Liability", carrier: C.plains, expires: 105, premium: 21_700, commission: 15, occ: 1 * M, agg: 2 * M, ded: 2_500, basis: "revenue", exposure: 11_300_000, endorsements: ["additional_insured"] }),
         p({ line: "Property", carrier: C.northgate, expires: 290, premium: 19_900, commission: 15, occ: null, agg: null, ded: 5_000, basis: "square_feet", exposure: 42_000 }),
@@ -476,7 +488,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       notes: "Six garden-centre locations.",
       contacts: [{ name: "Winston Alcott", role: "President", email: "walcott@copperfieldhg.example", phone: "519-555-0184" }],
       policies: [
-        p({ line: "Property", carrier: C.maritime, expires: 365, premium: 83_000, commission: 15, occ: null, agg: null, ded: 10_000, basis: "square_feet", exposure: 118_000 }),
+        p({ line: "Property", carrier: C.dominion, expires: 365, premium: 83_000, commission: 15, occ: null, agg: null, ded: 10_000, basis: "square_feet", exposure: 118_000 }),
         p({ line: "General Liability", carrier: C.maritime, expires: 365, premium: 36_200, commission: 15, occ: 2 * M, agg: 4 * M, ded: 5_000, basis: "revenue", exposure: 14_900_000, endorsements: ["additional_insured"] }),
         p({ line: "Commercial Auto", carrier: C.northgate, expires: 140, premium: 11_800, commission: 12.5, occ: 2 * M, agg: null, ded: 1_000, basis: "vehicles", exposure: 6 }),
       ],
@@ -551,6 +563,13 @@ function finalizeBook(asOf: ISODate, specs: AccountSpec[]): DemoAccount[] {
         activities.push({
           kind: "outcome_recorded",
           body: `Outcome recorded for ${label}: renewed with ${successor.carrier} at ${dollars(successor.annualPremium)} (expiring ${dollars(pol.annualPremium)}), ${successor.effectiveDate} to ${successor.expiryDate}.`,
+          policyKey: pol.key,
+          asOfDate: outcome.recordedAsOf,
+        });
+      } else if (outcome?.type === "non_renewed") {
+        activities.push({
+          kind: "outcome_recorded",
+          body: `Outcome recorded for ${label}: non-renewed by carrier. Reason: ${outcome.reason}`,
           policyKey: pol.key,
           asOfDate: outcome.recordedAsOf,
         });

@@ -18,9 +18,10 @@ describe("buildDemoBook", () => {
     }
   });
 
-  it("has about 45 policies, 2 to 5 current terms per account except the empty one", () => {
-    expect(allPolicies.length).toBeGreaterThanOrEqual(42);
-    expect(allPolicies.length).toBeLessThanOrEqual(50);
+  it("has about 45 current policies, 2 to 5 per account except the empty one", () => {
+    // v0.3 adds historical terms (prior years, one old loss) for the retention window; they are not counted here.
+    expect(currentPolicies.length).toBeGreaterThanOrEqual(42);
+    expect(currentPolicies.length).toBeLessThanOrEqual(50);
     const empty = book.filter((a) => a.policies.length === 0);
     expect(empty).toHaveLength(1);
     expect(empty[0].name).toBe("Summit Row Outfitters Inc.");
@@ -28,7 +29,7 @@ describe("buildDemoBook", () => {
       const current = a.policies.filter((p) => !p.priorTerm);
       if (current.length === 0) continue;
       expect(current.length).toBeGreaterThanOrEqual(2);
-      // Northfield holds 4 current rows: its renewed GL, the GL successor, Property and Auto.
+      // Maple & Mast holds 5 current rows: two renewed today, their two successors, and Cyber.
       expect(current.length).toBeLessThanOrEqual(5);
     }
   });
@@ -120,29 +121,36 @@ describe("buildDemoBook — v0.2 renewals data", () => {
     expect(m.sentence).toBe("Premium rose 8.0% while exposure rose 15.0%, so the rate fell 6.1%.");
   });
 
-  it("carries exactly three outcomes: two renewed with successors, one lost to price", () => {
+  it("carries 11 outcomes: 8 renewed with successors, 2 lost to price, 1 non-renewed", () => {
     const withOutcome = allPolicies.filter((p) => p.outcome);
-    expect(withOutcome).toHaveLength(3);
+    expect(withOutcome).toHaveLength(11);
     const renewed = withOutcome.filter((p) => p.outcome!.type === "renewed");
-    expect(renewed).toHaveLength(2);
+    expect(renewed).toHaveLength(8);
+    expect(withOutcome.filter((p) => p.outcome!.type === "non_renewed")).toHaveLength(1);
     for (const r of renewed) {
       const o = r.outcome as { successorKey: string };
       const successor = allPolicies.find((p) => p.key === o.successorKey)!;
       expect(successor.previousKey).toBe(r.key);
-      expect(successor.renewalStatus).toBe("not_started");
+      // successors start not_started; older ones have since moved to in_progress
+      expect(["not_started", "in_progress"]).toContain(successor.renewalStatus);
       expect(successor.effectiveDate).toBe(r.expiryDate);
     }
-    const lost = withOutcome.find((p) => p.outcome!.type === "lost")!;
-    expect(lost.outcome).toMatchObject({ lostReason: "price" });
-    expect(lost.renewalStatus).toBe("lost");
+    const lost = withOutcome.filter((p) => p.outcome!.type === "lost");
+    expect(lost).toHaveLength(2);
+    for (const l of lost) {
+      expect(l.outcome).toMatchObject({ lostReason: "price" });
+      expect(l.renewalStatus).toBe("lost");
+    }
     // closed statuses only come from outcomes
     const closed = allPolicies.filter((p) => ["renewed", "lost", "non_renewed"].includes(p.renewalStatus));
     expect(closed.map((p) => p.key).sort()).toEqual(withOutcome.map((p) => p.key).sort());
   });
 
   it("gives about a third of policies a partly completed checklist, plus one ready to market", () => {
-    const partial = allPolicies.filter((p) => p.checklist && p.checklist.some((i) => i.done) && p.checklist.some((i) => !i.done));
-    const ratio = partial.length / allPolicies.length;
+    const open = currentPolicies.filter((p) => !["renewed", "lost", "non_renewed"].includes(p.renewalStatus));
+    const partial = open.filter((p) => p.checklist && p.checklist.some((i) => i.done) && p.checklist.some((i) => !i.done));
+    // a third of open policies, e.g. 13 of 39
+    const ratio = partial.length / open.length;
     expect(ratio).toBeGreaterThanOrEqual(0.25);
     expect(ratio).toBeLessThanOrEqual(0.4);
     const complete = allPolicies.filter((p) => p.checklist && p.checklist.every((i) => i.done));
@@ -162,14 +170,17 @@ describe("buildDemoBook — v0.2 renewals data", () => {
     expect(isTaskOverdue(asOf, submit.dueDate, submit.done).value).toBe(true);
   });
 
-  it("puts at least one policy in every stage on first load", () => {
+  it("puts policies in every stage except Expired on first load", () => {
+    // v0.3: every expired policy in the trailing year has an outcome, so retention has no
+    // "unresolved, treated as lost" rows and shows exactly 87.5% / 80.0%. Expired is empty.
     const stages = new Set(allPolicies.map(stageOf));
-    expect(stages.size).toBe(7);
+    expect(stages.size).toBe(6);
+    expect(stages.has("Expired — action required")).toBe(false);
   });
 
   it("writes an activity for each outcome and the completed checklist", () => {
     const acts = book.flatMap((a) => a.activities);
-    expect(acts.filter((a) => a.kind === "outcome_recorded")).toHaveLength(3);
+    expect(acts.filter((a) => a.kind === "outcome_recorded")).toHaveLength(11);
     expect(acts.filter((a) => a.kind === "checklist_complete")).toHaveLength(1);
   });
 });

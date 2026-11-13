@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/form/NativeSelect";
 import { RENEWAL_STAGES } from "@/lib/domain/renewals";
+import { formatMonth } from "@/lib/format";
 import type { RenewalsView } from "@/server/renewals/queries";
 import { CleanGetForm } from "./CleanGetForm";
 import { renewalsHref, type RenewalsQuery } from "./params";
@@ -22,6 +23,19 @@ export function RenewalFilters({ slug, query, options }: { slug: string; query: 
     <CleanGetForm action={`/w/${slug}/renewals`} aria-label="Filter renewals" className="flex flex-col gap-3">
       {query.view !== "board" ? <input type="hidden" name="view" value={query.view} /> : null}
       {query.dir !== "asc" ? <input type="hidden" name="dir" value={query.dir} /> : null}
+      {query.month ? <input type="hidden" name="month" value={query.month} /> : null}
+      {query.open ? <input type="hidden" name="open" value={query.open} /> : null}
+      {query.month || query.open ? (
+        <p className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/60 p-2 text-sm">
+          <span>
+            Showing {query.open ? "open policies" : "policies"}
+            {query.month ? ` expiring in ${formatMonth(query.month) ?? query.month}` : ""}.
+          </span>
+          <Link href={renewalsHref(slug, query, { month: "", open: "" })} className="underline underline-offset-4">
+            Show all expiry months
+          </Link>
+        </p>
+      ) : null}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {fields.map((f) => (
           <div key={f.name} className="flex flex-col gap-1.5">
@@ -44,7 +58,7 @@ export function RenewalFilters({ slug, query, options }: { slug: string; query: 
         </Button>
         {active ? (
           <Button asChild variant="ghost">
-            <Link href={renewalsHref(slug, query, { producer: "", manager: "", line: "", carrier: "", stage: "" })}>Clear filters</Link>
+            <Link href={renewalsHref(slug, query, { producer: "", manager: "", line: "", carrier: "", stage: "", month: "", open: "" })}>Clear filters</Link>
           </Button>
         ) : null}
       </div>

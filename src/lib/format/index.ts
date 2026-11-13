@@ -59,3 +59,19 @@ export function formatRate(rate: number | null | undefined): string | null {
   if (rate === null || rate === undefined || !Number.isFinite(rate)) return null;
   return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rate);
 }
+
+/** A ratio as a percentage with one decimal: 0.875 → "87.5%". Null for missing. */
+export function formatRatioPercent(ratio: number | null | undefined): string | null {
+  if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) return null;
+  return `${(ratio * 100).toFixed(1)}%`;
+}
+
+const MONTH_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/** "2026-12" → "December 2026". Null when not a YYYY-MM string. */
+export function formatMonth(yyyymm: string | null | undefined): string | null {
+  if (!yyyymm || !/^\d{4}-\d{2}$/.test(yyyymm)) return null;
+  const m = Number(yyyymm.slice(5, 7));
+  if (m < 1 || m > 12) return null;
+  return `${MONTH_LONG[m - 1]} ${yyyymm.slice(0, 4)}`;
+}

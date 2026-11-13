@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatRate, formatSignedPercent } from "../index";
+import { formatMonth, formatRate, formatRatioPercent, formatSignedPercent } from "../index";
 
 describe("formatSignedPercent", () => {
   it("signs and rounds to one decimal", () => {
@@ -14,5 +14,21 @@ describe("formatRate", () => {
   it("shows dollars and cents", () => {
     expect(formatRate(4.695652)).toBe("$4.70");
     expect(formatRate(undefined)).toBeNull();
+  });
+});
+
+
+describe("formatRatioPercent and formatMonth", () => {
+  it("formats ratios to one decimal", () => {
+    expect(formatRatioPercent(0.875)).toBe("87.5%"); // 0.875 × 100 = 87.5
+    expect(formatRatioPercent(0.8)).toBe("80.0%");
+    expect(formatRatioPercent(1.0546)).toBe("105.5%");
+    expect(formatRatioPercent(null)).toBeNull();
+    expect(formatRatioPercent(NaN)).toBeNull();
+  });
+  it("names months", () => {
+    expect(formatMonth("2026-12")).toBe("December 2026");
+    expect(formatMonth("2026-13")).toBeNull();
+    expect(formatMonth("")).toBeNull();
   });
 });

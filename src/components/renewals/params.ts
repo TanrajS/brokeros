@@ -9,7 +9,7 @@ export interface RenewalsQuery extends RenewalFilters {
 export function renewalsHref(slug: string, q: RenewalsQuery, patch: Partial<RenewalsQuery> = {}): string {
   const next = { ...q, ...patch };
   const params = new URLSearchParams();
-  for (const key of ["producer", "manager", "line", "carrier", "stage"] as const) {
+  for (const key of ["producer", "manager", "line", "carrier", "stage", "month", "open"] as const) {
     if (next[key]) params.set(key, next[key]);
   }
   if (next.view !== "board") params.set("view", next.view);

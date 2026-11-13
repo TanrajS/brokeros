@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.3 — Dashboard (2026-11-12)
+
+Dashboard: book, retention, expiring premium, revenue forecast, concentration.
+
+- **Filters in the URL:** producer, lookback window (trailing 6, 12 or 24 months)
+  and forward window (next 3, 6 or 12 months). The exact start and end dates of
+  each window are printed on the page.
+- **Book tiles** for the book in force at the as-of date: in-force premium,
+  policy count, active accounts, booked commission and the premium-weighted
+  average commission rate.
+- **Retention:** count retention, premium retention and the renewed premium
+  ratio, each with numerator and denominator shown. Expired policies with no
+  outcome count as lost and are flagged. The page says how many policies with
+  an outcome were left out because they have not expired. A lost business table
+  lists account, line, carrier, expiring premium, reason and competing premium.
+- **Expiring premium:** a bar chart by month for open policies, with an
+  accessible table beneath. Clicking a bar or a month opens Renewals filtered to
+  that month (new `month` and `open` filters). Also a table of the top 10
+  expiring policies with days to expiry and readiness.
+- **Revenue forecast:** Low, Base and High commission from editable assumptions
+  (retention defaults to premium retention or 85%, rate change to 0%), kept in
+  the URL, with every policy's contribution in Show the math.
+- **Concentration:** share of in-force premium by carrier, line and top 5
+  accounts, with a neutral note when a carrier is above 35% or an account above
+  15%.
+- **Producer view:** every figure recomputes for the selected producer's
+  accounts, with "Showing N of M accounts (producer: name)."
+- Every figure has Show the math. Missing values show an em dash with a
+  tooltip, never NaN.
+- **Demo book:** the trailing 12 months now hold exactly 10 resolved renewals (8
+  renewed, 1 lost, 1 non-renewed; $1,240,000 expiring, $1,085,000 renewed), so
+  premium retention shows 87.5% and count retention 80.0%. Dominion Shield
+  holds 39.7% of in-force premium. To get there, five accounts gained a
+  prior-year term or a historical loss. Maple & Mast's two policies expiring
+  today were renewed and Northfield's property was non-renewed. As a result the
+  Renewals "Expired — action required" column is empty in the demo.
+- All metric logic is in `src/lib/domain/dashboard.ts` with hand-checked tests.
+  A seed test runs the demo book through the retention function and expects
+  0.875 and 0.80.
+
 ## v0.2 — Renewals (2026-11-12)
 
 Renewals: stages, readiness checklist, tasks, activities, outcomes, rate change math.

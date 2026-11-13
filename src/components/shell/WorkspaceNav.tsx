@@ -8,7 +8,7 @@ import { cn } from "cn";
 const items = [
   { href: "", label: "Book", icon: BookOpen },
   { href: "/renewals", label: "Renewals", icon: CalendarClock },
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, hint: "v0.3" },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/placement", label: "Placement", icon: Briefcase, hint: "v0.4" },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;

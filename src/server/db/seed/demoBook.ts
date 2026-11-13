@@ -97,7 +97,7 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
           policyId: pid(p.key),
           outcome: o.type,
           lostReason: o.type === "lost" ? o.lostReason : null,
-          reason: null,
+          reason: o.type === "non_renewed" ? o.reason : null,
           competingPremium: o.type === "lost" ? o.competingPremium : null,
           successorPolicyId: o.type === "renewed" ? pid(o.successorKey) : null,
           priorStatus: "in_progress" as const,

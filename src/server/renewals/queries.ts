@@ -43,6 +43,10 @@ export interface RenewalFilters {
   line: string;
   carrier: string;
   stage: string;
+  /** YYYY-MM: only policies expiring in this calendar month (linked from the Dashboard chart). */
+  month: string;
+  /** "1": only open policies (no outcome yet). */
+  open: string;
 }
 
 export interface RenewalRow {
@@ -145,7 +149,9 @@ export async function listRenewals(ws: Workspace, filters: RenewalFilters, sortD
         (!filters.manager || r.accountManager === filters.manager) &&
         (!filters.line || r.lineOfBusiness === filters.line) &&
         (!filters.carrier || r.carrier === filters.carrier) &&
-        (!filters.stage || r.stage === filters.stage),
+        (!filters.stage || r.stage === filters.stage) &&
+        (!filters.month || r.expiryDate.startsWith(`${filters.month}-`)) &&
+        (filters.open !== "1" || r.renewalStatus === "not_started" || r.renewalStatus === "in_progress"),
     )
     .sort((a, b) => (a.daysToExpiry - b.daysToExpiry) * (sortDir === "desc" ? -1 : 1) || a.accountName.localeCompare(b.accountName));
 
