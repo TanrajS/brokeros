@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, daysBetween, isExpiryAfterEffective, isISODate } from "../dates";
+import { addDays, addMonths, daysBetween, isExpiryAfterEffective, isISODate } from "../dates";
 
 describe("daysBetween", () => {
   it("counts forward across a month boundary", () => {
@@ -79,5 +79,25 @@ describe("isISODate", () => {
     expect(isISODate("2026-13-01")).toBe(false);
     expect(isISODate("26-01-01")).toBe(false);
     expect(isISODate(20260101)).toBe(false);
+  });
+});
+
+
+describe("addMonths", () => {
+  it("keeps the day when the target month has it", () => {
+    // Nov 2026 + 12 months = Nov 2027, day 12 kept
+    expect(addMonths("2026-11-12", 12).value).toBe("2027-11-12");
+    // Dec 2026 + 1 month = Jan 2027 (year rolls over)
+    expect(addMonths("2026-12-15", 1).value).toBe("2027-01-15");
+  });
+  it("clamps to the last day of a shorter month", () => {
+    // Jan 31 + 1 month → Feb has 28 days in 2026 → Feb 28
+    expect(addMonths("2026-01-31", 1).value).toBe("2026-02-28");
+    // Feb 29 2028 + 12 months → Feb 2029 has 28 days → Feb 28
+    expect(addMonths("2028-02-29", 12).value).toBe("2029-02-28");
+  });
+  it("goes backwards", () => {
+    // Mar 31 − 1 month → Feb 2026 has 28 days → Feb 28
+    expect(addMonths("2026-03-31", -1).value).toBe("2026-02-28");
   });
 });

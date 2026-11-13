@@ -11,6 +11,8 @@ import { daysBetween } from "@/lib/domain/dates";
 import { commissionAmount, formatLimit } from "@/lib/domain/money";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
 import { RENEWAL_STATUS_LABELS } from "@/lib/constants";
+import { getRenewalStage } from "@/lib/domain/renewals";
+import { StageBadge } from "@/components/renewals/StageBadge";
 import type { Policy } from "@/server/db/schema";
 
 interface Props {
@@ -60,6 +62,7 @@ export function PoliciesTable({ slug, accountId, asOf, policies }: Props) {
                 <TableHead className="text-right">Commission</TableHead>
                 <TableHead>Expiry</TableHead>
                 <TableHead>Days to expiry</TableHead>
+                <TableHead>Stage</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-24">
                   <span className="sr-only">Actions</span>
@@ -76,7 +79,12 @@ export function PoliciesTable({ slug, accountId, asOf, policies }: Props) {
                 return (
                   <TableRow key={p.id}>
                     <TableCell className="font-medium">
-                      {p.carrier}
+                      <Link
+                        href={`/w/${slug}/accounts/${accountId}/policies/${p.id}`}
+                        className="rounded-sm outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+                      >
+                        {p.carrier}
+                      </Link>
                       {p.policyNumber ? <span className="block text-xs text-muted-foreground">{p.policyNumber}</span> : null}
                     </TableCell>
                     <TableCell>{p.lineOfBusiness}</TableCell>
@@ -114,6 +122,9 @@ export function PoliciesTable({ slug, accountId, asOf, policies }: Props) {
                     <TableCell className="whitespace-nowrap">{formatDate(p.expiryDate)}</TableCell>
                     <TableCell>
                       <DaysBadge days={days} />
+                    </TableCell>
+                    <TableCell>
+                      <StageBadge stage={getRenewalStage(days, p.renewalStatus).value} />
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">{RENEWAL_STATUS_LABELS[p.renewalStatus]}</Badge>

@@ -8,6 +8,8 @@ import { accounts, workspaces } from "@/server/db/schema";
 import { DEMO_WORKSPACE_NAME, loadDemoBook } from "@/server/db/seed/demoBook";
 import { describeFailure, fail, fieldErrorsFromZod, ok, type ActionResult } from "@/server/actionResult";
 import { RESET_CONFIRMATION, workspaceSettingsSchema, type WorkspaceSettingsInput } from "@/lib/schemas/workspace";
+import { getExecutor } from "@/server/db/tx";
+import { syncStages } from "@/server/renewals/stages";
 import { writeWorkspaceCookie } from "./cookie";
 import { countAccounts, createWorkspace, getWorkspaceBySlug, todayISO } from "./queries";
 
@@ -34,6 +36,8 @@ export async function updateWorkspaceSettings(slug: string, input: WorkspaceSett
       .update(workspaces)
       .set({ name: parsed.data.name, asOfDate: parsed.data.asOfDate, updatedAt: new Date() })
       .where(eq(workspaces.id, ws.id));
+    // A new as-of date can move policies between stages; log each move.
+    if (parsed.data.asOfDate !== ws.asOfDate) await syncStages(getExecutor(), ws.id, parsed.data.asOfDate);
     revalidatePath(`/w/${slug}`, "layout");
     return ok(undefined);
   } catch (err) {

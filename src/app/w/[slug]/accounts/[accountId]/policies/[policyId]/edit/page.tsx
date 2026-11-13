@@ -53,7 +53,7 @@ export default async function EditPolicyPage({ params }: { params: Promise<{ slu
         policyId={p.id}
         defaultValues={defaults}
         previousOptions={previousOptions}
-        cancelHref={`/w/${slug}/accounts/${accountId}`}
+        cancelHref={`/w/${slug}/accounts/${accountId}/policies/${p.id}`}
       />
     </div>
   );

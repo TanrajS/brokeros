@@ -7,12 +7,14 @@
  *  - created_at / updated_at: timestamps with time zone
  *  - money: numeric(14,2); rates: numeric(6,3); calendar dates: date (YYYY-MM-DD strings)
  *
- * Later versions add claims, tower_layers, contract_requirements, certificates,
- * submissions, quotes, quote_options, tasks and activities via new migrations.
+ * v0.2 added checklist_items, tasks, activities and renewal_outcomes. Later
+ * versions add claims, tower_layers, contract_requirements, certificates,
+ * submissions, quotes and quote_options via new migrations.
  * Keep the helper column factories below so those tables stay consistent.
  */
 import { relations, sql } from "drizzle-orm";
 import {
+  boolean,
   date,
   index,
   integer,
@@ -22,11 +24,16 @@ import {
   text,
   timestamp,
   uuid,
+  uniqueIndex,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import {
   ACCOUNT_STATUSES,
+  ACTIVITY_KINDS,
+  CHECKLIST_SOURCES,
   ENDORSEMENTS,
+  LOST_REASONS,
+  OUTCOME_TYPES,
   EXPOSURE_BASES,
   LINES_OF_BUSINESS,
   RENEWAL_STATUSES,
@@ -37,6 +44,10 @@ export const lineOfBusinessEnum = pgEnum("line_of_business", LINES_OF_BUSINESS);
 export const exposureBasisEnum = pgEnum("exposure_basis", EXPOSURE_BASES);
 export const renewalStatusEnum = pgEnum("renewal_status", RENEWAL_STATUSES);
 export const endorsementEnum = pgEnum("endorsement", ENDORSEMENTS);
+export const checklistSourceEnum = pgEnum("checklist_source", CHECKLIST_SOURCES);
+export const activityKindEnum = pgEnum("activity_kind", ACTIVITY_KINDS);
+export const outcomeTypeEnum = pgEnum("outcome_type", OUTCOME_TYPES);
+export const lostReasonEnum = pgEnum("lost_reason", LOST_REASONS);
 
 /** Column helpers so every table shares the same audit columns and types. */
 const timestamps = {
@@ -123,6 +134,11 @@ export const policies = pgTable(
     renewalStatus: renewalStatusEnum("renewal_status").notNull().default("not_started"),
     previousPolicyId: uuid("previous_policy_id").references((): AnyPgColumn => policies.id, { onDelete: "set null" }),
     notes: text("notes"),
+    /**
+     * The renewal stage last written to the activity log (v0.2). Stage itself is
+     * always derived from the as-of date; this only lets us detect changes.
+     */
+    lastLoggedStage: text("last_logged_stage"),
     ...timestamps,
   },
   (t) => [
@@ -130,6 +146,98 @@ export const policies = pgTable(
     index("policies_workspace_idx").on(t.workspaceId),
     index("policies_workspace_expiry_idx").on(t.workspaceId, t.expiryDate),
   ],
+);
+
+/* ---------- v0.2 Renewals ---------- */
+
+export const checklistItems = pgTable(
+  "checklist_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => policies.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    required: boolean("required").notNull().default(true),
+    done: boolean("done").notNull().default(false),
+    source: checklistSourceEnum("source").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("checklist_items_policy_label_uq").on(t.policyId, t.label), index("checklist_items_workspace_idx").on(t.workspaceId)],
+);
+
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    policyId: uuid("policy_id").references(() => policies.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    dueDate: date("due_date", { mode: "string" }).notNull(),
+    owner: text("owner"),
+    done: boolean("done").notNull().default(false),
+    ...timestamps,
+  },
+  (t) => [
+    index("tasks_workspace_due_idx").on(t.workspaceId, t.dueDate),
+    index("tasks_account_idx").on(t.accountId),
+    index("tasks_policy_idx").on(t.policyId),
+  ],
+);
+
+export const activities = pgTable(
+  "activities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    /** Kept when the policy is deleted so the history survives. */
+    policyId: uuid("policy_id").references(() => policies.id, { onDelete: "set null" }),
+    kind: activityKindEnum("kind").notNull(),
+    body: text("body").notNull(),
+    /** The workspace as-of date when the entry was written. */
+    asOfDate: date("as_of_date", { mode: "string" }).notNull(),
+    ...timestamps,
+  },
+  (t) => [index("activities_account_idx").on(t.accountId, t.createdAt), index("activities_workspace_idx").on(t.workspaceId)],
+);
+
+/** One row per policy that has an outcome. Deleting the row (Undo) reopens the policy. */
+export const renewalOutcomes = pgTable(
+  "renewal_outcomes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => policies.id, { onDelete: "cascade" }),
+    outcome: outcomeTypeEnum("outcome").notNull(),
+    lostReason: lostReasonEnum("lost_reason"),
+    /** Non-renewal reason, or extra detail for a lost outcome. */
+    reason: text("reason"),
+    competingPremium: money("competing_premium"),
+    successorPolicyId: uuid("successor_policy_id").references((): AnyPgColumn => policies.id, { onDelete: "set null" }),
+    /** Renewal status before the outcome, restored by Undo. */
+    priorStatus: renewalStatusEnum("prior_status").notNull(),
+    recordedAsOf: date("recorded_as_of", { mode: "string" }).notNull(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("renewal_outcomes_policy_uq").on(t.policyId), index("renewal_outcomes_workspace_idx").on(t.workspaceId)],
 );
 
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
@@ -164,3 +272,7 @@ export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;
 export type Policy = typeof policies.$inferSelect;
 export type NewPolicy = typeof policies.$inferInsert;
+export type ChecklistItem = typeof checklistItems.$inferSelect;
+export type Task = typeof tasks.$inferSelect;
+export type Activity = typeof activities.$inferSelect;
+export type RenewalOutcome = typeof renewalOutcomes.$inferSelect;

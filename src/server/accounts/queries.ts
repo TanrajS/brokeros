@@ -46,13 +46,24 @@ export async function listBook(workspaceId: string, asOf: ISODate, query: BookQu
   const [accountRows, policyRows] = await Promise.all([
     db.select().from(accounts).where(eq(accounts.workspaceId, workspaceId)).orderBy(asc(accounts.name)),
     db
-      .select({ accountId: policies.accountId, expiryDate: policies.expiryDate, annualPremium: policies.annualPremium })
+      .select({
+        id: policies.id,
+        accountId: policies.accountId,
+        expiryDate: policies.expiryDate,
+        annualPremium: policies.annualPremium,
+        previousPolicyId: policies.previousPolicyId,
+      })
       .from(policies)
       .where(eq(policies.workspaceId, workspaceId)),
   ]);
 
+  // v0.2: a renewed term stays on file for history but is superseded by its
+  // successor, so the Book counts only current terms (no double premium).
+  const superseded = new Set(policyRows.map((p) => p.previousPolicyId).filter((id): id is string => id !== null));
+
   const byAccount = new Map<string, { expiries: string[]; premiums: number[] }>();
   for (const p of policyRows) {
+    if (superseded.has(p.id)) continue;
     const bucket = byAccount.get(p.accountId) ?? { expiries: [], premiums: [] };
     bucket.expiries.push(p.expiryDate);
     bucket.premiums.push(p.annualPremium);

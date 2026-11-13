@@ -1,6 +1,6 @@
 /** Enumerations shared by the database schema, Zod schemas and the UI. */
 
-export const APP_VERSION = "v0.1";
+export const APP_VERSION = "v0.2";
 
 export const ACCOUNT_STATUSES = ["prospect", "active", "lost"] as const;
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
@@ -73,4 +73,52 @@ export const ACCOUNT_STATUS_LABELS: Record<AccountStatus, string> = {
   prospect: "Prospect",
   active: "Active",
   lost: "Lost",
+};
+
+/* ---------- v0.2 Renewals ---------- */
+
+/** Statuses a user can set directly on a policy. The closed ones are only set by recording an outcome. */
+export const OPEN_RENEWAL_STATUSES = ["not_started", "in_progress"] as const satisfies readonly RenewalStatus[];
+export const CLOSED_RENEWAL_STATUSES = ["renewed", "lost", "non_renewed"] as const satisfies readonly RenewalStatus[];
+
+export function isClosedRenewalStatus(s: RenewalStatus): boolean {
+  return (CLOSED_RENEWAL_STATUSES as readonly string[]).includes(s);
+}
+
+export const OUTCOME_TYPES = ["renewed", "lost", "non_renewed"] as const;
+export type OutcomeType = (typeof OUTCOME_TYPES)[number];
+export const OUTCOME_TYPE_LABELS: Record<OutcomeType, string> = {
+  renewed: "Renewed",
+  lost: "Lost",
+  non_renewed: "Non-renewed by carrier",
+};
+
+export const LOST_REASONS = ["price", "coverage", "service", "business_closed", "moved_broker", "other"] as const;
+export type LostReason = (typeof LOST_REASONS)[number];
+export const LOST_REASON_LABELS: Record<LostReason, string> = {
+  price: "Price",
+  coverage: "Coverage",
+  service: "Service",
+  business_closed: "Business closed",
+  moved_broker: "Moved to another broker",
+  other: "Other",
+};
+
+export const CHECKLIST_SOURCES = ["common", "line", "custom"] as const;
+export type ChecklistSource = (typeof CHECKLIST_SOURCES)[number];
+
+export const ACTIVITY_KINDS = [
+  "note",
+  "stage_change",
+  "checklist_complete",
+  "outcome_recorded",
+  "outcome_undone",
+] as const;
+export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
+export const ACTIVITY_KIND_LABELS: Record<ActivityKind, string> = {
+  note: "Note",
+  stage_change: "Stage change",
+  checklist_complete: "Checklist complete",
+  outcome_recorded: "Outcome recorded",
+  outcome_undone: "Outcome undone",
 };

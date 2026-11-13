@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { buildDemoBook } from "../demoBookData";
 import { daysBetween } from "@/lib/domain/dates";
+import { checklistTemplate, getRenewalStage, getRateMetrics, isTaskOverdue } from "@/lib/domain/renewals";
 
 const asOf = "2026-11-12";
 const book = buildDemoBook(asOf);
 const allPolicies = book.flatMap((a) => a.policies.map((p) => ({ account: a.name, ...p })));
+/** v0.1 rules apply to current terms; v0.2 adds one prior-year term for the rate example. */
+const currentPolicies = allPolicies.filter((p) => !p.priorTerm);
 
 describe("buildDemoBook", () => {
   it("has 14 accounts across the six industries", () => {
@@ -15,21 +18,23 @@ describe("buildDemoBook", () => {
     }
   });
 
-  it("has about 45 policies, 2 to 5 per account except the empty one", () => {
+  it("has about 45 policies, 2 to 5 current terms per account except the empty one", () => {
     expect(allPolicies.length).toBeGreaterThanOrEqual(42);
     expect(allPolicies.length).toBeLessThanOrEqual(50);
     const empty = book.filter((a) => a.policies.length === 0);
     expect(empty).toHaveLength(1);
     expect(empty[0].name).toBe("Summit Row Outfitters Inc.");
     for (const a of book) {
-      if (a.policies.length === 0) continue;
-      expect(a.policies.length).toBeGreaterThanOrEqual(2);
-      expect(a.policies.length).toBeLessThanOrEqual(5);
+      const current = a.policies.filter((p) => !p.priorTerm);
+      if (current.length === 0) continue;
+      expect(current.length).toBeGreaterThanOrEqual(2);
+      // Northfield holds 4 current rows: its renewed GL, the GL successor, Property and Auto.
+      expect(current.length).toBeLessThanOrEqual(5);
     }
   });
 
   it("keeps premiums, commissions and expiries within the specified ranges", () => {
-    for (const p of allPolicies) {
+    for (const p of currentPolicies) {
       expect(p.annualPremium).toBeGreaterThanOrEqual(6_000);
       expect(p.annualPremium).toBeLessThanOrEqual(420_000);
       expect(p.commissionRate).toBeGreaterThanOrEqual(10);
@@ -38,13 +43,13 @@ describe("buildDemoBook", () => {
       expect(days).toBeGreaterThanOrEqual(-30);
       expect(days).toBeLessThanOrEqual(400);
       expect(days).toBe(p.expiryOffsetDays);
-      // every term is a 365-day policy: expiry − 365 = effective
-      expect(daysBetween(p.effectiveDate, p.expiryDate).value).toBe(365);
+      // every term is a year: 365 days, or 366 when a successor's 12 months span Feb 29
+      expect([365, 366]).toContain(daysBetween(p.effectiveDate, p.expiryDate).value);
     }
   });
 
   it("includes the required exact day offsets", () => {
-    const offsets = new Set(allPolicies.map((p) => p.expiryOffsetDays));
+    const offsets = new Set(currentPolicies.map((p) => p.expiryOffsetDays));
     for (const required of [120, 121, 90, 60, 30, 0]) expect(offsets.has(required)).toBe(true);
     expect(allPolicies.some((p) => p.expiryOffsetDays < 0)).toBe(true);
   });
@@ -54,7 +59,7 @@ describe("buildDemoBook", () => {
     expect(a.industry).toBe("construction");
     expect(a.annualRevenue).toBe(23_000_000);
     expect(a.employeeCount).toBe(140);
-    const gl = a.policies.find((p) => p.lineOfBusiness === "General Liability")!;
+    const gl = a.policies.find((p) => p.lineOfBusiness === "General Liability" && !p.priorTerm)!;
     expect(gl.occurrenceLimit).toBe(1_000_000);
     expect(gl.aggregateLimit).toBe(2_000_000);
     expect(gl.deductible).toBe(5_000);
@@ -90,5 +95,81 @@ describe("buildDemoBook", () => {
 
   it("is deterministic for the same as-of date", () => {
     expect(buildDemoBook(asOf)).toEqual(book);
+  });
+});
+
+describe("buildDemoBook — v0.2 renewals data", () => {
+  const stageOf = (p: (typeof allPolicies)[number]) => getRenewalStage(daysBetween(asOf, p.expiryDate).value, p.renewalStatus).value;
+
+  it("chains Cedar Ridge's GL to a prior-year $100,000 on $20,000,000 term", () => {
+    const cedar = book.find((a) => a.name === "Cedar Ridge Mechanical Ltd.")!;
+    const current = cedar.policies.find((p) => p.key === "cedar-gl")!;
+    const prior = cedar.policies.find((p) => p.key === "cedar-gl-prior")!;
+    expect(current.previousKey).toBe("cedar-gl-prior");
+    expect(prior.annualPremium).toBe(100_000);
+    expect(prior.exposureAmount).toBe(20_000_000);
+    expect(prior.renewalStatus).toBe("renewed");
+    expect(prior.outcome).toMatchObject({ type: "renewed", successorKey: "cedar-gl" });
+    // prior expiry = current effective (the successor starts the day the prior ends)
+    expect(prior.expiryDate).toBe(current.effectiveDate);
+    // 108,000 ÷ 23,000 = 4.695652 vs 100,000 ÷ 20,000 = 5 → 0.939130 − 1 = −0.060870
+    const m = getRateMetrics(
+      { premium: prior.annualPremium, exposureAmount: prior.exposureAmount, exposureBasis: prior.exposureBasis },
+      { premium: current.annualPremium, exposureAmount: current.exposureAmount, exposureBasis: current.exposureBasis },
+    ).value;
+    expect(m.sentence).toBe("Premium rose 8.0% while exposure rose 15.0%, so the rate fell 6.1%.");
+  });
+
+  it("carries exactly three outcomes: two renewed with successors, one lost to price", () => {
+    const withOutcome = allPolicies.filter((p) => p.outcome);
+    expect(withOutcome).toHaveLength(3);
+    const renewed = withOutcome.filter((p) => p.outcome!.type === "renewed");
+    expect(renewed).toHaveLength(2);
+    for (const r of renewed) {
+      const o = r.outcome as { successorKey: string };
+      const successor = allPolicies.find((p) => p.key === o.successorKey)!;
+      expect(successor.previousKey).toBe(r.key);
+      expect(successor.renewalStatus).toBe("not_started");
+      expect(successor.effectiveDate).toBe(r.expiryDate);
+    }
+    const lost = withOutcome.find((p) => p.outcome!.type === "lost")!;
+    expect(lost.outcome).toMatchObject({ lostReason: "price" });
+    expect(lost.renewalStatus).toBe("lost");
+    // closed statuses only come from outcomes
+    const closed = allPolicies.filter((p) => ["renewed", "lost", "non_renewed"].includes(p.renewalStatus));
+    expect(closed.map((p) => p.key).sort()).toEqual(withOutcome.map((p) => p.key).sort());
+  });
+
+  it("gives about a third of policies a partly completed checklist, plus one ready to market", () => {
+    const partial = allPolicies.filter((p) => p.checklist && p.checklist.some((i) => i.done) && p.checklist.some((i) => !i.done));
+    const ratio = partial.length / allPolicies.length;
+    expect(ratio).toBeGreaterThanOrEqual(0.25);
+    expect(ratio).toBeLessThanOrEqual(0.4);
+    const complete = allPolicies.filter((p) => p.checklist && p.checklist.every((i) => i.done));
+    expect(complete).toHaveLength(1);
+    for (const p of allPolicies) {
+      if (p.checklist) expect(p.checklist.map((i) => i.label)).toEqual(checklistTemplate(p.lineOfBusiness).value.map((i) => i.label));
+    }
+  });
+
+  it("has overdue tasks on several policies", () => {
+    const overdueByPolicy = allPolicies.filter((p) => p.tasks.some((t) => isTaskOverdue(asOf, t.dueDate, t.done).value));
+    expect(overdueByPolicy.length).toBeGreaterThanOrEqual(4);
+    // Harbourline GL: expiry +60, "Submit to market" due 60 − 90 = −30 days and not done → overdue
+    const harbour = allPolicies.find((p) => p.account === "Harbourline Foods Inc." && p.lineOfBusiness === "General Liability")!;
+    const submit = harbour.tasks.find((t) => t.title === "Submit to market")!;
+    expect(daysBetween(asOf, submit.dueDate).value).toBe(-30);
+    expect(isTaskOverdue(asOf, submit.dueDate, submit.done).value).toBe(true);
+  });
+
+  it("puts at least one policy in every stage on first load", () => {
+    const stages = new Set(allPolicies.map(stageOf));
+    expect(stages.size).toBe(7);
+  });
+
+  it("writes an activity for each outcome and the completed checklist", () => {
+    const acts = book.flatMap((a) => a.activities);
+    expect(acts.filter((a) => a.kind === "outcome_recorded")).toHaveLength(3);
+    expect(acts.filter((a) => a.kind === "checklist_complete")).toHaveLength(1);
   });
 });

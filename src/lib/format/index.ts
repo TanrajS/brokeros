@@ -45,3 +45,17 @@ export function describeDays(days: number | null | undefined): string | null {
 export function titleCase(s: string): string {
   return s.replace(/\b\w/g, (c) => c.toUpperCase());
 }
+
+/** "+8.0%", "−6.1%", "0.0%" from a ratio such as 0.08. Null for missing. */
+export function formatSignedPercent(ratio: number | null | undefined, decimals = 1): string | null {
+  if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) return null;
+  const text = Math.abs(ratio * 100).toFixed(decimals);
+  if (Number(text) === 0) return `${text}%`;
+  return `${ratio > 0 ? "+" : "−"}${text}%`;
+}
+
+/** A premium rate in dollars with two decimals, e.g. "$4.70". */
+export function formatRate(rate: number | null | undefined): string | null {
+  if (rate === null || rate === undefined || !Number.isFinite(rate)) return null;
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rate);
+}

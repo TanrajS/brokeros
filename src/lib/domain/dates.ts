@@ -74,3 +74,31 @@ export function isExpiryAfterEffective(effective: ISODate, expiry: ISODate): Cal
     },
   };
 }
+
+function daysInMonth(year: number, month1to12: number): number {
+  return new Date(Date.UTC(year, month1to12, 0)).getUTCDate();
+}
+
+/**
+ * Adds whole calendar months. When the target month is shorter, the day is
+ * clamped to its last day (31 Jan + 1 month = 28 Feb; 29 Feb 2028 + 12 = 28 Feb 2029).
+ */
+export function addMonths(date: ISODate, months: number): Calc<ISODate> {
+  if (!Number.isInteger(months)) throw new Error(`Expected a whole number of months, received ${months}`);
+  if (!isISODate(date)) throw new Error(`Expected a YYYY-MM-DD date, received "${date}"`);
+  const [y, m, d] = date.split("-").map(Number);
+  const monthIndex = y * 12 + (m - 1) + months;
+  const targetYear = Math.floor(monthIndex / 12);
+  const targetMonth = (monthIndex % 12) + 1;
+  const lastDay = daysInMonth(targetYear, targetMonth);
+  const targetDay = Math.min(d, lastDay);
+  const value = `${String(targetYear).padStart(4, "0")}-${String(targetMonth).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
+  return {
+    value,
+    math: {
+      inputs: { date, months },
+      formula: "move the month forward by `months`; keep the day, clamped to the last day of the target month",
+      steps: { targetYear, targetMonth, lastDayOfTargetMonth: lastDay, targetDay, result: value },
+    },
+  };
+}

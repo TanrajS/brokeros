@@ -9,6 +9,10 @@ import { ValueOrMissing } from "@/components/Missing";
 import { ContactsSection } from "@/components/account/ContactsSection";
 import { DeleteAccountButton } from "@/components/account/DeleteAccountButton";
 import { PoliciesTable } from "@/components/account/PoliciesTable";
+import { ActivitySection } from "@/components/activity/ActivitySection";
+import { TasksSection } from "@/components/tasks/TasksSection";
+import { formatDate } from "@/lib/format";
+import { listAccountActivities, listAccountTasks } from "@/server/renewals/queries";
 import { ACCOUNT_STATUS_LABELS } from "@/lib/constants";
 import { formatCurrency, formatInteger, titleCase } from "@/lib/format";
 import { getAccountDetail } from "@/server/accounts/queries";
@@ -29,6 +33,7 @@ export default async function AccountPage({ params }: { params: Params }) {
   const detail = await getAccountDetail(ws.id, accountId);
   if (!detail) notFound();
   const { account, contacts, policies } = detail;
+  const [tasks, activities] = await Promise.all([listAccountTasks(ws.id, account.id), listAccountActivities(ws.id, account.id)]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -85,6 +90,19 @@ export default async function AccountPage({ params }: { params: Params }) {
 
       <ContactsSection slug={slug} accountId={account.id} contacts={contacts} />
       <PoliciesTable slug={slug} accountId={account.id} asOf={ws.asOfDate} policies={policies} />
+      <TasksSection
+        slug={slug}
+        accountId={account.id}
+        asOf={ws.asOfDate}
+        defaultOwner={account.accountManager ?? account.producer}
+        tasks={tasks.map((t) => ({ id: t.id, title: t.title, dueDate: t.dueDate, owner: t.owner, done: t.done, policyId: t.policyId }))}
+        policyOptions={policies.map((p) => ({ id: p.id, label: `${p.lineOfBusiness} · ${p.carrier} · expires ${formatDate(p.expiryDate)}` }))}
+      />
+      <ActivitySection
+        slug={slug}
+        accountId={account.id}
+        activities={activities.map((a) => ({ id: a.id, kind: a.kind, body: a.body, asOfDate: a.asOfDate }))}
+      />
     </div>
   );
 }

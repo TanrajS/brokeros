@@ -88,15 +88,51 @@ before changing anything, and keep it current when the rules change.
 - Cache Components keeps recently visited routes hidden in the DOM (React
   `<Activity>`), so browser tests must scope locators to `main:visible` or the
   open `dialog`; a label that also exists on a hidden route is ambiguous.
+- Server HTML renders react-hook-form inputs empty; they fill on hydration.
+  Browser tests must `waitForLoadState("networkidle")` before reading values.
+- A horizontal scroll container must be `relative`, or `sr-only` text inside it
+  (absolutely positioned) escapes the clipping and widens the whole page.
+- Checkbox toggles backed by server state use `useOptimistic` so they flip
+  immediately.
+- Filter forms that should produce shareable URLs use `CleanGetForm`, and the
+  page redirects to the canonical URL if empty params arrive anyway.
 - Deleting an account cascades to contacts and policies at the database level;
   the confirm dialog says so.
-- Later versions add `claims`, `tower_layers`, `contract_requirements`,
-  `certificates`, `submissions`, `quotes`, `quote_options`, `tasks` and
-  `activities` through new migrations using the same column helpers.
+- v0.2 added `checklist_items`, `tasks`, `activities` and `renewal_outcomes`.
+  Later versions add `claims`, `tower_layers`, `contract_requirements`,
+  `certificates`, `submissions`, `quotes` and `quote_options` through new
+  migrations using the same column helpers. When `claims` arrives, wire its
+  count into `checkUndoOutcome` in `src/server/outcomes/actions.ts` (it passes 0
+  today).
+
+## Renewals rules (v0.2)
+
+- **Stage is derived, never stored as truth.** `getRenewalStage(days, status)`
+  in `src/lib/domain/renewals.ts` is the only source. `policies.last_logged_stage`
+  exists only to detect changes: after anything that can move a stage (as-of
+  date change, policy create/edit, outcome record/undo) call
+  `syncStages(executor, workspaceId, asOf, [ids])` from
+  `src/server/renewals/stages.ts`, which logs an activity per move and
+  initialises never-logged policies silently.
+- **Closed statuses (renewed, lost, non_renewed) only come from outcomes.** The
+  policy form offers only open statuses; the server rejects closed ones and locks
+  the status once an outcome exists. Only Undo outcome reverses one.
+- **Multi-write operations use `withTransaction`** from `src/server/db/tx.ts`
+  (a short-lived Neon WebSocket pool; the HTTP driver cannot hold a
+  transaction). Lock the row with `.for("update")` before checking state.
+  Helpers that run in either context take an `Executor`; use `getExecutor()` for
+  the HTTP client. No casts needed.
+- **The Book counts current terms only**: a policy that is some other policy's
+  `previous_policy_id` is superseded and excluded from totals and next expiry.
+- Checklists are generated on first open by `ensureChecklist` (idempotent; the
+  unique `(policy_id, label)` index guards double runs). Before that, readiness
+  is computed from the template as 0 of N.
+- Activities are ordered newest first by `as_of_date`, then `created_at`.
 
 ## Commands
 
 `npm run dev` · `npm run build` · `npm run typecheck` · `npm run lint` ·
 `npm test` · `npm run db:generate` · `npm run db:migrate` · `npm run db:seed`
 (`SEED_AS_OF=YYYY-MM-DD` fixes the as-of date; `SEED_WORKSPACE_SLUG=…` seeds an
-existing empty workspace).
+existing empty workspace). Browser smoke tests: `scripts/e2e-renewals.cjs`
+(see its header; Playwright is not a dependency).

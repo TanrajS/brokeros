@@ -18,8 +18,9 @@ import {
   EXPOSURE_BASES,
   EXPOSURE_BASIS_LABELS,
   LINES_OF_BUSINESS,
-  RENEWAL_STATUSES,
+  OPEN_RENEWAL_STATUSES,
   RENEWAL_STATUS_LABELS,
+  isClosedRenewalStatus,
 } from "@/lib/constants";
 import { commissionAmount, parseCurrencyInput } from "@/lib/domain/money";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -73,7 +74,7 @@ export function PolicyForm({ slug, accountId, policyId, defaultValues, previousO
         return;
       }
       toast.success(policyId ? "Policy saved" : "Policy added");
-      router.push(`/w/${slug}/accounts/${accountId}`);
+      router.push(policyId ? `/w/${slug}/accounts/${accountId}/policies/${policyId}` : `/w/${slug}/accounts/${accountId}`);
       router.refresh();
     });
   }
@@ -97,15 +98,33 @@ export function PolicyForm({ slug, accountId, policyId, defaultValues, previousO
         <Field id="policyNumber" label="Policy number" error={msg("policyNumber")}>
           <Input {...register("policyNumber")} {...fieldA11y("policyNumber", msg("policyNumber"))} autoComplete="off" />
         </Field>
-        <Field id="renewalStatus" label="Renewal status" required error={msg("renewalStatus")}>
-          <NativeSelect {...register("renewalStatus")} {...fieldA11y("renewalStatus", msg("renewalStatus"))}>
-            {RENEWAL_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {RENEWAL_STATUS_LABELS[s]}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
+        {isClosedRenewalStatus(defaultValues.renewalStatus) ? (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium" id="renewalStatus-label">
+              Renewal status
+            </span>
+            <p className="text-sm" aria-labelledby="renewalStatus-label">
+              {RENEWAL_STATUS_LABELS[defaultValues.renewalStatus]}
+            </p>
+            <p className="text-xs text-muted-foreground">Set by the recorded outcome. Undo the outcome on the policy page to change it.</p>
+          </div>
+        ) : (
+          <Field
+            id="renewalStatus"
+            label="Renewal status"
+            required
+            error={msg("renewalStatus")}
+            hint="Renewed, lost and non-renewed are set by recording an outcome"
+          >
+            <NativeSelect {...register("renewalStatus")} {...fieldA11y("renewalStatus", msg("renewalStatus"), "hint")}>
+              {OPEN_RENEWAL_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {RENEWAL_STATUS_LABELS[s]}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+        )}
         <Field id="effectiveDate" label="Effective date" required error={msg("effectiveDate")}>
           <Input type="date" {...register("effectiveDate")} {...fieldA11y("effectiveDate", msg("effectiveDate"))} />
         </Field>

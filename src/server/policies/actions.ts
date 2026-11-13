@@ -3,7 +3,10 @@
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/server/db/client";
-import { accounts, policies } from "@/server/db/schema";
+import { accounts, policies, renewalOutcomes } from "@/server/db/schema";
+import { getExecutor } from "@/server/db/tx";
+import { syncStages } from "@/server/renewals/stages";
+import { isClosedRenewalStatus } from "@/lib/constants";
 import { describeFailure, fail, fieldErrorsFromZod, ok, type ActionResult, type FieldErrors } from "@/server/actionResult";
 import { getWorkspaceBySlug } from "@/server/workspace/queries";
 import { policyFormSchema, type PolicyFormInput, type PolicyFormValues } from "@/lib/schemas/policy";
@@ -25,6 +28,8 @@ async function validatePreviousPolicy(
   return null;
 }
 
+const CLOSED_STATUS_ERROR = { renewalStatus: "Renewed, lost and non-renewed are set by recording an outcome on the policy page" };
+
 export async function createPolicy(slug: string, accountId: string, input: PolicyFormInput): Promise<ActionResult<{ id: string }>> {
   const parsed = policyFormSchema.safeParse(input);
   if (!parsed.success) return fail("Please fix the highlighted fields.", fieldErrorsFromZod(parsed.error));
@@ -34,12 +39,14 @@ export async function createPolicy(slug: string, accountId: string, input: Polic
     const db = getDb();
     const owner = await db.query.accounts.findFirst({ where: and(eq(accounts.id, accountId), eq(accounts.workspaceId, ws.id)) });
     if (!owner) return fail("That account no longer exists.");
+    if (isClosedRenewalStatus(parsed.data.renewalStatus)) return fail("Please fix the highlighted fields.", CLOSED_STATUS_ERROR);
     const prevErrors = await validatePreviousPolicy(ws.id, accountId, parsed.data, null);
     if (prevErrors) return fail("Please fix the highlighted fields.", prevErrors);
     const [row] = await db
       .insert(policies)
       .values({ workspaceId: ws.id, accountId, ...parsed.data })
       .returning({ id: policies.id });
+    await syncStages(getExecutor(), ws.id, ws.asOfDate, [row.id]);
     revalidatePath(`/w/${slug}`, "layout");
     return ok({ id: row.id });
   } catch (err) {
@@ -58,10 +65,16 @@ export async function updatePolicy(slug: string, policyId: string, input: Policy
     if (!existing) return fail("That policy no longer exists.");
     const prevErrors = await validatePreviousPolicy(ws.id, existing.accountId, parsed.data, policyId);
     if (prevErrors) return fail("Please fix the highlighted fields.", prevErrors);
+    // Outcomes are immutable except through Undo: once one exists, the status is locked to it.
+    const outcome = await db.query.renewalOutcomes.findFirst({ where: eq(renewalOutcomes.policyId, policyId) });
+    const locked = outcome !== undefined || isClosedRenewalStatus(existing.renewalStatus);
+    if (!locked && isClosedRenewalStatus(parsed.data.renewalStatus)) return fail("Please fix the highlighted fields.", CLOSED_STATUS_ERROR);
+    const renewalStatus = locked ? existing.renewalStatus : parsed.data.renewalStatus;
     await db
       .update(policies)
-      .set({ ...parsed.data, updatedAt: new Date() })
+      .set({ ...parsed.data, renewalStatus, updatedAt: new Date() })
       .where(eq(policies.id, policyId));
+    await syncStages(getExecutor(), ws.id, ws.asOfDate, [policyId]);
     revalidatePath(`/w/${slug}`, "layout");
     return ok(undefined);
   } catch (err) {
