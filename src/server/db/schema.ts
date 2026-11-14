@@ -9,8 +9,8 @@
  *
  * v0.2 added checklist_items, tasks, activities and renewal_outcomes; v0.4
  * added claims; v1 added tower_layers, contract_requirements, certificates,
- * policy_participants and policy_sublimits. Later versions add submissions,
- * quotes and quote_options via new migrations.
+ * policy_participants and policy_sublimits; v1.1 added submissions and quotes
+ * (a quote "option" is simply another quote on the same submission).
  * Keep the helper column factories below so those tables stay consistent.
  */
 import { relations, sql } from "drizzle-orm";
@@ -34,7 +34,9 @@ import {
   ACTIVITY_KINDS,
   CHECKLIST_SOURCES,
   CLAIM_STATUSES,
+  DECLINE_REASONS,
   PARTICIPANT_ROLES,
+  SUBMISSION_STATUSES,
   ENDORSEMENTS,
   LOST_REASONS,
   OUTCOME_TYPES,
@@ -57,6 +59,8 @@ export const lineGroupEnum = pgEnum("line_group", LINE_GROUPS);
 export const layerTypeEnum = pgEnum("layer_type", LAYER_TYPES);
 export const requirementCoverageEnum = pgEnum("requirement_coverage", REQUIREMENT_COVERAGES);
 export const participantRoleEnum = pgEnum("participant_role", PARTICIPANT_ROLES);
+export const submissionStatusEnum = pgEnum("submission_status", SUBMISSION_STATUSES);
+export const declineReasonEnum = pgEnum("decline_reason", DECLINE_REASONS);
 
 /** Column helpers so every table shares the same audit columns and types. */
 const timestamps = {
@@ -405,6 +409,72 @@ export const policySublimits = pgTable(
   (t) => [index("policy_sublimits_policy_idx").on(t.policyId), index("policy_sublimits_workspace_idx").on(t.workspaceId)],
 );
 
+/* ---------- v1.1 Marketing ---------- */
+
+/**
+ * A carrier approached for a policy's renewal. Status moves are enforced in
+ * src/lib/domain/marketing.ts (checkTransition); days to respond is derived
+ * from sent_on and responded_on, never stored.
+ */
+export const submissions = pgTable(
+  "submissions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => policies.id, { onDelete: "cascade" }),
+    carrier: text("carrier").notNull(),
+    sentOn: date("sent_on", { mode: "string" }),
+    respondedOn: date("responded_on", { mode: "string" }),
+    status: submissionStatusEnum("status").notNull().default("planned"),
+    declinedReason: declineReasonEnum("declined_reason"),
+    notes: text("notes"),
+    ...timestamps,
+  },
+  (t) => [
+    index("submissions_policy_idx").on(t.policyId),
+    index("submissions_account_idx").on(t.accountId),
+    index("submissions_workspace_sent_idx").on(t.workspaceId, t.sentOn),
+  ],
+);
+
+/** A carrier's quote (or one of several options) against a submission. At most one quote per policy is bound. */
+export const quotes = pgTable(
+  "quotes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    submissionId: uuid("submission_id")
+      .notNull()
+      .references(() => submissions.id, { onDelete: "cascade" }),
+    quotedPremium: money("quoted_premium").notNull(),
+    occurrenceLimit: money("occurrence_limit"),
+    aggregateLimit: money("aggregate_limit"),
+    deductible: money("deductible"),
+    endorsements: endorsementEnum("endorsements")
+      .array()
+      .notNull()
+      .default(sql`'{}'::endorsement[]`),
+    commissionRate: rate("commission_rate").notNull(),
+    /** Exposure the carrier rated on; null means the expiring policy's exposure. */
+    exposureAmount: money("exposure_amount"),
+    subjectivities: text("subjectivities"),
+    validUntil: date("valid_until", { mode: "string" }).notNull(),
+    isIncumbentRenewal: boolean("is_incumbent_renewal").notNull().default(false),
+    isBound: boolean("is_bound").notNull().default(false),
+    ...timestamps,
+  },
+  (t) => [index("quotes_submission_idx").on(t.submissionId), index("quotes_workspace_idx").on(t.workspaceId)],
+);
+
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   accounts: many(accounts),
   contacts: many(contacts),
@@ -447,3 +517,5 @@ export type ContractRequirement = typeof contractRequirements.$inferSelect;
 export type Certificate = typeof certificates.$inferSelect;
 export type PolicyParticipant = typeof policyParticipants.$inferSelect;
 export type PolicySublimit = typeof policySublimits.$inferSelect;
+export type Submission = typeof submissions.$inferSelect;
+export type Quote = typeof quotes.$inferSelect;

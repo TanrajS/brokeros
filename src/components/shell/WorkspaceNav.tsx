@@ -18,7 +18,7 @@ export function WorkspaceNav({ slug }: { slug: string }) {
   const base = `/w/${slug}`;
 
   return (
-    <nav aria-label="Workspace" className="md:w-52 md:shrink-0">
+    <nav aria-label="Workspace" className="md:w-52 md:shrink-0 print:hidden">
       <ul className="flex gap-1 overflow-x-auto px-2 py-2 md:flex-col md:px-3 md:py-4">
         {items.map(({ href, label, icon: Icon }) => {
           const full = `${base}${href}`;

@@ -27,7 +27,7 @@ export async function WorkspaceShell({ params, children }: { params: Promise<{ s
   return (
     <div className="flex min-h-full flex-1 flex-col">
       {needsAdopt ? <WorkspaceCookieSync slug={slug} /> : null}
-      <header className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur print:hidden">
         <div className="flex items-center gap-3 px-4 py-2.5">
           <Link href={`/w/${slug}`} className="min-w-0 truncate font-semibold tracking-tight outline-none focus-visible:ring-3 focus-visible:ring-ring/50 rounded-sm">
             {workspace.name}

@@ -65,21 +65,35 @@ export interface OutcomeSummary {
   successorHasOutcome: boolean;
 }
 
+/** Terms of the quote bound in Marketing, used to prefill the Renewed form. */
+export interface BoundPrefill {
+  carrier: string;
+  premium: number;
+  exposureAmount: number | null;
+  deductible: number | null;
+  occurrenceLimit: number | null;
+  aggregateLimit: number | null;
+  commissionRate: number;
+}
+
 interface Props {
   slug: string;
   policy: ExpiringSummary;
   outcome: OutcomeSummary | null;
+  prefill?: BoundPrefill | null;
+  /** Open the Renewed form straight away (arriving from Bind in Marketing). */
+  autoOpen?: boolean;
 }
 
 const str = (n: number | null) => (n === null ? "" : String(n));
 
-export function OutcomePanel({ slug, policy, outcome }: Props) {
+export function OutcomePanel({ slug, policy, outcome, prefill = null, autoOpen = false }: Props) {
   return (
     <section aria-labelledby="outcome-heading" className="flex flex-col gap-3 rounded-lg border p-4">
       <h2 id="outcome-heading" className="text-lg font-semibold">
         Renewal outcome
       </h2>
-      {outcome ? <RecordedOutcome slug={slug} policyId={policy.id} outcome={outcome} /> : <RecordOutcome slug={slug} policy={policy} />}
+      {outcome ? <RecordedOutcome slug={slug} policyId={policy.id} outcome={outcome} /> : <RecordOutcome slug={slug} policy={policy} prefill={prefill} autoOpen={autoOpen && prefill !== null} />}
     </section>
   );
 }
@@ -177,8 +191,8 @@ function RecordedOutcome({ slug, policyId, outcome }: { slug: string; policyId: 
   );
 }
 
-function RecordOutcome({ slug, policy }: { slug: string; policy: ExpiringSummary }) {
-  const [open, setOpen] = useState(false);
+function RecordOutcome({ slug, policy, prefill, autoOpen }: { slug: string; policy: ExpiringSummary; prefill: BoundPrefill | null; autoOpen: boolean }) {
+  const [open, setOpen] = useState(autoOpen);
   const [type, setType] = useState<OutcomeType>("renewed");
   return (
     <div className="flex flex-col gap-2 text-sm">
@@ -204,7 +218,12 @@ function RecordOutcome({ slug, policy }: { slug: string; policy: ExpiringSummary
               </label>
             ))}
           </fieldset>
-          {type === "renewed" ? <RenewedForm slug={slug} policy={policy} onDone={() => setOpen(false)} /> : null}
+          {type === "renewed" && prefill ? (
+            <p className="rounded-lg bg-muted/60 p-2 text-sm" role="status">
+              Prefilled from the quote bound with {prefill.carrier} in Marketing. Check the terms, then record.
+            </p>
+          ) : null}
+          {type === "renewed" ? <RenewedForm slug={slug} policy={policy} prefill={prefill} onDone={() => setOpen(false)} /> : null}
           {type === "lost" ? <LostForm slug={slug} policy={policy} onDone={() => setOpen(false)} /> : null}
           {type === "non_renewed" ? <NonRenewedForm slug={slug} policy={policy} onDone={() => setOpen(false)} /> : null}
         </DialogContent>
@@ -232,18 +251,18 @@ function useSubmit(onDone: () => void) {
   return { pending, submit };
 }
 
-function RenewedForm({ slug, policy, onDone }: { slug: string; policy: ExpiringSummary; onDone: () => void }) {
+function RenewedForm({ slug, policy, prefill, onDone }: { slug: string; policy: ExpiringSummary; prefill: BoundPrefill | null; onDone: () => void }) {
   const schema = renewedOutcomeSchema({ occurrenceLimit: policy.occurrenceLimit !== null, aggregateLimit: policy.aggregateLimit !== null });
   const { register, handleSubmit, formState, getValues, setError, control } = useForm<RenewedOutcomeInput, unknown, RenewedOutcomeValues>({
     resolver: zodResolver(schema),
     defaultValues: {
-      renewalCarrier: policy.carrier,
-      renewalPremium: "",
-      renewalExposureAmount: "",
-      renewalDeductible: str(policy.deductible),
-      renewalOccurrenceLimit: str(policy.occurrenceLimit),
-      renewalAggregateLimit: str(policy.aggregateLimit),
-      renewalCommissionRate: String(policy.commissionRate),
+      renewalCarrier: prefill?.carrier ?? policy.carrier,
+      renewalPremium: prefill ? String(prefill.premium) : "",
+      renewalExposureAmount: prefill ? str(prefill.exposureAmount ?? policy.exposureAmount) : "",
+      renewalDeductible: str(prefill ? prefill.deductible : policy.deductible),
+      renewalOccurrenceLimit: str(prefill ? prefill.occurrenceLimit : policy.occurrenceLimit),
+      renewalAggregateLimit: str(prefill ? prefill.aggregateLimit : policy.aggregateLimit),
+      renewalCommissionRate: String(prefill?.commissionRate ?? policy.commissionRate),
     },
     mode: "onChange",
   });

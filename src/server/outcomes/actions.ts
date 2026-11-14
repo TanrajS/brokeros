@@ -15,7 +15,7 @@ import {
 } from "@/lib/schemas/outcome";
 import { describeFailure, fail, fieldErrorsFromZod, ok, type ActionResult } from "@/server/actionResult";
 import { getDb } from "@/server/db/client";
-import { claims, policies, renewalOutcomes, type Policy, type Workspace } from "@/server/db/schema";
+import { claims, policies, quotes, renewalOutcomes, submissions, type Policy, type Workspace } from "@/server/db/schema";
 import { withTransaction, type Executor } from "@/server/db/tx";
 import { logActivities, policyLabel } from "@/server/renewals/activityLog";
 import { syncStages } from "@/server/renewals/stages";
@@ -107,6 +107,12 @@ export async function recordRenewedOutcome(slug: string, policyId: string, input
 
   return finish(slug, ws, policy, "renewed", async (tx, old) => {
     const term = planSuccessorTerm(old.expiryDate).value;
+    const [bound] = await tx
+      .select({ endorsements: quotes.endorsements })
+      .from(quotes)
+      .innerJoin(submissions, eq(submissions.id, quotes.submissionId))
+      .where(and(eq(submissions.policyId, old.id), eq(quotes.isBound, true)));
+    const boundEndorsements = bound?.endorsements ?? null;
     const [successor] = await tx
       .insert(policies)
       .values({
@@ -124,7 +130,8 @@ export async function recordRenewedOutcome(slug: string, policyId: string, input
         commissionRate: v.renewalCommissionRate,
         exposureBasis: old.exposureBasis,
         exposureAmount: v.renewalExposureAmount,
-        endorsements: old.endorsements,
+        // A quote bound in Marketing carries its own endorsements onto the new policy.
+        endorsements: boundEndorsements ?? old.endorsements,
         renewalStatus: "not_started",
         previousPolicyId: old.id,
         notes: null,

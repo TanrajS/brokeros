@@ -68,7 +68,7 @@ before changing anything, and keep it current when the rules change.
 | Zod schemas | `src/lib/schemas/*.ts` (`z.input` = form strings, `z.output` = parsed values) |
 | Display formatting | `src/lib/format/` (returns `null` for missing, never a fake value) |
 | Enumerations | `src/lib/constants.ts` (shared by schema, Zod and UI) |
-| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` / `demoBookProgram.ts` map it for tests |
+| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` / `demoBookProgram.ts` / `demoBookMarketing.ts` map it for tests |
 | Pages | `src/app/w/[slug]/…`; pages call `requireWorkspace(slug)` from `src/app/w/[slug]/lib.ts` |
 | UI components | `src/components/<area>/`; shadcn primitives in `src/components/ui/` |
 
@@ -199,11 +199,32 @@ before changing anything, and keep it current when the rules change.
   adequacy, Kestrel participants) are checked in
   `src/server/db/seed/__tests__/demoBookProgram.test.ts`.
 
+## Marketing rules (v1.1)
+
+- **All marketing logic is in `src/lib/domain/marketing.ts`**: `checkTransition`,
+  `canRecordQuote`, `daysToRespond`, `isQuoteExpired`, `compareQuotes`,
+  `normaliseQuotes`, `marketLog`. Actions in `src/server/marketing/actions.ts`
+  must call `checkTransition` before any status change; `bindQuote` and
+  `unbindSubmission` run in `withTransaction` with the policy row locked.
+- **Status is stored but moves only through the rules**; days to respond is
+  derived from `sent_on` / `responded_on`, never stored.
+- **Comparison never scores.** Show "N of M terms match" and list every
+  mismatch; commission is always shown beside the client cost.
+- **Normalise = limits and deductible match the target.** Endorsements do not
+  exclude. Against a contract requirement, "match" means "meets".
+- **Binding** sets `quotes.is_bound` and the submission to bound, then sends the
+  user to the policy page with `?outcome=renewed`; `recordRenewedOutcome` copies
+  the bound quote's endorsements onto the successor.
+- `buildMarketingView` (`src/server/marketing/view.ts`) is shared by the tab and
+  the printable summary. Print styles: app chrome carries `print:hidden`.
+- The demo marketing case is checked in
+  `src/server/db/seed/__tests__/demoBookMarketing.test.ts`.
+
 ## Commands
 
 `npm run dev` · `npm run build` · `npm run typecheck` · `npm run lint` ·
 `npm test` · `npm run db:generate` · `npm run db:migrate` · `npm run db:seed`
 (`SEED_AS_OF=YYYY-MM-DD` fixes the as-of date; `SEED_WORKSPACE_SLUG=…` seeds an
 existing empty workspace). Browser smoke tests: `scripts/e2e-renewals.cjs`, `scripts/e2e-dashboard.cjs`,
-`scripts/e2e-lossruns.cjs`, `scripts/e2e-program.cjs`
+`scripts/e2e-lossruns.cjs`, `scripts/e2e-program.cjs`, `scripts/e2e-marketing.cjs`
 (see its header; Playwright is not a dependency).

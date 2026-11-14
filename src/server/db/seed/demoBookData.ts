@@ -19,6 +19,8 @@ import type {
   RenewalStatus,
   ClaimStatus,
   ParticipantRole,
+  SubmissionStatus,
+  DeclineReason,
 } from "@/lib/constants";
 import type { LayerType, LineGroup, RequirementCoverage } from "@/lib/domain/program";
 import { LOST_REASON_LABELS } from "@/lib/constants";
@@ -47,6 +49,32 @@ export type DemoOutcome =
   | { type: "renewed"; successorKey: string; recordedAsOf: ISODate }
   | { type: "lost"; lostReason: LostReason; competingPremium: number | null; recordedAsOf: ISODate }
   | { type: "non_renewed"; reason: string; recordedAsOf: ISODate };
+
+export interface DemoQuote {
+  premium: number;
+  occurrenceLimit: number | null;
+  aggregateLimit: number | null;
+  deductible: number | null;
+  endorsements: Endorsement[];
+  commissionRate: number;
+  exposureAmount: number | null;
+  subjectivities: string | null;
+  /** Days from the as-of date. */
+  validUntilOffset: number;
+  incumbent: boolean;
+  bound: boolean;
+}
+
+export interface DemoSubmission {
+  carrier: string;
+  /** Days from the as-of date (negative = past). */
+  sentOffset: number | null;
+  respondedOffset: number | null;
+  status: SubmissionStatus;
+  declineReason: DeclineReason | null;
+  notes: string | null;
+  quotes: DemoQuote[];
+}
 
 export interface DemoParticipant {
   carrier: string;
@@ -123,6 +151,8 @@ export interface DemoPolicy {
   /** v1: co-insurers on a larger placement, sub-limits, and the property adequacy inputs. */
   participants: DemoParticipant[];
   sublimits: DemoSublimit[];
+  /** v1.1: carriers approached for this policy's renewal, with their quotes. */
+  submissions: DemoSubmission[];
   insurableValue: number | null;
   coinsurancePercent: number | null;
   tasks: DemoTask[];
@@ -233,6 +263,7 @@ interface PolicySpec {
   checklistComplete?: boolean;
   participants?: DemoParticipant[];
   sublimits?: DemoSublimit[];
+  submissions?: DemoSubmission[];
   insurableValue?: number;
   coinsurancePercent?: number;
 }
@@ -264,6 +295,7 @@ function policy(asOf: ISODate, owner: string | null, spec: PolicySpec): DemoPoli
     outcome: spec.outcome ?? null,
     participants: spec.participants ?? [],
     sublimits: spec.sublimits ?? [],
+    submissions: spec.submissions ?? [],
     insurableValue: spec.insurableValue ?? null,
     coinsurancePercent: spec.coinsurancePercent ?? null,
     carrier: spec.carrier,
@@ -374,6 +406,53 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
   // Northfield's GL expired 30 days ago and was renewed: successor runs 12 months from that expiry.
   const northfieldRenewal = planSuccessorTerm(d(-30)).value;
 
+  // ---- v1.1 marketing: carriers approached and quotes (all carriers fictional) ----
+  const stdGlEnd: Endorsement[] = ["additional_insured", "waiver_of_subrogation", "primary_noncontributory"];
+  const q = (over: Partial<DemoQuote> & Pick<DemoQuote, "premium">): DemoQuote => ({
+    occurrenceLimit: 1 * M,
+    aggregateLimit: 2 * M,
+    deductible: 10_000,
+    endorsements: stdGlEnd,
+    commissionRate: 12.5,
+    exposureAmount: null,
+    subjectivities: null,
+    validUntilOffset: 30,
+    incumbent: false,
+    bound: false,
+    ...over,
+  });
+  const sub = (over: Partial<DemoSubmission> & Pick<DemoSubmission, "carrier" | "status">): DemoSubmission => ({
+    sentOffset: -28,
+    respondedOffset: null,
+    declineReason: null,
+    notes: null,
+    quotes: [],
+    ...over,
+  });
+  // Harbourline GL renewal (expiring $150,000, $10,000 deductible): the hand-verification case.
+  const harbourMarketing: DemoSubmission[] = [
+    sub({ carrier: C.dominion, status: "quoted", sentOffset: -30, respondedOffset: -12, notes: "Incumbent renewal.", quotes: [q({ premium: 158_000, exposureAmount: 26 * M, incumbent: true, validUntilOffset: 40, subjectivities: "Updated revenue figures; signed renewal application." })] }),
+    sub({ carrier: "Pacific Crest Insurance (fictional)", status: "quoted", respondedOffset: -10, quotes: [q({ premium: 142_000, commissionRate: 15, exposureAmount: 26 * M, validUntilOffset: 35, subjectivities: "Signed application within 30 days of binding." })] }),
+    sub({ carrier: "Ironwood Specialty (fictional)", status: "quoted", respondedOffset: -8, quotes: [q({ premium: 128_000, deductible: 25_000, endorsements: ["additional_insured", "primary_noncontributory"], commissionRate: 10, exposureAmount: 26 * M, subjectivities: "Satisfactory loss control survey of both plants; no waiver of subrogation available." })] }),
+    sub({ carrier: "Maplewood Underwriters (fictional)", status: "declined", respondedOffset: -20, declineReason: "class_of_business", notes: "Does not write seafood processing." }),
+    sub({ carrier: "Tidewater Assurance (fictional)", status: "submitted", sentOffset: -14, notes: "Chased once by phone." }),
+  ];
+  // Earlier renewals, so the market log has a year of history.
+  const kestrelMarketing: DemoSubmission[] = [
+    sub({ carrier: C.aurora, status: "bound", sentOffset: -320, respondedOffset: -300, quotes: [q({ premium: 420_000, occurrenceLimit: 48 * M, aggregateLimit: null, deductible: 50_000, endorsements: [], commissionRate: 10, incumbent: true, bound: true, validUntilOffset: -270 })] }),
+    sub({ carrier: C.dominion, status: "quoted", sentOffset: -320, respondedOffset: -296, quotes: [q({ premium: 445_000, occurrenceLimit: 48 * M, aggregateLimit: null, deductible: 50_000, endorsements: [], commissionRate: 10, validUntilOffset: -270 })] }),
+    sub({ carrier: "Maplewood Underwriters (fictional)", status: "declined", sentOffset: -320, respondedOffset: -310, declineReason: "capacity" }),
+  ];
+  const cedarMarketing: DemoSubmission[] = [
+    sub({ carrier: C.northgate, status: "bound", sentOffset: -290, respondedOffset: -270, quotes: [q({ premium: 108_000, deductible: 5_000, endorsements: ["additional_insured"], commissionRate: 15, exposureAmount: 23 * M, incumbent: true, bound: true, validUntilOffset: -240 })] }),
+    sub({ carrier: "Ironwood Specialty (fictional)", status: "quoted", sentOffset: -290, respondedOffset: -268, quotes: [q({ premium: 99_500, deductible: 25_000, endorsements: ["additional_insured"], commissionRate: 10, exposureAmount: 23 * M, validUntilOffset: -240 })] }),
+    sub({ carrier: "Maplewood Underwriters (fictional)", status: "no_response", sentOffset: -290 }),
+  ];
+  const northfieldMarketing: DemoSubmission[] = [
+    sub({ carrier: C.plains, status: "declined", sentOffset: -95, respondedOffset: -75, declineReason: "appetite", notes: "Withdrawing from plastics manufacturing." }),
+    sub({ carrier: "Maplewood Underwriters (fictional)", status: "declined", sentOffset: -95, respondedOffset: -80, declineReason: "loss_history" }),
+  ];
+
   const specs: AccountSpec[] = [
     // ---------- Construction ----------
     {
@@ -385,7 +464,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       producer: PRODUCERS[0],
       accountManager: MANAGERS[0],
       status: "active",
-      notes: "Mechanical contractor: HVAC and plumbing for commercial builds. Later versions attach loss runs, towers and quotes here.",
+      notes: "Mechanical contractor: HVAC, plumbing and process piping for commercial and institutional builds across the Lower Mainland.",
       noteLog: ["Owen asked whether a higher umbrella limit is needed for the new hospital project. Discuss at the strategy meeting."],
       towerLayers: [
         { lineGroup: "gl", layerType: "primary", attachment: 0, limit: 1 * M, premium: 108_000, carrier: C.northgate, policyKey: "cedar-gl" },
@@ -410,7 +489,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
         p(histGl(cedarKeys, cedarEff, 0, C.northgate, 82_000, 15, 15 * M, 5_000, ["additional_insured"])),
         p(histGl(cedarKeys, cedarEff, 1, C.northgate, 88_000, 15, 17 * M, 5_000, ["additional_insured"])),
         p(histGl(cedarKeys, cedarEff, 2, C.northgate, 94_000, 15, 18_500_000, 5_000, ["additional_insured"])),
-        p({ key: "cedar-gl-prior", previousKey: "cedar-gl-2024", priorTerm: true, line: "General Liability", carrier: C.northgate, expires: daysBetween(asOf, cedarCurrentEffective).value, premium: 100_000, commission: 15, occ: 1 * M, agg: 2 * M, ded: 5_000, basis: "revenue", exposure: 20 * M, endorsements: ["additional_insured"], status: "renewed", outcome: { type: "renewed", successorKey: "cedar-gl", recordedAsOf: addDays(cedarCurrentEffective, -14).value }, notes: "Prior-year term: $100,000 on $20,000,000 revenue." }),
+        p({ key: "cedar-gl-prior", submissions: cedarMarketing, previousKey: "cedar-gl-2024", priorTerm: true, line: "General Liability", carrier: C.northgate, expires: daysBetween(asOf, cedarCurrentEffective).value, premium: 100_000, commission: 15, occ: 1 * M, agg: 2 * M, ded: 5_000, basis: "revenue", exposure: 20 * M, endorsements: ["additional_insured"], status: "renewed", outcome: { type: "renewed", successorKey: "cedar-gl", recordedAsOf: addDays(cedarCurrentEffective, -14).value }, notes: "Prior-year term: $100,000 on $20,000,000 revenue." }),
         p({ key: "cedar-gl", previousKey: "cedar-gl-prior", line: "General Liability", carrier: C.northgate, expires: 120, premium: 108_000, commission: 15, occ: 1 * M, agg: 2 * M, ded: 5_000, basis: "revenue", exposure: 23 * M, endorsements: ["additional_insured"], notes: "Expires exactly 120 days after the as-of date. Renewed from the prior year: premium up 8% on 15% more revenue." }),
         p({ key: "cedar-pr", line: "Property", carrier: C.northgate, expires: 120, premium: 42_500, commission: 15, occ: 600_000, agg: null, ded: 5_000, basis: "square_feet", exposure: 38_000, insurableValue: 1_000_000, coinsurancePercent: 80, sublimits: [{ name: "Building", limit: 600_000, deductible: 5_000 }, { name: "Contractor's equipment", limit: 250_000, deductible: 2_500 }, { name: "Sewer backup", limit: 50_000, deductible: 5_000 }], notes: "Shop and office building insured for $600,000 against a $1,000,000 insurable value, 80% coinsurance." }),
         p({ line: "Commercial Auto", carrier: C.dominion, expires: 120, premium: 61_200, commission: 12.5, occ: 2 * M, agg: null, ded: 2_500, basis: "vehicles", exposure: 34 }),
@@ -464,7 +543,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       producer: PRODUCERS[0],
       accountManager: MANAGERS[1],
       status: "active",
-      notes: "Frozen seafood processor with two plants. Later versions attach loss runs, towers and quotes here.",
+      notes: "Frozen seafood processor with two plants (Hamilton and Port Halverston), supplying private-label product to grocery chains; plant tours for buyers and suppliers.",
       noteLog: ["Plant expansion in the first quarter will add roughly 20% to payroll. Update exposure figures before marketing."],
       towerLayers: [
         { lineGroup: "gl", layerType: "primary", attachment: 0, limit: 1 * M, premium: 150_000, carrier: C.dominion, policyKey: "harbour-gl" },
@@ -506,7 +585,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
         p(histGl(harbourKeys, harbourEff, 1, C.dominion, 140_000, 12.5, 25 * M, 10_000, stdGl)),
         p(histGl(harbourKeys, harbourEff, 2, C.dominion, 145_000, 12.5, 25 * M, 10_000, stdGl)),
         p(histGl(harbourKeys, harbourEff, 3, C.dominion, 148_000, 12.5, 25 * M, 10_000, stdGl)),
-        p({ key: "harbour-gl", previousKey: "harbour-gl-2025", standardTasksDone: ["Strategy meeting"], line: "General Liability", carrier: C.dominion, expires: 60, premium: 150_000, commission: 12.5, occ: 1 * M, agg: 2 * M, ded: 10_000, basis: "revenue", exposure: 25 * M, endorsements: stdGl, notes: "Expires exactly 60 days after the as-of date." }),
+        p({ key: "harbour-gl", previousKey: "harbour-gl-2025", submissions: harbourMarketing, standardTasksDone: ["Strategy meeting"], line: "General Liability", carrier: C.dominion, expires: 60, premium: 150_000, commission: 12.5, occ: 1 * M, agg: 2 * M, ded: 10_000, basis: "revenue", exposure: 25 * M, endorsements: stdGl, notes: "Expires exactly 60 days after the as-of date." }),
         p({ line: "Property", carrier: C.dominion, expires: 60, premium: 212_000, commission: 12.5, occ: null, agg: null, ded: 25_000, basis: "square_feet", exposure: 96_000 }),
         p({ line: "Equipment Breakdown", carrier: C.tamarack, expires: 60, premium: 24_800, commission: 15, occ: 5 * M, agg: 5 * M, ded: 10_000, basis: "other" }),
         p({ line: "Commercial Auto", carrier: C.northgate, expires: 95, premium: 33_400, commission: 12.5, occ: 2 * M, agg: null, ded: 2_500, basis: "vehicles", exposure: 19 }),
@@ -525,7 +604,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       notes: "Aerospace machining; ITAR-adjacent contracts.",
       contacts: [{ name: "Noor Haddad", role: "Controller", email: "nhaddad@kestrelprecision.example", phone: "514-555-0126" }],
       policies: [
-        p({ key: "kestrel-pr-prior", priorTerm: true, line: "Property", carrier: C.aurora, expires: priorOf(90), premium: 360_000, commission: 10, occ: null, agg: null, ded: 50_000, basis: "square_feet", exposure: 205_000, status: "renewed", outcome: { type: "renewed", successorKey: "kestrel-pr", recordedAsOf: addDays(d(priorOf(90)), -10).value } }),
+        p({ key: "kestrel-pr-prior", submissions: kestrelMarketing, priorTerm: true, line: "Property", carrier: C.aurora, expires: priorOf(90), premium: 360_000, commission: 10, occ: null, agg: null, ded: 50_000, basis: "square_feet", exposure: 205_000, status: "renewed", outcome: { type: "renewed", successorKey: "kestrel-pr", recordedAsOf: addDays(d(priorOf(90)), -10).value } }),
         p({ key: "kestrel-pr", previousKey: "kestrel-pr-prior", participants: [{ carrier: C.aurora, role: "lead", signedLine: 50, premium: 210_000 }, { carrier: C.dominion, role: "follow", signedLine: 30, premium: 126_000 }, { carrier: C.boreal, role: "follow", signedLine: 20, premium: 84_000 }], sublimits: [{ name: "Earthquake", limit: 5 * M, deductible: 250_000 }, { name: "Flood", limit: 2 * M, deductible: 50_000 }, { name: "Stock in process", limit: 1_500_000, deductible: 10_000 }, { name: "Business interruption", limit: 8 * M, deductible: null }], insurableValue: 48 * M, coinsurancePercent: 90, line: "Property", carrier: C.aurora, expires: 90, premium: 420_000, commission: 10, occ: null, agg: null, ded: 50_000, basis: "square_feet", exposure: 210_000, standardTasksDone: ["Strategy meeting"], checklistComplete: true, notes: "Expires exactly 90 days after the as-of date. Largest premium in the book." }),
         p({ line: "General Liability", carrier: C.aurora, expires: 90, premium: 134_000, commission: 12.5, occ: 2 * M, agg: 4 * M, ded: 25_000, basis: "revenue", exposure: 58 * M, endorsements: stdGl }),
         p({ line: "Umbrella/Excess", carrier: C.boreal, expires: 90, premium: 88_000, commission: 12, occ: 25 * M, agg: 25 * M, ded: null, basis: "revenue", exposure: 58 * M }),
@@ -546,7 +625,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       policies: [
         p({ key: "northfield-gl", line: "General Liability", carrier: C.plains, expires: -30, premium: 71_500, commission: 15, occ: 1 * M, agg: 2 * M, ded: 10_000, basis: "revenue", exposure: 12_400_000, endorsements: ["additional_insured"], status: "renewed", outcome: { type: "renewed", successorKey: "northfield-gl-renewal", recordedAsOf: d(-38) }, notes: "Expired 30 days before the as-of date; renewed with Great Plains." }),
         p({ key: "northfield-gl-renewal", previousKey: "northfield-gl", line: "General Liability", carrier: C.plains, expires: daysBetween(asOf, northfieldRenewal.expiryDate).value, term: northfieldRenewal, premium: 75_800, commission: 15, occ: 1 * M, agg: 2 * M, ded: 10_000, basis: "revenue", exposure: 13_100_000, endorsements: ["additional_insured"], status: "not_started" }),
-        p({ line: "Property", carrier: C.plains, expires: -30, premium: 96_200, commission: 15, occ: null, agg: null, ded: 25_000, basis: "square_feet", exposure: 72_000, status: "non_renewed", outcome: { type: "non_renewed", reason: "Carrier withdrew from plastics manufacturing in Manitoba.", recordedAsOf: d(-75) }, notes: "Expired 30 days before the as-of date; non-renewed by the carrier." }),
+        p({ key: "northfield-pr", submissions: northfieldMarketing, line: "Property", carrier: C.plains, expires: -30, premium: 96_200, commission: 15, occ: null, agg: null, ded: 25_000, basis: "square_feet", exposure: 72_000, status: "non_renewed", outcome: { type: "non_renewed", reason: "Carrier withdrew from plastics manufacturing in Manitoba.", recordedAsOf: d(-75) }, notes: "Expired 30 days before the as-of date; non-renewed by the carrier." }),
         p({ line: "Commercial Auto", carrier: C.northgate, expires: 180, premium: 14_300, commission: 12.5, occ: 2 * M, agg: null, ded: 1_000, basis: "vehicles", exposure: 7 }),
       ],
     },

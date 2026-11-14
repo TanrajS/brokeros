@@ -25,8 +25,11 @@ export default async function PlacementPage({ params, searchParams }: { params: 
     <div className="flex flex-col gap-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Placement</h1>
-        <p className="text-sm text-muted-foreground">Choose an account to work on its loss runs. Program, marketing and strategy follow in later versions.</p>
+        <p className="text-sm text-muted-foreground">Choose an account to work on its loss runs, program and marketing. Strategy follows in a later version.</p>
       </div>
+      <Link href={`/w/${slug}/placement/marketing`} className="w-fit text-sm underline-offset-4 hover:underline">
+        Market log: every carrier approached across the book
+      </Link>
       <form action={`/w/${slug}/placement`} method="get" role="search" className="flex items-end gap-2">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="placement-search">Find an account</Label>

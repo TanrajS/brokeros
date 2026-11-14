@@ -185,6 +185,48 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
   );
   if (certificateRows.length > 0) await db.insert(schema.certificates).values(certificateRows);
 
+  // Submissions get ids here so their quotes can reference them in one pass.
+  const submissionRows: (typeof schema.submissions.$inferInsert)[] = [];
+  const quoteRows: (typeof schema.quotes.$inferInsert)[] = [];
+  for (const a of book) {
+    for (const p of a.policies) {
+      for (const s of p.submissions) {
+        const id = randomUUID();
+        submissionRows.push({
+          id,
+          workspaceId,
+          accountId: accountIds.get(a.name)!,
+          policyId: pid(p.key),
+          carrier: s.carrier,
+          sentOn: s.sentOffset === null ? null : addDays(asOf, s.sentOffset).value,
+          respondedOn: s.respondedOffset === null ? null : addDays(asOf, s.respondedOffset).value,
+          status: s.status,
+          declinedReason: s.declineReason,
+          notes: s.notes,
+        });
+        for (const qt of s.quotes) {
+          quoteRows.push({
+            workspaceId,
+            submissionId: id,
+            quotedPremium: qt.premium,
+            occurrenceLimit: qt.occurrenceLimit,
+            aggregateLimit: qt.aggregateLimit,
+            deductible: qt.deductible,
+            endorsements: qt.endorsements,
+            commissionRate: qt.commissionRate,
+            exposureAmount: qt.exposureAmount,
+            subjectivities: qt.subjectivities,
+            validUntil: addDays(asOf, qt.validUntilOffset).value,
+            isIncumbentRenewal: qt.incumbent,
+            isBound: qt.bound,
+          });
+        }
+      }
+    }
+  }
+  if (submissionRows.length > 0) await db.insert(schema.submissions).values(submissionRows);
+  if (quoteRows.length > 0) await db.insert(schema.quotes).values(quoteRows);
+
   const activityRows = book.flatMap((a) =>
     a.activities.map((x) => ({
       workspaceId,

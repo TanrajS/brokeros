@@ -19,6 +19,7 @@ import { getRenewalStage } from "@/lib/domain/renewals";
 import { formatCurrency, formatDate, formatInteger, formatPercent } from "@/lib/format";
 import { getPolicyPageData } from "@/server/renewals/queries";
 import { loadPolicyExtras } from "@/server/program/queries";
+import { boundQuoteForPolicy } from "@/server/marketing/queries";
 import { AdequacyPanel } from "@/components/program/AdequacyPanel";
 import { ParticipantsSection } from "@/components/program/ParticipantsSection";
 import { SublimitsSection } from "@/components/program/SublimitsSection";
@@ -28,13 +29,24 @@ type Params = Promise<{ slug: string; accountId: string; policyId: string }>;
 
 export const metadata: Metadata = { title: "Policy" };
 
-export default async function PolicyPage({ params }: { params: Params }) {
-  const { slug, accountId, policyId } = await params;
+export default async function PolicyPage({ params, searchParams }: { params: Params; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const [{ slug, accountId, policyId }, sp] = await Promise.all([params, searchParams]);
   const ws = await requireWorkspace(slug);
   const data = await getPolicyPageData(ws, accountId, policyId);
   if (!data) notFound();
   const { account, policy, checklist, tasks, outcome, predecessor, successor, successorHasOutcome, accountPolicies } = data;
-  const extras = await loadPolicyExtras(ws.id, policy.id);
+  const [extras, bound] = await Promise.all([loadPolicyExtras(ws.id, policy.id), boundQuoteForPolicy(ws.id, policy.id)]);
+  const prefill = bound
+    ? {
+        carrier: bound.carrier,
+        premium: bound.quote.quotedPremium,
+        exposureAmount: bound.quote.exposureAmount,
+        deductible: bound.quote.deductible,
+        occurrenceLimit: bound.quote.occurrenceLimit,
+        aggregateLimit: bound.quote.aggregateLimit,
+        commissionRate: bound.quote.commissionRate,
+      }
+    : null;
 
   const days = daysBetween(ws.asOfDate, policy.expiryDate).value;
   const stage = getRenewalStage(days, policy.renewalStatus).value;
@@ -115,6 +127,8 @@ export default async function PolicyPage({ params }: { params: Params }) {
 
       <OutcomePanel
         slug={slug}
+        prefill={prefill}
+        autoOpen={sp.outcome === "renewed"}
         policy={{
           id: policy.id,
           carrier: policy.carrier,

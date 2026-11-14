@@ -11,9 +11,11 @@ module: a stage board, readiness checklists, tasks, an activity log, renewal
 outcomes and rate-change math. Version 0.3 added the Dashboard: the book in
 force, retention, expiring premium, a revenue forecast and concentration.
 Version 0.4 opened Placement with Loss Runs: claims, CSV import and a
-policy-year summary with loss ratio, frequency and severity. Version 1 adds the
+policy-year summary with loss ratio, frequency and severity. Version 1 added the
 Program tab: tower analysis, a contract requirements checker, certificates of
 insurance and property adequacy, plus co-insurers and sub-limits on policies.
+Version 1.1 adds the Marketing tab: a submission package, carriers approached,
+quotes, a like-for-like quote comparison and a workspace-wide market log.
 
 ## Local setup
 
@@ -296,6 +298,45 @@ paid + reserved**; it is always computed, never stored.
   sub-limits with their own deductibles; the policy's limit and deductible stay
   the defaults for everything not listed.
 
+### Marketing: submissions, quotes, comparison and the market log
+
+- **Carriers approached** move through planned → submitted → quoted → bound,
+  with declined and no response as exits (both can be reopened). A quote can be
+  recorded only against a submission that has been sent (submitted, or quoted
+  for a further option). Only one submission per policy can be bound; an expired
+  quote cannot be bound, and nothing can be bound once the policy has an
+  outcome. Binding opens the Renewed outcome with the quote's carrier, premium,
+  limits, deductible, commission and exposure filled in, and the new policy
+  takes the quote's endorsements. **Days to respond** = response date − sent
+  date; while a submission is outstanding the app shows days waiting (as-of date
+  − sent date). A quote whose valid-until date is before the as-of date is
+  flagged expired.
+- **Like-for-like comparison**, per quote against the expiring policy:
+  - **Premium change** = quoted premium ÷ expiring premium − 1.
+  - **Rate** = premium ÷ exposure units on the v0.2 basis ($1,000 of revenue or
+    payroll, 100 sq ft, or per unit), using the exposure the carrier quoted on
+    (or the expiring exposure); **rate change** = quote rate ÷ expiring rate − 1.
+  - **Premium per $1M** = premium ÷ occurrence limit × 1,000,000.
+  - **Commission** = quoted premium × the quote's own commission rate, shown
+    beside the client's cost.
+  - **Terms**: occurrence limit, aggregate limit, deductible and the four
+    endorsements. Against the **expiring terms** a term matches only when it is
+    the same (a higher limit or a lower deductible is a difference, marked as
+    broader; a higher deductible is flagged as more retained risk). Against a
+    **contract requirement** a limit matches when it meets the requirement, only
+    the required endorsements are checked, and the deductible is not specified.
+    The result is a count such as "5 of 7 terms match" with every mismatch
+    listed, never a combined score.
+- **Normalise** keeps only quotes whose occurrence limit, aggregate limit and
+  deductible all match the target, so what remains differs on price. Endorsement
+  differences stay visible but do not exclude a quote. The app says how many
+  quotes were excluded and why.
+- **Market log**, per carrier, over submissions sent within the lookback window:
+  **hit ratio** = quotes ÷ submissions (a submission with several quote options
+  counts once); **bind ratio** = binds ÷ quotes; median days to respond over
+  submissions with a response date; declines by reason. A carrier with three or
+  more submissions and no quotes is flagged.
+
 ## Changelog
 
 v0.1 — Foundation: workspaces, accounts, contacts, policies, demo book, settings.
@@ -307,5 +348,7 @@ v0.3 — Dashboard: book, retention, expiring premium, revenue forecast, concent
 v0.4 — Loss runs: claims, CSV import, policy-year summary, trend and development, large loss and open claims.
 
 v1 — Program: tower analysis, contract requirements checker, certificates, property adequacy. Additional updates to support large policies.
+
+v1.1 — Marketing: submission package, carriers approached, quotes, like-for-like comparison, market log.
 
 Full details in [CHANGELOG.md](CHANGELOG.md).

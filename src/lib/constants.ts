@@ -1,6 +1,6 @@
 /** Enumerations shared by the database schema, Zod schemas and the UI. */
 
-export const APP_VERSION = "v1.0";
+export const APP_VERSION = "v1.1";
 
 export const ACCOUNT_STATUSES = ["prospect", "active", "lost"] as const;
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
@@ -134,3 +134,28 @@ export const PARTICIPANT_ROLES = ["lead", "follow"] as const;
 export type ParticipantRole = (typeof PARTICIPANT_ROLES)[number];
 
 export const COINSURANCE_PERCENTS = [80, 90, 100] as const;
+
+/* ---------- v1.1 Marketing ---------- */
+
+export const SUBMISSION_STATUSES = ["planned", "submitted", "quoted", "declined", "no_response", "bound"] as const;
+export type SubmissionStatus = (typeof SUBMISSION_STATUSES)[number];
+export const SUBMISSION_STATUS_LABELS: Record<SubmissionStatus, string> = {
+  planned: "Planned",
+  submitted: "Submitted",
+  quoted: "Quoted",
+  declined: "Declined",
+  no_response: "No response",
+  bound: "Bound",
+};
+
+export const DECLINE_REASONS = ["class_of_business", "capacity", "loss_history", "pricing", "appetite", "incomplete_information", "other"] as const;
+export type DeclineReason = (typeof DECLINE_REASONS)[number];
+export const DECLINE_REASON_LABELS: Record<DeclineReason, string> = {
+  class_of_business: "Class of business",
+  capacity: "No capacity",
+  loss_history: "Loss history",
+  pricing: "Could not meet pricing",
+  appetite: "Outside appetite",
+  incomplete_information: "Incomplete information",
+  other: "Other",
+};

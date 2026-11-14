@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.1 — Marketing (2026-11-13)
+
+Marketing: submission package, carriers approached, quotes, like-for-like comparison, market log.
+
+- **Marketing tab** in Placement, per policy in renewal.
+- **Submission package**: the policy's readiness checklist (done and
+  outstanding documents) and a one-page, printable **submission summary**:
+  account profile, operations, exposure, expiring terms, the five-year loss
+  summary and the target terms. Printing hides the app chrome; nothing is sent.
+- **Carriers approached** (new `submissions` table): planned, submitted, quoted,
+  declined (with reason), no response, bound. Transitions are enforced by
+  `checkTransition`; days to respond (or days waiting) is derived.
+- **Quotes** (new `quotes` table): premium, limits, deductible, endorsements,
+  commission rate, exposure rated on, subjectivities, valid-until (expired quotes
+  flagged and not bindable) and incumbent flag; several options per carrier.
+- **Bind**: one per policy. It opens the v0.2 Renewed outcome prefilled with
+  the quote's terms, and the new policy takes the quote's endorsements. Unbind
+  is allowed until the outcome is recorded.
+- **Like-for-like comparison** (`compareQuotes`): expiring terms first, one
+  column per quote; premium change, rate on exposure and its change, premium per
+  $1M, commission beside client cost, and a term-by-term comparison with every
+  mismatch listed ("5 of 7 terms match"). The target switches between the
+  expiring terms and any of the account's contract requirements; the summary
+  row sorts by premium, change, commission or terms matched. **Normalise**
+  drops quotes whose limits or deductible differ from the target and says which
+  and why.
+- **Market log** (`marketLog`): per carrier submissions, quotes, binds, declines
+  by reason, hit ratio, bind ratio and median days to respond, with a flag for
+  three or more submissions and no quotes. On a new **Market log** page (from
+  the Placement picker) and as a Dashboard card that follows the Dashboard's
+  lookback and producer filters.
+- **Demo book**: Harbourline's GL renewal has five carriers. The incumbent
+  Dominion Shield quoted $158,000; Pacific Crest $142,000 on identical terms;
+  Ironwood $128,000 with a $25,000 deductible and no waiver; Maplewood declined
+  (class of business); Tidewater has not responded after 14 days. Earlier
+  renewals for Kestrel, Cedar Ridge and Northfield add a year of market history,
+  in which Maplewood is flagged (four submissions, no quotes).
+- **Migration** `0004_marketing`: `submissions` (with `responded_on`) and
+  `quotes` (with `exposure_amount` and `is_bound`).
+
 ## v1 — Program (2026-11-13)
 
 Program: tower analysis, contract requirements checker, certificates, property adequacy. Additional updates to support large policies.

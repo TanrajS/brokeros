@@ -18,7 +18,7 @@ export default async function PlacementAccountLayout({ children, params }: { chi
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 print:hidden">
         <Link href={`/w/${slug}/placement`} className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <ArrowLeft className="size-4" aria-hidden="true" />
           All accounts
@@ -30,7 +30,9 @@ export default async function PlacementAccountLayout({ children, params }: { chi
           </Link>
         </div>
       </div>
-      <PlacementTabs base={base} />
+      <div className="print:hidden">
+        <PlacementTabs base={base} />
+      </div>
       {children}
     </div>
   );
