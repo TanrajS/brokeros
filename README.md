@@ -14,8 +14,12 @@ Version 0.4 opened Placement with Loss Runs: claims, CSV import and a
 policy-year summary with loss ratio, frequency and severity. Version 1 added the
 Program tab: tower analysis, a contract requirements checker, certificates of
 insurance and property adequacy, plus co-insurers and sub-limits on policies.
-Version 1.1 adds the Marketing tab: a submission package, carriers approached,
+Version 1.1 added the Marketing tab: a submission package, carriers approached,
 quotes, a like-for-like quote comparison and a workspace-wide market log.
+Version 1.2 adds the Strategy tab: retention options, a retention optimizer
+that replays the account's own claims, total cost of risk per option and a
+printable renewal strategy report with its assumptions generated from the
+settings in use.
 
 ## Local setup
 
@@ -337,6 +341,85 @@ paid + reserved**; it is always computed, never stored.
   submissions with a response date; declines by reason. A carrier with three or
   more submissions and no quotes is flagged.
 
+### Strategy: retained-loss replay, break-even, worst-year test, TCOR
+
+- **Retention options** are deductibles (or self-insured retentions) with their
+  annual premium and an optional aggregate cap, entered by hand or imported from
+  the quotes recorded in Marketing (the link to the quote is kept for audit).
+- **Retained-loss replay.** The account's own claims for the line are grouped by
+  policy year (effective ≤ date of loss < expiry). For every option and year:
+  **retained = Σ min(incurred, deductible)**, then **min(retained, aggregate cap)**
+  where a cap exists; **transferred = incurred − retained**. The replay uses the
+  five most recent policy years by default, including the running year (flagged
+  incomplete, with a toggle to exclude it). Trend and development from Loss runs
+  can be applied, per claim, before the deductible; both are off by default. The
+  basis in use is always stated beside the figures.
+- **Across years:** average retained per year, the worst year's retained and
+  which year it was.
+- **Against the base** (the lowest-deductible option; ties go to the cheaper):
+  premium saving = base premium − option premium; additional expected retained =
+  option average − base average; **expected total cost = premium + average
+  retained**; **net expected saving = premium saving − additional retained**.
+- **Break-even retained losses** = the premium saving: the most additional
+  retained loss the client can absorb in a year before the option costs more
+  than the base.
+- **Worst historical year test.** In the option's worst year, additional
+  retained = option retained − base retained in that same year; compared with
+  the premium saving and reported as "in PY2023 this option would have cost
+  $2,000 more than the base".
+- **Maximum annual exposure** = deductible × the most claims seen in any year
+  used, or the aggregate cap if lower.
+- **No option is marked recommended.** A considerations panel states, for cash
+  flow, claim volatility, frequency trend, open reserves and contract
+  requirements, what the account's figures show and what would favour a lower or
+  a higher retention.
+- **Total cost of risk (TCOR)** = premiums + expected retained losses + broker
+  fees + risk control spend + internal claims administration. Premiums are the
+  account's in-force policies with the option's premium in place of the line
+  under analysis; expected retained is the option's average retained plus, for
+  other in-force lines with loss runs, their five-year average below their own
+  deductible (lines without loss runs count as zero and are flagged). Shown in
+  dollars, as a percent of revenue and per $1,000 of revenue, for every option
+  side by side. Fees, risk control and claims administration are entered on the
+  account and default to zero.
+- **Renewal strategy report.** A print-styled route assembles profile and
+  exposures, the program tower, five-year losses with the basis stated, contract
+  requirement status, market results, the options with their per-year replay,
+  TCOR by option, the considerations and an **Assumptions and limitations**
+  section generated from the settings actually used. It compares options and
+  never says what the client should buy. Every input is exportable as JSON.
+
+#### Strategy limitations (what an actuary would do differently)
+
+The optimizer is a **historical replay** of the account's own claims. It is
+transparent and easy to audit, and it is not a forecast. In particular:
+
+- **Credibility.** Five years of one account's claims (twelve for Harbourline,
+  three for Cedar Ridge) carry little statistical weight. An actuary would blend
+  the account's experience with an industry or book expectation, weighting the
+  account's own data by its credibility (more claims, more weight), rather than
+  taking its average as the expected value.
+- **Loss distributions.** The replay can only reproduce claim sizes that have
+  happened. Retained losses at a higher deductible depend on how many claims
+  fall just below or above it, which a fitted severity distribution (and a
+  frequency distribution for the count of claims) estimates far better than
+  twelve observed amounts. The maximum annual exposure, in particular, is a
+  count-based ceiling, not a probability.
+- **Development of open claims.** Reserves on open claims are taken at their
+  current value unless development factors are entered by hand. An actuary would
+  develop each year to ultimate using factors derived from a relevant triangle,
+  and would treat the running year's incomplete count as such rather than as a
+  full year.
+- **Trend.** A single trend rate applied uniformly to every claim ignores that
+  frequency and severity trend differently, and that the deductible itself erodes
+  with inflation (more of each claim crosses it over time).
+- **Aggregate caps and correlation.** The cap is applied to the replayed total; a
+  distribution-based model would price the cap on the probability of exceeding
+  it, including years with more claims than any seen.
+- **Expected total cost ignores the time value of money and the cost of
+  capital** for funding the retained layer, and treats premium as fixed when a
+  higher retention may also change terms or future renewal pricing.
+
 ## Changelog
 
 v0.1 — Foundation: workspaces, accounts, contacts, policies, demo book, settings.
@@ -350,5 +433,7 @@ v0.4 — Loss runs: claims, CSV import, policy-year summary, trend and developme
 v1 — Program: tower analysis, contract requirements checker, certificates, property adequacy. Additional updates to support large policies.
 
 v1.1 — Marketing: submission package, carriers approached, quotes, like-for-like comparison, market log.
+
+v1.2 — Strategy: retention optimizer, total cost of risk, renewal strategy report.
 
 Full details in [CHANGELOG.md](CHANGELOG.md).

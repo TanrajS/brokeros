@@ -36,6 +36,13 @@
       "when": 1794614309276,
       "tag": "0004_marketing",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794697462792,
+      "tag": "0005_strategy",
+      "breakpoints": true
     }
   ]
 }

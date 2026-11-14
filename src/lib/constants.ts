@@ -1,6 +1,6 @@
 /** Enumerations shared by the database schema, Zod schemas and the UI. */
 
-export const APP_VERSION = "v1.1";
+export const APP_VERSION = "v1.2";
 
 export const ACCOUNT_STATUSES = ["prospect", "active", "lost"] as const;
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];

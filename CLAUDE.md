@@ -68,7 +68,7 @@ before changing anything, and keep it current when the rules change.
 | Zod schemas | `src/lib/schemas/*.ts` (`z.input` = form strings, `z.output` = parsed values) |
 | Display formatting | `src/lib/format/` (returns `null` for missing, never a fake value) |
 | Enumerations | `src/lib/constants.ts` (shared by schema, Zod and UI) |
-| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` / `demoBookProgram.ts` / `demoBookMarketing.ts` map it for tests |
+| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` / `demoBookProgram.ts` / `demoBookMarketing.ts` / `demoBookStrategy.ts` map it for tests |
 | Pages | `src/app/w/[slug]/…`; pages call `requireWorkspace(slug)` from `src/app/w/[slug]/lib.ts` |
 | UI components | `src/components/<area>/`; shadcn primitives in `src/components/ui/` |
 
@@ -92,6 +92,11 @@ before changing anything, and keep it current when the rules change.
   Browser tests must `waitForLoadState("networkidle")` before reading values.
 - A horizontal scroll container must be `relative`, or `sr-only` text inside it
   (absolutely positioned) escapes the clipping and widens the whole page.
+- A centred page block inside a flex column (`mx-auto max-w-…`) also needs
+  `w-full`, or it sizes to its tables' min-content and overflows at 375 px.
+- A Zod rule that spans two fields (cap ≥ deductible) must be re-triggered when
+  the other field changes (`useWatch` + `trigger`), or react-hook-form shows the
+  error only when the field carrying it is edited last.
 - Checkbox toggles backed by server state use `useOptimistic` so they flip
   immediately.
 - Filter forms that should produce shareable URLs use `CleanGetForm`, and the
@@ -101,7 +106,7 @@ before changing anything, and keep it current when the rules change.
 - v0.2 added `checklist_items`, `tasks`, `activities` and `renewal_outcomes`.
   Later versions add `claims`, `tower_layers`, `contract_requirements`,
   `certificates`, `submissions`, `quotes` and `quote_options` through new
-  migrations using the same column helpers. When `claims` arrives, wire its
+  migrations using the same column helpers (all present as of v1.2). When `claims` arrives, wire its
   count into `checkUndoOutcome` in `src/server/outcomes/actions.ts` (it passes 0
   today).
 
@@ -220,11 +225,39 @@ before changing anything, and keep it current when the rules change.
 - The demo marketing case is checked in
   `src/server/db/seed/__tests__/demoBookMarketing.test.ts`.
 
+## Strategy rules (v1.2)
+
+- **All strategy logic is in `src/lib/domain/strategy.ts`**:
+  `groupClaimsByPolicyYear`, `selectReplayYears`, `replayYear`,
+  `analyzeRetentionOptions`, `totalCostOfRisk`, `otherLineRetained`,
+  `considerations`, `assumptionsAndLimitations`. `buildStrategyView`
+  (`src/server/strategy/view.ts`) is the one place that assembles them and is
+  shared by the tab, the report and the JSON export; pages never recompute.
+- **Settings live in the URL** (`policy`, `years`, `current=0`, `trend`, `ldf`)
+  through `src/components/strategy/params.ts`, so the tab, the report and the
+  export always agree on the basis. The basis in use is stated on the page and
+  in the report's Assumptions section, which is generated, never hand-written.
+- **The base is the lowest deductible** (ties: lowest premium). Nothing marks an
+  option recommended; the Considerations panel is neutral (favours lower /
+  favours higher). The report never says what the client should buy.
+- **Replay arithmetic:** retained = Σ min(adjusted incurred, deductible), then
+  min(·, cap); adjustments (trend, development) apply per claim before the
+  deductible. The running year counts as a full year when included and is
+  labelled incomplete.
+- **TCOR premiums are in-force current terms** (the v0.3 rule) with the option's
+  premium in place of the analysed line; other lines without loss runs count as
+  zero and are flagged, never silently.
+- `quote_options.source_quote_id` is kept (ON DELETE SET NULL) so the report
+  can say which premiums came from quotes and which were entered by hand.
+- The demo strategy cases (Harbourline, Cedar Ridge) are checked in
+  `src/server/db/seed/__tests__/demoBookStrategy.test.ts`.
+
 ## Commands
 
 `npm run dev` · `npm run build` · `npm run typecheck` · `npm run lint` ·
 `npm test` · `npm run db:generate` · `npm run db:migrate` · `npm run db:seed`
 (`SEED_AS_OF=YYYY-MM-DD` fixes the as-of date; `SEED_WORKSPACE_SLUG=…` seeds an
 existing empty workspace). Browser smoke tests: `scripts/e2e-renewals.cjs`, `scripts/e2e-dashboard.cjs`,
-`scripts/e2e-lossruns.cjs`, `scripts/e2e-program.cjs`, `scripts/e2e-marketing.cjs`
+`scripts/e2e-lossruns.cjs`, `scripts/e2e-program.cjs`, `scripts/e2e-marketing.cjs`,
+`scripts/e2e-strategy.cjs`
 (see its header; Playwright is not a dependency).

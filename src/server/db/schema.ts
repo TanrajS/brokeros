@@ -10,7 +10,9 @@
  * v0.2 added checklist_items, tasks, activities and renewal_outcomes; v0.4
  * added claims; v1 added tower_layers, contract_requirements, certificates,
  * policy_participants and policy_sublimits; v1.1 added submissions and quotes
- * (a quote "option" is simply another quote on the same submission).
+ * (a quote "option" is simply another quote on the same submission); v1.2 added
+ * quote_options (retention options for the Strategy tab) and the account's
+ * broker fee, risk control and claims administration figures for TCOR.
  * Keep the helper column factories below so those tables stay consistent.
  */
 import { relations, sql } from "drizzle-orm";
@@ -94,6 +96,10 @@ export const accounts = pgTable(
     accountManager: text("account_manager"),
     status: accountStatusEnum("status").notNull().default("prospect"),
     notes: text("notes"),
+    /** v1.2, total cost of risk: annual amounts entered by the user; default zero. */
+    brokerFees: money("broker_fees").notNull().default(0),
+    riskControlSpend: money("risk_control_spend").notNull().default(0),
+    claimsAdminCost: money("claims_admin_cost").notNull().default(0),
     ...timestamps,
   },
   (t) => [index("accounts_workspace_idx").on(t.workspaceId), index("accounts_workspace_name_idx").on(t.workspaceId, t.name)],
@@ -475,6 +481,32 @@ export const quotes = pgTable(
   (t) => [index("quotes_submission_idx").on(t.submissionId), index("quotes_workspace_idx").on(t.workspaceId)],
 );
 
+/**
+ * v1.2: a retention option for the Strategy tab: a deductible (or self-insured
+ * retention) with its annual premium, optionally capped per year, entered by hand
+ * or imported from a quote (the link is kept for the report's audit trail).
+ */
+export const quoteOptions = pgTable(
+  "quote_options",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => policies.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    carrier: text("carrier").notNull(),
+    deductible: money("deductible").notNull(),
+    aggregateCap: money("aggregate_cap"),
+    premium: money("premium").notNull(),
+    sourceQuoteId: uuid("source_quote_id").references(() => quotes.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (t) => [index("quote_options_policy_idx").on(t.policyId), index("quote_options_workspace_idx").on(t.workspaceId)],
+);
+
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   accounts: many(accounts),
   contacts: many(contacts),
@@ -519,3 +551,4 @@ export type PolicyParticipant = typeof policyParticipants.$inferSelect;
 export type PolicySublimit = typeof policySublimits.$inferSelect;
 export type Submission = typeof submissions.$inferSelect;
 export type Quote = typeof quotes.$inferSelect;
+export type QuoteOption = typeof quoteOptions.$inferSelect;

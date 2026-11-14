@@ -12,7 +12,10 @@ import {
   policies,
   policyParticipants,
   policySublimits,
+  quoteOptions,
+  quotes,
   renewalOutcomes,
+  submissions,
   tasks,
   towerLayers,
   type Workspace,
@@ -23,7 +26,7 @@ import { toCsv } from "@/lib/format/csv";
 /** Whole-workspace export. Ids are included so a future import can rebuild links. */
 export async function exportWorkspaceJson(ws: Workspace) {
   const db = getDb();
-  const [accountRows, contactRows, policyRows, outcomeRows, checklistRows, taskRows, activityRows, claimRows, layerRows, requirementRows, certificateRows, participantRows, sublimitRows] = await Promise.all([
+  const [accountRows, contactRows, policyRows, outcomeRows, checklistRows, taskRows, activityRows, claimRows, layerRows, requirementRows, certificateRows, participantRows, sublimitRows, submissionRows, quoteRows, optionRows] = await Promise.all([
     db.select().from(accounts).where(eq(accounts.workspaceId, ws.id)).orderBy(asc(accounts.name)),
     db.select().from(contacts).where(eq(contacts.workspaceId, ws.id)).orderBy(asc(contacts.name)),
     db.select().from(policies).where(eq(policies.workspaceId, ws.id)).orderBy(asc(policies.expiryDate)),
@@ -37,6 +40,9 @@ export async function exportWorkspaceJson(ws: Workspace) {
     db.select().from(certificates).where(eq(certificates.workspaceId, ws.id)).orderBy(asc(certificates.accountId)),
     db.select().from(policyParticipants).where(eq(policyParticipants.workspaceId, ws.id)).orderBy(asc(policyParticipants.policyId)),
     db.select().from(policySublimits).where(eq(policySublimits.workspaceId, ws.id)).orderBy(asc(policySublimits.policyId)),
+    db.select().from(submissions).where(eq(submissions.workspaceId, ws.id)).orderBy(asc(submissions.policyId), asc(submissions.carrier)),
+    db.select().from(quotes).where(eq(quotes.workspaceId, ws.id)).orderBy(asc(quotes.submissionId), asc(quotes.quotedPremium)),
+    db.select().from(quoteOptions).where(eq(quoteOptions.workspaceId, ws.id)).orderBy(asc(quoteOptions.policyId), asc(quoteOptions.deductible)),
   ]);
   return {
     format: "brokeros-workspace",
@@ -55,6 +61,9 @@ export async function exportWorkspaceJson(ws: Workspace) {
     certificates: certificateRows,
     policyParticipants: participantRows,
     policySublimits: sublimitRows,
+    submissions: submissionRows,
+    quotes: quoteRows,
+    quoteOptions: optionRows,
   };
 }
 

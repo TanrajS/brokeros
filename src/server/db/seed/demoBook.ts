@@ -48,6 +48,9 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
       accountManager: a.accountManager,
       status: a.status,
       notes: a.notes,
+      brokerFees: a.brokerFees,
+      riskControlSpend: a.riskControlSpend,
+      claimsAdminCost: a.claimsAdminCost,
     })),
   );
 
@@ -188,6 +191,8 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
   // Submissions get ids here so their quotes can reference them in one pass.
   const submissionRows: (typeof schema.submissions.$inferInsert)[] = [];
   const quoteRows: (typeof schema.quotes.$inferInsert)[] = [];
+  // Quotes with a key get ids here so retention options can point at them.
+  const quoteIds = new Map<string, string>();
   for (const a of book) {
     for (const p of a.policies) {
       for (const s of p.submissions) {
@@ -205,7 +210,10 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
           notes: s.notes,
         });
         for (const qt of s.quotes) {
+          const quoteId = randomUUID();
+          if (qt.key) quoteIds.set(qt.key, quoteId);
           quoteRows.push({
+            id: quoteId,
             workspaceId,
             submissionId: id,
             quotedPremium: qt.premium,
@@ -226,6 +234,17 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
   }
   if (submissionRows.length > 0) await db.insert(schema.submissions).values(submissionRows);
   if (quoteRows.length > 0) await db.insert(schema.quotes).values(quoteRows);
+
+  const optionRows = book.flatMap((a) =>
+    a.policies.flatMap((p) =>
+      p.retentionOptions.map((o) => {
+        const sourceQuoteId = o.sourceQuoteKey ? quoteIds.get(o.sourceQuoteKey) : null;
+        if (o.sourceQuoteKey && !sourceQuoteId) throw new Error("Demo book: unknown quote key " + o.sourceQuoteKey);
+        return { workspaceId, policyId: pid(p.key), label: o.label, carrier: o.carrier, deductible: o.deductible, aggregateCap: o.aggregateCap, premium: o.premium, sourceQuoteId: sourceQuoteId ?? null };
+      }),
+    ),
+  );
+  if (optionRows.length > 0) await db.insert(schema.quoteOptions).values(optionRows);
 
   const activityRows = book.flatMap((a) =>
     a.activities.map((x) => ({

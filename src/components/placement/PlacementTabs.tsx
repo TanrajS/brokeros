@@ -8,7 +8,7 @@ const tabs = [
   { segment: "loss-runs", label: "Loss Runs" },
   { segment: "program", label: "Program" },
   { segment: "marketing", label: "Marketing" },
-  { segment: "strategy", label: "Strategy", hint: "v0.7" },
+  { segment: "strategy", label: "Strategy" },
 ] as const;
 
 export function PlacementTabs({ base }: { base: string }) {
@@ -30,7 +30,6 @@ export function PlacementTabs({ base }: { base: string }) {
                 )}
               >
                 {t.label}
-                {"hint" in t ? <span className="text-xs opacity-70">{t.hint}</span> : null}
               </Link>
             </li>
           );

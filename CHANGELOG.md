@@ -1,5 +1,45 @@
 # Changelog
 
+## v1.2 — Strategy (2026-11-14)
+
+Strategy: retention optimizer, total cost of risk, renewal strategy report.
+
+- **Strategy tab** in Placement, per policy in renewal.
+- **Retention options** (new `quote_options` table): label, carrier,
+  deductible, optional aggregate cap, premium and an optional link to the quote
+  it was imported from. Add by hand or **Import from quotes**.
+- **Retention optimizer** (`analyzeRetentionOptions`): replays each option
+  against the account's claims by policy year (retained = Σ min(incurred,
+  deductible), then the cap; transferred = the rest); average and worst-year
+  retained; against the lowest-deductible base: premium saving, additional
+  expected retained, expected total cost, net expected saving, break-even
+  retained losses, the worst-historical-year sentence and maximum annual
+  exposure. Settings: number of years (default five), include the running year
+  (default yes, flagged incomplete), trend and development per claim (default
+  off). Comparison table with units on every row, a chart of expected total
+  cost with the worst-year total as a second series, an expandable per-year
+  replay, and a neutral Considerations panel. No option is marked recommended.
+- **Total cost of risk** (`totalCostOfRisk`): premiums with the option's
+  premium substituted, expected retained (option average plus other in-force
+  lines below their deductibles, flagged when a line has no loss runs), broker
+  fees, risk control spend and internal claims administration (new account
+  columns, default zero). Dollars, percent of revenue and per $1,000 of revenue,
+  per option side by side, with a stacked breakdown chart and table.
+- **Renewal strategy report** at `…/strategy/report`: profile and exposures,
+  program tower, five-year loss history with the basis stated, contract
+  requirement status, market results, retention options with per-year replay,
+  TCOR by option, considerations, and **Assumptions and limitations** generated
+  from the settings used. Prints to PDF through the browser; **Export inputs
+  (JSON)** at `…/strategy/report/export` returns every input for audit.
+- **Demo book**: Harbourline's GL renewal carries three Pacific Crest options
+  ($10,000 / $142,000 linked to the Pacific Crest quote, $25,000 / $124,000,
+  $50,000 / $110,000), broker fees $15,000 and risk control $10,000. Cedar
+  Ridge's GL carries $5,000 / $108,000, $10,000 / $103,500 and $25,000 /
+  $97,000 with Northgate.
+- **Migration** `0005_strategy`: `quote_options`; `accounts.broker_fees`,
+  `risk_control_spend`, `claims_admin_cost`.
+- Workspace JSON export now includes submissions, quotes and quote options.
+
 ## v1.1 — Marketing (2026-11-13)
 
 Marketing: submission package, carriers approached, quotes, like-for-like comparison, market log.

@@ -51,6 +51,8 @@ export type DemoOutcome =
   | { type: "non_renewed"; reason: string; recordedAsOf: ISODate };
 
 export interface DemoQuote {
+  /** Stable key so a retention option can point at this quote; null for most quotes. */
+  key: string | null;
   premium: number;
   occurrenceLimit: number | null;
   aggregateLimit: number | null;
@@ -63,6 +65,17 @@ export interface DemoQuote {
   validUntilOffset: number;
   incumbent: boolean;
   bound: boolean;
+}
+
+/** v1.2: a retention option on a policy in renewal. */
+export interface DemoRetentionOption {
+  label: string;
+  carrier: string;
+  deductible: number;
+  aggregateCap: number | null;
+  premium: number;
+  /** Key of the DemoQuote this option was imported from, if any. */
+  sourceQuoteKey: string | null;
 }
 
 export interface DemoSubmission {
@@ -153,6 +166,8 @@ export interface DemoPolicy {
   sublimits: DemoSublimit[];
   /** v1.1: carriers approached for this policy's renewal, with their quotes. */
   submissions: DemoSubmission[];
+  /** v1.2: retention options for the Strategy tab. */
+  retentionOptions: DemoRetentionOption[];
   insurableValue: number | null;
   coinsurancePercent: number | null;
   tasks: DemoTask[];
@@ -186,6 +201,10 @@ export interface DemoAccount {
   accountManager: string | null;
   status: AccountStatus;
   notes: string | null;
+  /** v1.2 total cost of risk inputs (annual, dollars). */
+  brokerFees: number;
+  riskControlSpend: number;
+  claimsAdminCost: number;
   contacts: DemoContact[];
   policies: DemoPolicy[];
   /** Tasks on the account that are not tied to a policy. */
@@ -264,6 +283,7 @@ interface PolicySpec {
   participants?: DemoParticipant[];
   sublimits?: DemoSublimit[];
   submissions?: DemoSubmission[];
+  retentionOptions?: DemoRetentionOption[];
   insurableValue?: number;
   coinsurancePercent?: number;
 }
@@ -296,6 +316,7 @@ function policy(asOf: ISODate, owner: string | null, spec: PolicySpec): DemoPoli
     participants: spec.participants ?? [],
     sublimits: spec.sublimits ?? [],
     submissions: spec.submissions ?? [],
+    retentionOptions: spec.retentionOptions ?? [],
     insurableValue: spec.insurableValue ?? null,
     coinsurancePercent: spec.coinsurancePercent ?? null,
     carrier: spec.carrier,
@@ -320,8 +341,11 @@ function policy(asOf: ISODate, owner: string | null, spec: PolicySpec): DemoPoli
 const M = 1_000_000;
 const K = 1_000;
 
-type AccountSpec = Omit<DemoAccount, "policies" | "accountTasks" | "activities" | "claims" | "towerLayers" | "requirements" | "certificates"> & {
+type AccountSpec = Omit<DemoAccount, "policies" | "accountTasks" | "activities" | "claims" | "towerLayers" | "requirements" | "certificates" | "brokerFees" | "riskControlSpend" | "claimsAdminCost"> & {
   policies: PolicySpec[];
+  brokerFees?: number;
+  riskControlSpend?: number;
+  claimsAdminCost?: number;
   accountTasks?: DemoTask[];
   noteLog?: string[];
   claims?: DemoClaim[];
@@ -409,6 +433,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
   // ---- v1.1 marketing: carriers approached and quotes (all carriers fictional) ----
   const stdGlEnd: Endorsement[] = ["additional_insured", "waiver_of_subrogation", "primary_noncontributory"];
   const q = (over: Partial<DemoQuote> & Pick<DemoQuote, "premium">): DemoQuote => ({
+    key: null,
     occurrenceLimit: 1 * M,
     aggregateLimit: 2 * M,
     deductible: 10_000,
@@ -432,7 +457,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
   // Harbourline GL renewal (expiring $150,000, $10,000 deductible): the hand-verification case.
   const harbourMarketing: DemoSubmission[] = [
     sub({ carrier: C.dominion, status: "quoted", sentOffset: -30, respondedOffset: -12, notes: "Incumbent renewal.", quotes: [q({ premium: 158_000, exposureAmount: 26 * M, incumbent: true, validUntilOffset: 40, subjectivities: "Updated revenue figures; signed renewal application." })] }),
-    sub({ carrier: "Pacific Crest Insurance (fictional)", status: "quoted", respondedOffset: -10, quotes: [q({ premium: 142_000, commissionRate: 15, exposureAmount: 26 * M, validUntilOffset: 35, subjectivities: "Signed application within 30 days of binding." })] }),
+    sub({ carrier: "Pacific Crest Insurance (fictional)", status: "quoted", respondedOffset: -10, quotes: [q({ key: "harbour-pacific-crest", premium: 142_000, commissionRate: 15, exposureAmount: 26 * M, validUntilOffset: 35, subjectivities: "Signed application within 30 days of binding." })] }),
     sub({ carrier: "Ironwood Specialty (fictional)", status: "quoted", respondedOffset: -8, quotes: [q({ premium: 128_000, deductible: 25_000, endorsements: ["additional_insured", "primary_noncontributory"], commissionRate: 10, exposureAmount: 26 * M, subjectivities: "Satisfactory loss control survey of both plants; no waiver of subrogation available." })] }),
     sub({ carrier: "Maplewood Underwriters (fictional)", status: "declined", respondedOffset: -20, declineReason: "class_of_business", notes: "Does not write seafood processing." }),
     sub({ carrier: "Tidewater Assurance (fictional)", status: "submitted", sentOffset: -14, notes: "Chased once by phone." }),
@@ -451,6 +476,20 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
   const northfieldMarketing: DemoSubmission[] = [
     sub({ carrier: C.plains, status: "declined", sentOffset: -95, respondedOffset: -75, declineReason: "appetite", notes: "Withdrawing from plastics manufacturing." }),
     sub({ carrier: "Maplewood Underwriters (fictional)", status: "declined", sentOffset: -95, respondedOffset: -80, declineReason: "loss_history" }),
+  ];
+
+  // ---- v1.2 strategy: retention options (the $10,000 Pacific Crest option is the quote above) ----
+  const pacificCrest = "Pacific Crest Insurance (fictional)";
+  const harbourOptions: DemoRetentionOption[] = [
+    { label: "$10,000 deductible", carrier: pacificCrest, deductible: 10_000, aggregateCap: null, premium: 142_000, sourceQuoteKey: "harbour-pacific-crest" },
+    { label: "$25,000 deductible", carrier: pacificCrest, deductible: 25_000, aggregateCap: null, premium: 124_000, sourceQuoteKey: null },
+    { label: "$50,000 deductible", carrier: pacificCrest, deductible: 50_000, aggregateCap: null, premium: 110_000, sourceQuoteKey: null },
+  ];
+  // Cedar Ridge: low frequency with one open loss, so the replay contrasts with Harbourline.
+  const cedarOptions: DemoRetentionOption[] = [
+    { label: "$5,000 deductible", carrier: C.northgate, deductible: 5_000, aggregateCap: null, premium: 108_000, sourceQuoteKey: null },
+    { label: "$10,000 deductible", carrier: C.northgate, deductible: 10_000, aggregateCap: null, premium: 103_500, sourceQuoteKey: null },
+    { label: "$25,000 deductible", carrier: C.northgate, deductible: 25_000, aggregateCap: null, premium: 97_000, sourceQuoteKey: null },
   ];
 
   const specs: AccountSpec[] = [
@@ -490,7 +529,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
         p(histGl(cedarKeys, cedarEff, 1, C.northgate, 88_000, 15, 17 * M, 5_000, ["additional_insured"])),
         p(histGl(cedarKeys, cedarEff, 2, C.northgate, 94_000, 15, 18_500_000, 5_000, ["additional_insured"])),
         p({ key: "cedar-gl-prior", submissions: cedarMarketing, previousKey: "cedar-gl-2024", priorTerm: true, line: "General Liability", carrier: C.northgate, expires: daysBetween(asOf, cedarCurrentEffective).value, premium: 100_000, commission: 15, occ: 1 * M, agg: 2 * M, ded: 5_000, basis: "revenue", exposure: 20 * M, endorsements: ["additional_insured"], status: "renewed", outcome: { type: "renewed", successorKey: "cedar-gl", recordedAsOf: addDays(cedarCurrentEffective, -14).value }, notes: "Prior-year term: $100,000 on $20,000,000 revenue." }),
-        p({ key: "cedar-gl", previousKey: "cedar-gl-prior", line: "General Liability", carrier: C.northgate, expires: 120, premium: 108_000, commission: 15, occ: 1 * M, agg: 2 * M, ded: 5_000, basis: "revenue", exposure: 23 * M, endorsements: ["additional_insured"], notes: "Expires exactly 120 days after the as-of date. Renewed from the prior year: premium up 8% on 15% more revenue." }),
+        p({ key: "cedar-gl", previousKey: "cedar-gl-prior", retentionOptions: cedarOptions, line: "General Liability", carrier: C.northgate, expires: 120, premium: 108_000, commission: 15, occ: 1 * M, agg: 2 * M, ded: 5_000, basis: "revenue", exposure: 23 * M, endorsements: ["additional_insured"], notes: "Expires exactly 120 days after the as-of date. Renewed from the prior year: premium up 8% on 15% more revenue." }),
         p({ key: "cedar-pr", line: "Property", carrier: C.northgate, expires: 120, premium: 42_500, commission: 15, occ: 600_000, agg: null, ded: 5_000, basis: "square_feet", exposure: 38_000, insurableValue: 1_000_000, coinsurancePercent: 80, sublimits: [{ name: "Building", limit: 600_000, deductible: 5_000 }, { name: "Contractor's equipment", limit: 250_000, deductible: 2_500 }, { name: "Sewer backup", limit: 50_000, deductible: 5_000 }], notes: "Shop and office building insured for $600,000 against a $1,000,000 insurable value, 80% coinsurance." }),
         p({ line: "Commercial Auto", carrier: C.dominion, expires: 120, premium: 61_200, commission: 12.5, occ: 2 * M, agg: null, ded: 2_500, basis: "vehicles", exposure: 34 }),
         p({ key: "cedar-um", line: "Umbrella/Excess", carrier: C.boreal, expires: 120, premium: 27_800, commission: 12, occ: 5 * M, agg: 5 * M, ded: null, basis: "revenue", exposure: 23 * M, endorsements: ["additional_insured"] }),
@@ -544,6 +583,8 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       accountManager: MANAGERS[1],
       status: "active",
       notes: "Frozen seafood processor with two plants (Hamilton and Port Halverston), supplying private-label product to grocery chains; plant tours for buyers and suppliers.",
+      brokerFees: 15_000,
+      riskControlSpend: 10_000,
       noteLog: ["Plant expansion in the first quarter will add roughly 20% to payroll. Update exposure figures before marketing."],
       towerLayers: [
         { lineGroup: "gl", layerType: "primary", attachment: 0, limit: 1 * M, premium: 150_000, carrier: C.dominion, policyKey: "harbour-gl" },
@@ -585,7 +626,7 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
         p(histGl(harbourKeys, harbourEff, 1, C.dominion, 140_000, 12.5, 25 * M, 10_000, stdGl)),
         p(histGl(harbourKeys, harbourEff, 2, C.dominion, 145_000, 12.5, 25 * M, 10_000, stdGl)),
         p(histGl(harbourKeys, harbourEff, 3, C.dominion, 148_000, 12.5, 25 * M, 10_000, stdGl)),
-        p({ key: "harbour-gl", previousKey: "harbour-gl-2025", submissions: harbourMarketing, standardTasksDone: ["Strategy meeting"], line: "General Liability", carrier: C.dominion, expires: 60, premium: 150_000, commission: 12.5, occ: 1 * M, agg: 2 * M, ded: 10_000, basis: "revenue", exposure: 25 * M, endorsements: stdGl, notes: "Expires exactly 60 days after the as-of date." }),
+        p({ key: "harbour-gl", previousKey: "harbour-gl-2025", submissions: harbourMarketing, retentionOptions: harbourOptions, standardTasksDone: ["Strategy meeting"], line: "General Liability", carrier: C.dominion, expires: 60, premium: 150_000, commission: 12.5, occ: 1 * M, agg: 2 * M, ded: 10_000, basis: "revenue", exposure: 25 * M, endorsements: stdGl, notes: "Expires exactly 60 days after the as-of date." }),
         p({ line: "Property", carrier: C.dominion, expires: 60, premium: 212_000, commission: 12.5, occ: null, agg: null, ded: 25_000, basis: "square_feet", exposure: 96_000 }),
         p({ line: "Equipment Breakdown", carrier: C.tamarack, expires: 60, premium: 24_800, commission: 15, occ: 5 * M, agg: 5 * M, ded: 10_000, basis: "other" }),
         p({ line: "Commercial Auto", carrier: C.northgate, expires: 95, premium: 33_400, commission: 12.5, occ: 2 * M, agg: null, ded: 2_500, basis: "vehicles", exposure: 19 }),
@@ -869,6 +910,9 @@ function finalizeBook(asOf: ISODate, specs: AccountSpec[]): DemoAccount[] {
       accountManager: spec.accountManager,
       status: spec.status,
       notes: spec.notes,
+      brokerFees: spec.brokerFees ?? 0,
+      riskControlSpend: spec.riskControlSpend ?? 0,
+      claimsAdminCost: spec.claimsAdminCost ?? 0,
       contacts: spec.contacts,
       policies: built,
       accountTasks: spec.accountTasks ?? [],
