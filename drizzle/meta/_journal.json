@@ -71,6 +71,27 @@
       "when": 1794702560837,
       "tag": "0009_property_line_group",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794720800385,
+      "tag": "0010_remove_workers_compensation",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794722302318,
+      "tag": "0011_removals",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794722302698,
+      "tag": "0012_documents",
+      "breakpoints": true
     }
   ]
 }

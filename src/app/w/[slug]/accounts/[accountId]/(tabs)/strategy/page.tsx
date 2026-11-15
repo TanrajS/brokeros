@@ -7,11 +7,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConsiderationsPanel } from "@/components/strategy/ConsiderationsPanel";
 import { CostChart } from "@/components/strategy/CostChart";
+import { EstimatedOptionsTable } from "@/components/strategy/EstimatedOptionsTable";
+import { FindingsList } from "@/components/strategy/FindingsList";
 import { OptimizerTable } from "@/components/strategy/OptimizerTable";
 import { OptionsSection, type OptionRow } from "@/components/strategy/OptionsSection";
 import { ReplayTable } from "@/components/strategy/ReplayTable";
 import { StrategySettingsForm } from "@/components/strategy/StrategySettingsForm";
 import { TcorSection } from "@/components/strategy/TcorSection";
+import { ToleranceForm } from "@/components/strategy/ToleranceForm";
 import { parseStrategyQuery, strategyHref } from "@/components/strategy/params";
 import { ShowMath } from "@/components/dashboard/ShowMath";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -37,21 +40,12 @@ export default async function StrategyPage({ params, searchParams }: { params: P
       </p>
     );
   }
-  const { line, settings, analysis, grouped, policyOptions, data, otherLines, tcorByOption, tcorValues, considerations, importable, assumptions, missing } = view;
+  const { line, settings, analysis, grouped, policyOptions, data, otherLines, tcorByOption, tcorValues, considerations, assumptions, missing, findings, tolerances, toleranceDefaults, optionRows, premiumSource, accepted, currentPremium, currentDeductible } = view;
   const query = { ...q, policy: policy.id };
   const a = analysis.value;
   const years = a.years;
   const policyLabel = (p: (typeof choices)[number]) => `${p.lineOfBusiness} · ${p.carrier} · expires ${formatDate(p.expiryDate)}`;
-  const quotesById = new Map((data.byPolicy.get(policy.id) ?? []).flatMap((s) => s.quotes.map((qt) => [qt.id, `${s.submission.carrier} ${formatCurrency(qt.quotedPremium)}`] as const)));
-  const optionRows: OptionRow[] = policyOptions.map((o) => ({
-    id: o.id,
-    label: o.label,
-    carrier: o.carrier,
-    deductible: o.deductible,
-    aggregateCap: o.aggregateCap,
-    premium: o.premium,
-    source: o.sourceQuoteId ? (quotesById.get(o.sourceQuoteId) ?? "deleted quote") : null,
-  }));
+  const optionRowsManual: OptionRow[] = policyOptions.map((o) => ({ id: o.id, label: o.label, carrier: o.carrier, deductible: o.deductible, aggregateCap: o.aggregateCap, premium: o.premium }));
   const yearsText = years.length ? `${years[0].label}–${years[years.length - 1].label}` : "no policy years";
   const runningYear = grouped.value.years.find((y) => y.current)?.label ?? null;
   const basisSentence =
@@ -84,8 +78,9 @@ export default async function StrategyPage({ params, searchParams }: { params: P
               <span>{basisSentence}</span>
             </p>
             <p className="text-xs text-muted-foreground">
-              Expiring {line} with {policy.carrier}: {formatCurrency(policy.annualPremium)} premium, {policy.deductible === null ? "no deductible" : `${formatCurrency(policy.deductible)} deductible`}. Change the years or
-              adjustments in the settings below; the report uses the same ones.
+              Expiring {line} with {policy.carrier}: {formatCurrency(policy.annualPremium)} premium, {currentDeductible === null ? "no deductible" : `${formatCurrency(currentDeductible)} deductible`}; premium at the current deductible used for estimates:{" "}
+              {formatCurrency(currentPremium)}.
+              {tolerances ? ` Tolerances: ${formatCurrency(tolerances.perOccurrence)} per occurrence, ${formatCurrency(tolerances.perYear)} per year${toleranceDefaults.occurrence && toleranceDefaults.year ? " (defaults from revenue)" : ""}; permissible loss ratio ${tolerances.permissibleLossRatio.toFixed(2)}.` : ""}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -117,7 +112,94 @@ export default async function StrategyPage({ params, searchParams }: { params: P
         ) : null}
       </div>
 
-      <OptionsSection slug={slug} policyId={policy.id} expiringCarrier={policy.carrier} rows={optionRows} importable={importable} />
+      <ToleranceForm
+        slug={slug}
+        accountId={accountId}
+        current={{ toleranceOccurrence: data.account.toleranceOccurrence, toleranceYear: data.account.toleranceYear, permissibleLossRatio: data.account.permissibleLossRatio }}
+        defaults={toleranceDefaults.defaults}
+        revenue={data.account.annualRevenue}
+      />
+
+      <section aria-labelledby="findings-heading" className="flex flex-col gap-3">
+        <h2 id="findings-heading" className="text-lg font-semibold">
+          Findings and candidates for discussion
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          Read from the program layers, their participations, the loss history, the deductible schedule and the tolerances above. Every statement is supported by the math beside it; nothing here is a decision,
+          and &ldquo;recommended&rdquo; appears only as &ldquo;recommended for discussion&rdquo;.
+        </p>
+        {findings ? (
+          <>
+            <FindingsList slug={slug} accountId={accountId} findings={findings.value.findings} modifiers={findings.value.modifiers} accepted={[...accepted]} />
+            <details className="rounded-lg border">
+              <summary className="cursor-pointer px-3 py-2 text-sm font-medium">Band analysis: in-band losses by layer and year</summary>
+              <div className="relative overflow-x-auto border-t">
+                <table className="w-full min-w-[40rem] text-sm">
+                  <caption className="sr-only">Band analysis</caption>
+                  <thead className="border-b bg-muted/40">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">Band</th>
+                      <th className="px-3 py-2 text-left font-medium">Responds from ($) / limit ($)</th>
+                      {years.map((y) => (
+                        <th key={y.label} className="px-3 py-2 text-right font-medium">
+                          {y.label} ($)
+                        </th>
+                      ))}
+                      <th className="px-3 py-2 text-right font-medium">Average ($ per year)</th>
+                      <th className="px-3 py-2 text-right font-medium">Premium ($)</th>
+                      <th className="px-3 py-2 text-left font-medium">Class</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {findings.value.bands.map((b) => (
+                      <tr key={b.id}>
+                        <td className="px-3 py-2 font-medium">
+                          {b.towerLabel} {b.label}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums">
+                          {formatCurrency(b.attachment)} / {formatCurrency(b.limit)}
+                        </td>
+                        {b.perYear.map((y) => (
+                          <td key={y.label} className="px-3 py-2 text-right tabular-nums">
+                            {formatCurrency(y.inBand)}
+                          </td>
+                        ))}
+                        <td className="px-3 py-2 text-right font-medium tabular-nums">{formatCurrency(b.averageInBand)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{b.premium === null ? "—" : formatCurrency(b.premium)}</td>
+                        <td className="px-3 py-2">
+                          <Badge variant={b.classification === "working" ? "default" : "outline"}>{b.classification === "working" ? "Working" : "Catastrophe"}</Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+                In-band losses = Σ min(max(incurred − attachment, 0), limit). A band is working when the history shows any loss in it or losses reach it more than 0.2 times a year; otherwise it is a catastrophe band
+                and no retention is proposed.
+              </p>
+            </details>
+            <ShowMath lines={findings.math.steps.lines as string[]} />
+          </>
+        ) : (
+          <p className="rounded-lg border p-4 text-sm text-muted-foreground">Findings need a deductible on the policy and risk tolerances (from revenue or entered above).</p>
+        )}
+      </section>
+
+      <OptionsSection slug={slug} policyId={policy.id} expiringCarrier={policy.carrier} rows={optionRowsManual} />
+
+      <section aria-labelledby="options-table-heading" className="flex flex-col gap-3">
+        <h2 id="options-table-heading" className="text-lg font-semibold">
+          Retention options: estimated and manual premiums
+        </h2>
+        <EstimatedOptionsTable
+          rows={optionRows}
+          premiumSource={premiumSource}
+          manualHref={strategyHref(slug, accountId, query, { premiums: "" })}
+          estimatedHref={strategyHref(slug, accountId, query, { premiums: "estimated" })}
+          tolerancePerYear={tolerances?.perYear ?? null}
+        />
+      </section>
 
       <section aria-labelledby="optimizer-heading" className="flex flex-col gap-3">
         <h2 id="optimizer-heading" className="text-lg font-semibold">

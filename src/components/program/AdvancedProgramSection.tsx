@@ -28,8 +28,6 @@ import { Missing } from "@/components/Missing";
 import { ShowMath } from "@/components/dashboard/ShowMath";
 import {
   COVERAGE_STATUS_LABELS,
-  LAYER_BASES,
-  LAYER_BASIS_LABELS,
   LAYER_TYPES,
   LAYER_TYPE_LABELS,
   analyzeTower,
@@ -68,8 +66,8 @@ interface Props {
 type Draft = { insurer: string; written: string; signed: string; premium: string };
 type Dialogs = { kind: "layer"; layer: ProgramLayerInput | null } | { kind: "participation"; layer: ProgramLayerInput } | { kind: "delete-layer"; layer: ProgramLayerInput } | { kind: "delete-participation"; layer: ProgramLayerInput; p: ParticipationInput } | null;
 
-// Dataviz palette: fully placed aqua, under-placed yellow, over-placed and not covered red-orange.
-const STATUS_COLOR: Record<CoverageStatus, string> = { fully_placed: "#1baf7a", under_placed: "#eda100", over_placed: "#eb6834", not_covered: "#d6473c" };
+// Dataviz palette: fully placed aqua; anything below or above 100% red-orange.
+const STATUS_COLOR: Record<CoverageStatus, string> = { fully_placed: "#1baf7a", under_placed: "#d6473c", over_placed: "#d6473c", not_covered: "#d6473c" };
 const INSURER_COLORS = ["#2a78d6", "#1baf7a", "#eda100", "#e87ba4", "#7c6fd6", "#eb6834", "#52514e"];
 const pct = (ratio: number, d = 2) => `${(ratio * 100).toFixed(d)}%`;
 const pctPts = (n: number) => `${(+n.toFixed(3)).toString()}%`;
@@ -193,12 +191,6 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
             <Tile label="Rate per $100 of TIV" value={totals.value.ratePer100Tiv === null ? null : `$${totals.value.ratePer100Tiv.toFixed(4)}`} missing="Rate per $100 (no TIV on the linked policy)" detail={tiv !== null ? `TIV ${formatCurrency(tiv)}` : "Enter an insurable value on the property policy"} />
             <Tile label="Coverage" value={profile.value.fullyPlaced ? "100% at every point" : `${formatCurrency(profile.value.totalUnplacedDollars)} unplaced`} detail={`${profile.value.segments.length} segment${profile.value.segments.length === 1 ? "" : "s"} to ${formatCurrency(top)}`} />
           </div>
-          {profile.value.bases.length > 1 ? (
-            <p className="flex items-start gap-2 rounded-lg border border-amber-500/60 bg-amber-50 p-2 text-sm">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              Layers mix bases ({profile.value.bases.map((b) => LAYER_BASIS_LABELS[b].toLowerCase()).join(", ")}). The coverage strip adds their shares as if they responded to the same loss; confirm with the placing broker.
-            </p>
-          ) : null}
           {towerFindings.some((t) => t.findings.length) ? (
             <ul className="flex flex-col gap-1.5">
               {towerFindings.flatMap((t) =>
@@ -253,19 +245,9 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
                   <p className="text-center text-xs font-medium">{t}</p>
                 </div>
               ))}
-              <div className="flex w-16 shrink-0 flex-col gap-1">
-                <div className="relative h-80 overflow-hidden rounded border">
-                  {profile.value.segments.map((seg) => (
-                    <div key={`${seg.from}-${seg.to}`} className="absolute inset-x-0 flex items-center justify-center text-[10px] text-white" style={{ bottom: `${(seg.from / top) * 100}%`, height: `${(seg.width / top) * 100}%`, background: STATUS_COLOR[seg.status] }} title={`${formatCurrency(seg.from)} to ${formatCurrency(seg.to)}: ${pct(seg.placedShare, 1)} ${COVERAGE_STATUS_LABELS[seg.status]}`}>
-                      {pct(seg.placedShare, 0)}
-                    </div>
-                  ))}
-                </div>
-                <p className="text-center text-xs font-medium">Placed</p>
-              </div>
             </div>
             <figcaption className="text-xs text-muted-foreground">
-              Each block is a layer, split by insurer share; hatched = unplaced. The strip on the right adds every tower&apos;s share per segment: green 100%, amber under-placed, red over-placed or not covered.
+              Each block is a layer, split by insurer share; hatched = unplaced. The segment table below adds every tower&apos;s share per segment; a placed % in red is below or above 100%.
             </figcaption>
           </figure>
 
@@ -290,9 +272,9 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
                       {formatCurrency(seg.from)} to {formatCurrency(seg.to)}
                     </td>
                     <td className={`${cell} text-xs`}>{seg.contributions.map((c) => `${c.towerLabel} ${c.label} ${pct(c.share, 0)}`).join(" + ") || "none"}</td>
-                    <td className={`${cell} text-right`}>{pct(seg.placedShare)}</td>
+                    <td className={cn(cell, "text-right font-medium", seg.status !== "fully_placed" && "text-red-800")}>{pct(seg.placedShare)}</td>
                     <td className={cell}>
-                      <Badge variant="outline" style={{ borderColor: STATUS_COLOR[seg.status], color: seg.status === "fully_placed" ? "#0b6b4a" : "#7a3b00" }}>
+                      <Badge variant="outline" style={{ borderColor: STATUS_COLOR[seg.status], color: seg.status === "fully_placed" ? "#0b6b4a" : "#9b1c1c" }}>
                         {COVERAGE_STATUS_LABELS[seg.status]}
                         {seg.status === "under_placed" ? ` (short ${pct(seg.shortfallShare, 1)})` : seg.status === "over_placed" ? ` (+${pct(seg.excessShare, 1)})` : ""}
                       </Badge>
@@ -428,9 +410,7 @@ function LayerRows({
                 </td>
                 <td className={cell} rowSpan={s.participations.length + 1}>
                   <span className="font-medium">{s.label}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {LAYER_TYPE_LABELS[s.layer.layerType]} · {LAYER_BASIS_LABELS[s.layer.basis].toLowerCase()}
-                  </span>
+                  <span className="block text-xs text-muted-foreground">{LAYER_TYPE_LABELS[s.layer.layerType]}</span>
                   <span className="mt-1 flex gap-1">
                     <Button type="button" size="icon-sm" variant="ghost" aria-label={`Edit layer ${s.layer.towerLabel} ${s.label}`} onClick={onEditLayer}>
                       <Pencil aria-hidden="true" />
@@ -529,8 +509,8 @@ function LayerDialog({ slug, accountId, lineGroup, layer, towers, policyOptions,
   const { register, handleSubmit, formState, getValues, setError } = useForm<LayerFormInput, unknown, LayerFormValues>({
     resolver: zodResolver(layerFormSchema),
     defaultValues: layer
-      ? { lineGroup, towerLabel: layer.towerLabel, layerType: layer.layerType, attachment: String(layer.attachment), limit: String(layer.limit), basis: layer.basis, policyId: layer.policyId ?? "", notes: layer.notes ?? "" }
-      : { lineGroup, towerLabel: towers[0] ?? "Tower 1", layerType: "primary", attachment: "0", limit: "", basis: "per_occurrence", policyId: "", notes: "" },
+      ? { lineGroup, towerLabel: layer.towerLabel, layerType: layer.layerType, attachment: String(layer.attachment), limit: String(layer.limit), policyId: layer.policyId ?? "", notes: layer.notes ?? "" }
+      : { lineGroup, towerLabel: towers[0] ?? "Tower 1", layerType: "primary", attachment: "0", limit: "", policyId: "", notes: "" },
     mode: "onChange",
   });
   const msg = (k: keyof LayerFormInput) => formState.errors[k]?.message;
@@ -553,7 +533,7 @@ function LayerDialog({ slug, accountId, lineGroup, layer, towers, policyOptions,
         <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>{layer ? "Edit layer" : "Add layer"}</DialogTitle>
-            <DialogDescription>A layer belongs to a tower; name a new tower to split the risk horizontally. Insurers are added to the layer afterwards.</DialogDescription>
+            <DialogDescription>A layer belongs to a tower; name a new tower to split the risk horizontally. Limits are per occurrence. Insurers are added to the layer afterwards.</DialogDescription>
           </DialogHeader>
           <input type="hidden" {...register("lineGroup")} />
           <div className="grid gap-3 sm:grid-cols-2">
@@ -579,15 +559,6 @@ function LayerDialog({ slug, accountId, lineGroup, layer, towers, policyOptions,
             </Field>
             <Field id="al-limit" label="Limit (CAD)" required error={msg("limit")}>
               <Input {...register("limit")} {...fieldA11y("al-limit", msg("limit"))} inputMode="decimal" />
-            </Field>
-            <Field id="al-basis" label="Basis" required error={msg("basis")}>
-              <NativeSelect {...register("basis")} {...fieldA11y("al-basis", msg("basis"))}>
-                {LAYER_BASES.map((b) => (
-                  <option key={b} value={b}>
-                    {LAYER_BASIS_LABELS[b]}
-                  </option>
-                ))}
-              </NativeSelect>
             </Field>
             <Field id="al-policy" label="Linked policy" error={msg("policyId")}>
               <NativeSelect {...register("policyId")} {...fieldA11y("al-policy", msg("policyId"))}>

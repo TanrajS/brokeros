@@ -6,46 +6,43 @@ import { checklistTemplate, getRenewalStage, getRateMetrics, isTaskOverdue } fro
 const asOf = "2026-11-12";
 const book = buildDemoBook(asOf);
 const allPolicies = book.flatMap((a) => a.policies.map((p) => ({ account: a.name, ...p })));
-/** v0.1 rules apply to current terms; v0.2 adds one prior-year term for the rate example. */
+/** Current terms: prior-year terms are kept for history and excluded from the date-range rules. */
 const currentPolicies = allPolicies.filter((p) => !p.priorTerm);
 
-describe("buildDemoBook", () => {
-  it("has 14 accounts across the six industries", () => {
-    expect(book).toHaveLength(14);
+describe("buildDemoBook (v1.4: ten focused accounts)", () => {
+  it("has exactly 10 accounts across the six industries", () => {
+    expect(book).toHaveLength(10);
     const industries = new Set(book.map((a) => a.industry));
     for (const i of ["construction", "manufacturing", "hospitality", "professional services", "transportation", "retail"]) {
       expect(industries.has(i as never)).toBe(true);
     }
   });
 
-  it("has about 45 current policies, 2 to 5 per account except the empty one", () => {
-    // v0.3 adds historical terms (prior years, one old loss) for the retention window; they are not counted here.
-    expect(currentPolicies.length).toBeGreaterThanOrEqual(42);
-    expect(currentPolicies.length).toBeLessThanOrEqual(50);
-    const empty = book.filter((a) => a.policies.length === 0);
-    expect(empty).toHaveLength(1);
-    expect(empty[0].name).toBe("Summit Row Outfitters Inc.");
+  it("has about 37 current policies, 2 to 7 per account, and no empty accounts", () => {
+    expect(currentPolicies.length).toBeGreaterThanOrEqual(34);
+    expect(currentPolicies.length).toBeLessThanOrEqual(40);
     for (const a of book) {
       const current = a.policies.filter((p) => !p.priorTerm);
-      if (current.length === 0) continue;
       expect(current.length).toBeGreaterThanOrEqual(2);
-      // Maple & Mast holds 5 current rows: two renewed today, their two successors, and Cyber.
-      expect(current.length).toBeLessThanOrEqual(5);
+      // Harbourview holds 7 current rows: two renewed today, their two successors, cyber and the lost auto.
+      expect(current.length).toBeLessThanOrEqual(7);
     }
   });
 
   it("keeps premiums, commissions and expiries within the specified ranges", () => {
     for (const p of currentPolicies) {
       expect(p.annualPremium).toBeGreaterThanOrEqual(6_000);
-      expect(p.annualPremium).toBeLessThanOrEqual(420_000);
+      expect(p.annualPremium).toBeLessThanOrEqual(755_000);
       expect(p.commissionRate).toBeGreaterThanOrEqual(10);
       expect(p.commissionRate).toBeLessThanOrEqual(17.5);
       const days = daysBetween(asOf, p.expiryDate).value;
       expect(days).toBeGreaterThanOrEqual(-30);
       expect(days).toBeLessThanOrEqual(400);
       expect(days).toBe(p.expiryOffsetDays);
-      // every term is a year: 365 days, or 366 when a successor's 12 months span Feb 29
-      expect([365, 366]).toContain(daysBetween(p.effectiveDate, p.expiryDate).value);
+      // every term is a year, or a longer co-terminous term (12 to 17 months) written to a common renewal date
+      const term = daysBetween(p.effectiveDate, p.expiryDate).value;
+      expect(term).toBeGreaterThanOrEqual(365);
+      expect(term).toBeLessThanOrEqual(520);
     }
   });
 
@@ -88,10 +85,11 @@ describe("buildDemoBook", () => {
     expect(gl.expiryOffsetDays).toBe(60);
   });
 
-  it("uses only fictional .example emails and unique policy numbers", () => {
+  it("uses only fictional .example emails, unique policy numbers and no Workers Compensation", () => {
     for (const a of book) for (const c of a.contacts) if (c.email) expect(c.email.endsWith(".example")).toBe(true);
     const numbers = allPolicies.map((p) => p.policyNumber);
     expect(new Set(numbers).size).toBe(numbers.length);
+    expect(allPolicies.some((p) => (p.lineOfBusiness as string) === "Workers Compensation")).toBe(false);
   });
 
   it("is deterministic for the same as-of date", () => {
@@ -99,7 +97,7 @@ describe("buildDemoBook", () => {
   });
 });
 
-describe("buildDemoBook — v0.2 renewals data", () => {
+describe("buildDemoBook — renewals data", () => {
   const stageOf = (p: (typeof allPolicies)[number]) => getRenewalStage(daysBetween(asOf, p.expiryDate).value, p.renewalStatus).value;
 
   it("chains Cedar Ridge's GL to a prior-year $100,000 on $20,000,000 term", () => {
@@ -111,7 +109,6 @@ describe("buildDemoBook — v0.2 renewals data", () => {
     expect(prior.exposureAmount).toBe(20_000_000);
     expect(prior.renewalStatus).toBe("renewed");
     expect(prior.outcome).toMatchObject({ type: "renewed", successorKey: "cedar-gl" });
-    // prior expiry = current effective (the successor starts the day the prior ends)
     expect(prior.expiryDate).toBe(current.effectiveDate);
     // 108,000 ÷ 23,000 = 4.695652 vs 100,000 ÷ 20,000 = 5 → 0.939130 − 1 = −0.060870
     const m = getRateMetrics(
@@ -121,36 +118,33 @@ describe("buildDemoBook — v0.2 renewals data", () => {
     expect(m.sentence).toBe("Premium rose 8.0% while exposure rose 15.0%, so the rate fell 6.1%.");
   });
 
-  it("carries 17 outcomes: 14 renewed with successors, 2 lost to price, 1 non-renewed", () => {
-    // v0.4 adds 7 historical GL renewals (Harbourline PY2022–PY2025, Cedar Ridge PY2022–PY2024)
+  it("carries 55 outcomes: 51 renewed with successors, 3 lost to price, 1 non-renewed", () => {
     const withOutcome = allPolicies.filter((p) => p.outcome);
-    expect(withOutcome).toHaveLength(17);
+    expect(withOutcome).toHaveLength(55);
     const renewed = withOutcome.filter((p) => p.outcome!.type === "renewed");
-    expect(renewed).toHaveLength(14);
+    expect(renewed).toHaveLength(51);
     expect(withOutcome.filter((p) => p.outcome!.type === "non_renewed")).toHaveLength(1);
     for (const r of renewed) {
       const o = r.outcome as { successorKey: string };
       const successor = allPolicies.find((p) => p.key === o.successorKey)!;
       expect(successor.previousKey).toBe(r.key);
-      // successors start not_started; older ones have moved on, and in a multi-year chain have renewed themselves
-      expect(["not_started", "in_progress", "renewed"]).toContain(successor.renewalStatus);
+      // Northwind's property chain ends in the carrier's non-renewal
+      expect(["not_started", "in_progress", "renewed", "non_renewed"]).toContain(successor.renewalStatus);
       expect(successor.effectiveDate).toBe(r.expiryDate);
     }
     const lost = withOutcome.filter((p) => p.outcome!.type === "lost");
-    expect(lost).toHaveLength(2);
+    expect(lost).toHaveLength(3);
     for (const l of lost) {
       expect(l.outcome).toMatchObject({ lostReason: "price" });
       expect(l.renewalStatus).toBe("lost");
     }
-    // closed statuses only come from outcomes
     const closed = allPolicies.filter((p) => ["renewed", "lost", "non_renewed"].includes(p.renewalStatus));
     expect(closed.map((p) => p.key).sort()).toEqual(withOutcome.map((p) => p.key).sort());
   });
 
-  it("gives about a third of policies a partly completed checklist, plus one ready to market", () => {
+  it("gives about a third of open policies a partly completed checklist, plus one ready to market", () => {
     const open = currentPolicies.filter((p) => !["renewed", "lost", "non_renewed"].includes(p.renewalStatus));
     const partial = open.filter((p) => p.checklist && p.checklist.some((i) => i.done) && p.checklist.some((i) => !i.done));
-    // a third of open policies, e.g. 13 of 39
     const ratio = partial.length / open.length;
     expect(ratio).toBeGreaterThanOrEqual(0.25);
     expect(ratio).toBeLessThanOrEqual(0.4);
@@ -163,7 +157,7 @@ describe("buildDemoBook — v0.2 renewals data", () => {
 
   it("has overdue tasks on several policies", () => {
     const overdueByPolicy = allPolicies.filter((p) => p.tasks.some((t) => isTaskOverdue(asOf, t.dueDate, t.done).value));
-    expect(overdueByPolicy.length).toBeGreaterThanOrEqual(4);
+    expect(overdueByPolicy.length).toBeGreaterThanOrEqual(3);
     // Harbourline GL: expiry +60, "Submit to market" due 60 − 90 = −30 days and not done → overdue
     const harbour = allPolicies.find((p) => p.account === "Harbourline Foods Inc." && p.lineOfBusiness === "General Liability" && !p.priorTerm)!;
     const submit = harbour.tasks.find((t) => t.title === "Submit to market")!;
@@ -172,8 +166,6 @@ describe("buildDemoBook — v0.2 renewals data", () => {
   });
 
   it("puts policies in every stage except Expired on first load", () => {
-    // v0.3: every expired policy in the trailing year has an outcome, so retention has no
-    // "unresolved, treated as lost" rows and shows exactly 87.5% / 80.0%. Expired is empty.
     const stages = new Set(allPolicies.map(stageOf));
     expect(stages.size).toBe(6);
     expect(stages.has("Expired — action required")).toBe(false);
@@ -181,7 +173,24 @@ describe("buildDemoBook — v0.2 renewals data", () => {
 
   it("writes an activity for each outcome and the completed checklist", () => {
     const acts = book.flatMap((a) => a.activities);
-    expect(acts.filter((a) => a.kind === "outcome_recorded")).toHaveLength(17);
+    expect(acts.filter((a) => a.kind === "outcome_recorded")).toHaveLength(55);
     expect(acts.filter((a) => a.kind === "checklist_complete")).toHaveLength(1);
+  });
+
+  it("gives the four fully populated accounts documents in all four folders and the others a proposal and a submission", () => {
+    const full = ["Harbourline Foods Inc.", "Cedar Ridge Mechanical Ltd.", "Pacific Northwest Terminals Ltd.", "Kootenay Alpine Resorts Inc."];
+    for (const a of book) {
+      const types = new Set(a.documents.map((d) => d.docType));
+      if (full.includes(a.name)) {
+        expect([...types].sort()).toEqual(["certificate", "policy_document", "proposal", "submission"]);
+        expect(a.documents.find((d) => d.docType === "certificate")!.certificate).toBeDefined();
+        // every Property policy on a fully populated account carries a deductible schedule
+        for (const p of a.policies.filter((x) => x.lineOfBusiness === "Property" && !x.priorTerm)) expect(p.deductibles.length).toBeGreaterThan(0);
+      } else {
+        expect(types.has("proposal") && types.has("submission")).toBe(true);
+      }
+      for (const d of a.documents.filter((x) => x.docType === "submission")) expect(d.markets.length).toBeGreaterThan(0);
+      expect(new Set(a.documents.map((d) => d.key)).size).toBe(a.documents.length);
+    }
   });
 });

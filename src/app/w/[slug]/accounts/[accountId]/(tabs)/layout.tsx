@@ -27,7 +27,7 @@ export default async function AccountTabsLayout({ children, params }: { children
     { segment: "overview", label: "Overview" },
     { segment: "loss-runs", label: "Loss Runs", count: counts.claims },
     { segment: "program", label: "Program", count: counts.layers },
-    { segment: "marketing", label: "Marketing", count: counts.quotes },
+    { segment: "documents", label: "Documents", count: counts.documents },
     { segment: "strategy", label: "Strategy", count: counts.options },
   ];
 

@@ -51,7 +51,12 @@ async function openStrategy(p, slug, account) {
 
   const options = section(page, "options-heading");
   check("three Pacific Crest options seeded", (await options.locator("tbody tr").count()) === 3);
-  check("$10,000 option linked to the Pacific Crest quote; others entered by hand", /Quote: Pacific Crest Insurance \(fictional\) \$142,000/.test(await rowText(options, "$10,000 deductible")) && /Entered by hand/.test(await rowText(options, "$50,000 deductible")));
+  check("$10,000 option carries its $142,000 manual premium and nothing is called a quote", /\$142,000/.test(await rowText(options, "$10,000 deductible")) && !/Quote:/.test(await options.innerText()));
+  const findings = section(page, "findings-heading");
+  check("findings list present with the not-quotes sentence and no recommendation wording", (await findings.count()) === 1 && /Estimated premiums are derived from your loss history and this ratio; they are not quotes\./.test(flat(await main(page).innerText())) && !/recommend/i.test((await findings.innerText()).replace(/“recommended” appears only as “recommended for discussion”/, "")));
+  check("Harbourline $1M primary band is a raise-deductible candidate, not self-insure", /raise|Raise/.test(await findings.innerText()) && !/self-insure candidate/i.test(await findings.innerText()));
+  const est = main(page).locator("table", { hasText: "Estimated premium ($ per year)" }).first();
+  check("estimated options table: $125,000 option estimated at 76,769", /\$125,000[\s\S]*\$76,769/.test(flat(await est.innerText())), flat(await est.innerText()).slice(0, 300));
 
   const opt = section(page, "optimizer-heading");
   const table = opt.locator("table").first();
@@ -77,7 +82,7 @@ async function openStrategy(p, slug, account) {
   await opt.screenshot({ path: `${SHOTS}/strategy-optimizer.png` });
 
   const cons = section(page, "considerations-heading");
-  check("considerations: five neutral topics with the account's figures", (await cons.locator("li").count()) === 5 && /frequency is falling/.test(await cons.innerText()) && /2 open claims carry \$138,000/.test(await cons.innerText()) && !/recommend/i.test(await cons.innerText()));
+  check("considerations: four neutral topics with the account's figures", (await cons.locator("li").count()) === 4 && /frequency is falling/.test(await cons.innerText()) && /2 open claims carry \$138,000/.test(await cons.innerText()) && !/recommend/i.test(await cons.innerText()));
 
   const tcor = section(page, "tcor-heading");
   const tcorTable = tcor.locator("table").first();
@@ -85,13 +90,13 @@ async function openStrategy(p, slug, account) {
   check("TCOR premiums substitute the option premium: 429,800 / 411,800 / 397,800", /\$429,800 .*\$411,800 .*\$397,800/.test(await rowText(tcorTable, "Premiums")));
   check("TCOR fees 15,000 and risk control 10,000 from the account", /\$15,000 \$15,000 \$15,000/.test(await rowText(tcorTable, "Broker fees")) && /\$10,000 \$10,000 \$10,000/.test(await rowText(tcorTable, "Risk control spend")));
   // $50,000 option: 397,800 + 45,000 + 15,000 + 10,000 + 0 = 467,800 → 1.87% of 25M, $18.71 per $1,000
-  check("TCOR total 473,400 / 470,000 / 467,800", /\$473,400 \$470,000 \$467,800/.test(await rowText(tcorTable, "Total cost of risk")));
-  check("TCOR 1.87% of revenue and $18.71 per $1,000 at $50,000", /1\.89% 1\.88% 1\.87%/.test(await rowText(tcorTable, "As a share of revenue")) && /\$18\.94 \$18\.80 \$18\.71/.test(await rowText(tcorTable, "Per $1,000 of revenue")));
-  check("other lines without loss runs flagged, not silently zero", (await tcor.getByText("flagged: no loss runs").count()) === 4);
+  check("TCOR total 490,140 / 486,740 / 484,540 (Property loss runs now count)", /\$490,140 \$486,740 \$484,540/.test(await rowText(tcorTable, "Total cost of risk")), await rowText(tcorTable, "Total cost of risk"));
+  check("TCOR 1.94% of revenue and $19.38 per $1,000 at $50,000", /1\.96% 1\.95% 1\.94%/.test(await rowText(tcorTable, "As a share of revenue")) && /\$19\.61 \$19\.47 \$19\.38/.test(await rowText(tcorTable, "Per $1,000 of revenue")), await rowText(tcorTable, "Per $1,000 of revenue"));
+  check("other lines without loss runs flagged, not silently zero", (await tcor.getByText("flagged: no loss runs").count()) === 3);
 
   const assumptions = section(page, "assumptions-heading");
   const at = await assumptions.innerText();
-  check("assumptions generated from the settings: 5 years, running year, no trend, no development, no caps, hand-entered premiums", /PY2026 \(running year, incomplete\)/.test(at) && /No loss trend is applied/.test(at) && /No loss development is applied/.test(at) && /No option has an aggregate cap/.test(at) && /\$25,000 deductible, \$50,000 deductible were entered by hand/.test(at));
+  check("assumptions generated from the settings: 5 years, running year, no trend, no development, no caps, hand-entered premiums", /PY2026 \(running year, incomplete\)/.test(at) && /No loss trend is applied/.test(at) && /No loss development is applied/.test(at) && /No option has an aggregate cap/.test(at) && /\$10,000 deductible, \$25,000 deductible, \$50,000 deductible were entered by hand and are not quotes/.test(at) && /are estimated from the loss history and the permissible loss ratio; they are not quotes/.test(at));
 
   /* ---------- Settings change the basis (URL state) ---------- */
   const settings = main(page).locator("form[aria-labelledby='settings-heading']");
@@ -120,13 +125,13 @@ async function openStrategy(p, slug, account) {
   const report = main(page).locator("article");
   const rt = await report.innerText();
   check("report heading and disclaimer", /Renewal strategy report: Harbourline Foods Inc\./.test(rt) && /does not state which the client should buy/.test(rt));
-  check("report has all nine sections", ["1. Account profile and exposures", "2. Program summary", "3. Five-year loss history", "4. Contract requirement status", "5. Market results", "6. Retention options", "7. Total cost of risk by option", "8. Considerations", "9. Assumptions and limitations"].every((h) => rt.includes(h)));
+  check("report has all eight sections", ["1. Account profile and exposures", "2. Program summary", "3. Five-year loss history", "4. Findings and candidates for discussion", "5. Retention options", "6. Total cost of risk by option", "7. Considerations", "8. Assumptions and limitations"].every((h) => rt.includes(h)));
+  check("report has no market results or contract requirement sections", !/Market results|Contract requirement/.test(rt));
+  check("report assumptions state the tolerances and the permissible loss ratio", /tolerance/i.test(await section(page, "rp-assumptions").innerText()) && /0\.65|65%/.test(await section(page, "rp-assumptions").innerText()));
   check("report program summary draws the GL tower", /\$1M primary|primary/.test(flat(await section(page, "rp-program").innerText())) && (await section(page, "rp-program").locator("table").count()) === 1 && /Boreal Casualty Company/.test(await section(page, "rp-program").innerText()));
   check("report loss history states the basis and five years", /raw incurred \(paid \+ reserved\), no trend, no development/.test(await section(page, "rp-losses").innerText()) && (await section(page, "rp-losses").locator("tbody tr").count()) === 6);
-  check("report contract requirements: Westbay GL shortfall shown", /Shortfall \$2,000,000/.test(flat(await section(page, "rp-requirements").innerText())));
-  check("report market results: five carriers, three quotes", /5 carriers approached/.test(flat(await section(page, "rp-market").innerText())) && (await section(page, "rp-market").locator("tbody tr").count()) === 3);
-  check("report options table and replay carry the figures", /\$160,600 \$157,200 \$155,000/.test(await rowText(section(page, "rp-options").locator("table").first(), "Expected total cost")) && /PY2023/.test(await section(page, "rp-options").locator("table").nth(1).innerText()));
-  check("report TCOR by option and assumptions present", /\$467,800/.test(await section(page, "rp-tcor").innerText()) && /This report compares options; it does not state which the client should buy\./.test(await section(page, "rp-assumptions").innerText()));
+  check("report options: manual and estimated premiums side by side, then the comparison and the replay", /Manual premium/.test(await section(page, "rp-options").locator("table").first().innerText()) && /\$160,600 \$157,200 \$155,000/.test(await rowText(section(page, "rp-options").locator("table").nth(1), "Expected total cost")) && /PY2023/.test(await section(page, "rp-options").locator("table").nth(2).innerText()));
+  check("report TCOR by option and assumptions present", /\$484,540/.test(await section(page, "rp-tcor").innerText()) && /This report compares options; it does not state which the client should buy\./.test(await section(page, "rp-assumptions").innerText()));
   check("report never recommends", !/recommend/i.test(rt));
   check("print button and export link", (await main(page).getByRole("button", { name: "Print or save as PDF" }).count()) === 1 && (await main(page).getByRole("link", { name: "Export inputs (JSON)" }).count()) === 1);
   await page.screenshot({ path: `${SHOTS}/strategy-report.png`, fullPage: true });
@@ -137,7 +142,7 @@ async function openStrategy(p, slug, account) {
   const exportHref = await main(page).getByRole("link", { name: "Export inputs (JSON)" }).getAttribute("href");
   const res = await page.request.get(`${BASE}${exportHref}`);
   const json = await res.json();
-  check("JSON export returns every input", res.status() === 200 && json.format === "brokeros-strategy-report" && json.analysis.options.length === 3 && json.analysis.options[2].expectedTotalCost === 155000 && json.claims.length === 12 && Array.isArray(json.assumptionsAndLimitations) && json.settings.yearsToUse === 5, `status ${res.status()}`);
+  check("JSON export returns every input", res.status() === 200 && json.format === "brokeros-strategy-report" && json.analysis.options.length === 5 && json.analysis.options[2].expectedTotalCost === 155000 && Array.isArray(json.findings.findings) && json.tolerances.permissibleLossRatio === 0.65 && json.claims.length === 17 && Array.isArray(json.assumptionsAndLimitations) && json.settings.yearsToUse === 5, `status ${res.status()}`);
   check("JSON export is not cached", /no-store/.test(res.headers()["cache-control"] ?? ""));
 
   /* ---------- Cedar Ridge (second scenario) ---------- */
@@ -189,26 +194,12 @@ async function openStrategy(p, slug, account) {
   await opts().locator("tbody tr", { hasText: "$136,000" }).waitFor();
   check("option edited", /\$136,000/.test(await rowText(opts(), "$15,000 deductible")));
 
-  // Import from quotes: Pacific Crest already imported; Dominion and Ironwood importable
-  await opts().getByRole("button", { name: "Import from quotes" }).click();
-  dlg = w.getByRole("dialog");
-  check("import dialog lists the three quotes, Pacific Crest already imported", (await dlg.locator("li").count()) === 3 && (await dlg.getByText("Already imported").count()) === 1 && (await dlg.getByLabel(/Pacific Crest/).isDisabled()));
-  await dlg.getByRole("button", { name: /Import 2 quotes/ }).click();
-  await opts().locator("tbody tr", { hasText: "Ironwood Specialty (fictional)" }).waitFor();
-  await w.waitForLoadState("networkidle");
-  check("two quotes imported with their deductible, premium and source", (await opts().locator("tbody tr").count()) === 6 && /\$25,000 No cap \$128,000 Quote: Ironwood Specialty \(fictional\) \$128,000/.test(await rowText(opts(), "Ironwood Specialty (fictional)")) && /\$158,000/.test(await rowText(opts(), "Quote: Dominion Shield Insurance $158,000")));
-  check("import button now reports nothing left to import", (await opts().getByRole("button", { name: "Import from quotes" }).isEnabled()));
-  await opts().getByRole("button", { name: "Import from quotes" }).click();
-  dlg = w.getByRole("dialog");
-  check("re-import is blocked: all three already imported", (await dlg.getByText("Already imported").count()) === 3 && (await dlg.getByRole("button", { name: /^Import/ }).isDisabled()));
-  await dlg.getByRole("button", { name: "Cancel" }).click();
-
   // Delete
   await opts().getByRole("button", { name: "Delete $15,000 deductible" }).click();
   await w.getByRole("alertdialog").getByRole("button", { name: "Delete" }).click();
   await w.waitForFunction(() => !document.body.innerText.includes("$15,000 deductible"));
   await w.waitForLoadState("networkidle");
-  check("option deleted", (await opts().locator("tbody tr").count()) === 5);
+  check("option deleted", (await opts().locator("tbody tr").count()) === 3);
 
   // TCOR fees
   const fees = main(w).locator("form[aria-label='Cost of risk inputs']");
@@ -216,7 +207,7 @@ async function openStrategy(p, slug, account) {
   await fees.getByRole("button", { name: "Save inputs" }).click();
   await main(w).getByText("Cost of risk inputs saved").waitFor().catch(() => {});
   await w.waitForFunction(() => /Internal claims administration[\s\S]*\$5,000/.test(document.body.innerText));
-  check("claims administration saved and TCOR total moved by 5,000", /\$5,000 \$5,000/.test(await rowText(section(w, "tcor-heading").locator("table").first(), "Internal claims administration")) && /\$472,800/.test(await rowText(section(w, "tcor-heading").locator("table").first(), "Total cost of risk")));
+  check("claims administration saved and TCOR total moved by 5,000", /\$5,000 \$5,000/.test(await rowText(section(w, "tcor-heading").locator("table").first(), "Internal claims administration")) && /\$495,140/.test(await rowText(section(w, "tcor-heading").locator("table").first(), "Total cost of risk")));
   await fees.getByLabel("Internal claims administration").fill("-1");
   check("negative fee rejected inline", (await fees.getByRole("button", { name: "Save inputs" }).isDisabled()));
 

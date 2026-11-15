@@ -2,12 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   analyzeParticipation,
   analyzeTower,
-  certificateStatus,
-  checkRequirements,
   coinsurancePayment,
   compactDollars,
-  type ProgramPolicy,
-  type RequirementInput,
   type TowerLayerInput,
 } from "../program";
 
@@ -86,116 +82,6 @@ describe("analyzeTower", () => {
 
   it("formats compact dollars", () => {
     expect([compactDollars(16 * M), compactDollars(2_500_000), compactDollars(500_000), compactDollars(750)]).toEqual(["$16M", "$2.5M", "$500K", "$750"]);
-  });
-});
-
-const policy = (id: string, over: Partial<ProgramPolicy>): ProgramPolicy => ({
-  id,
-  lineOfBusiness: "General Liability",
-  occurrenceLimit: 1 * M,
-  aggregateLimit: 2 * M,
-  endorsements: ["additional_insured"],
-  effectiveDate: "2026-01-11",
-  expiryDate: "2027-01-11",
-  renewalStatus: "in_progress",
-  previousPolicyId: null,
-  renewedOn: null,
-  ...over,
-});
-
-describe("checkRequirements", () => {
-  const req: RequirementInput = {
-    id: "r1",
-    contractName: "Supply agreement",
-    counterparty: "Westbay Grocers",
-    coverage: "General Liability",
-    requiredOccurrence: 2 * M,
-    requiredAggregate: 4 * M,
-    requiredEndorsements: ["additional_insured", "waiver_of_subrogation", "primary_noncontributory"],
-  };
-  const policies = [policy("gl", {})];
-  const tower: TowerLayerInput[] = [
-    { id: "p", layerType: "primary", attachment: 0, limit: 1 * M, premium: 150_000, carrier: "A" },
-    { id: "u", layerType: "umbrella", attachment: 1 * M, limit: 5 * M, premium: 22_000, carrier: "B" },
-  ];
-
-  it("matches the specified example on the strict basis", () => {
-    const [r] = checkRequirements([req], policies, tower, { countUmbrella: false }).value;
-    // 2M − 1M = 1M; 4M − 2M = 2M
-    expect([r.status, r.shortfallOccurrence, r.shortfallAggregate]).toEqual(["shortfall", 1 * M, 2 * M]);
-    expect(r.endorsementsPresent).toEqual(["additional_insured"]);
-    expect(r.endorsementsMissing).toEqual(["waiver_of_subrogation", "primary_noncontributory"]);
-    expect(r.umbrellaCounted).toBe(0);
-  });
-
-  it("matches the specified example with the umbrella counted", () => {
-    const [r] = checkRequirements([req], policies, tower, { countUmbrella: true }).value;
-    // 1M + 5M umbrella = 6M ≥ 2M → occurrence met; aggregate still 4M − 2M = 2M short
-    expect([r.providedOccurrence, r.shortfallOccurrence, r.shortfallAggregate]).toEqual([6 * M, 0, 2 * M]);
-    expect(r.umbrellaCounted).toBe(5 * M);
-    expect(r.status).toBe("shortfall");
-    expect(r.endorsementsMissing).toHaveLength(2);
-  });
-
-  it("reports Meets, Missing coverage and statutory lines", () => {
-    const rs = checkRequirements(
-      [
-        { ...req, id: "ok", requiredOccurrence: 1 * M, requiredAggregate: 2 * M, requiredEndorsements: ["additional_insured"] },
-        { ...req, id: "auto", coverage: "Commercial Auto", requiredOccurrence: 1 * M, requiredAggregate: null, requiredEndorsements: [] },
-        { ...req, id: "wc", coverage: "Workers Compensation", requiredOccurrence: null, requiredAggregate: null, requiredEndorsements: [] },
-        { ...req, id: "umb", coverage: "Umbrella/Excess", requiredOccurrence: 5 * M, requiredAggregate: null, requiredEndorsements: [] },
-        { ...req, id: "umb10", coverage: "Umbrella/Excess", requiredOccurrence: 10 * M, requiredAggregate: null, requiredEndorsements: [] },
-      ],
-      [...policies, policy("wc", { lineOfBusiness: "Workers Compensation", occurrenceLimit: null, aggregateLimit: null, endorsements: [] })],
-      tower,
-      { countUmbrella: false },
-    ).value;
-    expect(rs.map((r) => r.status)).toEqual(["meets", "missing", "meets", "meets", "shortfall"]);
-    // umbrella requirement met by the 5M tower layer; 10M − 5M = 5M short
-    expect(rs[4].shortfallOccurrence).toBe(5 * M);
-  });
-});
-
-describe("certificateStatus", () => {
-  const asOf = "2026-11-12";
-  const gl = policy("gl", {});
-  const base = { id: "c", holder: "Westbay Grocers", coverages: ["General Liability" as const], requiredBy: null, issuedOn: null };
-
-  it("is requested until issued, expired once required-by passes unissued", () => {
-    expect(certificateStatus({ ...base, requiredBy: "2026-12-01" }, [gl], asOf).value.status).toBe("requested");
-    expect(certificateStatus({ ...base, requiredBy: "2026-11-12" }, [gl], asOf).value.status).toBe("requested"); // due today is not past
-    expect(certificateStatus({ ...base, requiredBy: "2026-11-11" }, [gl], asOf).value.status).toBe("expired");
-    expect(certificateStatus({ ...base }, [gl], asOf).value.status).toBe("requested");
-  });
-
-  it("is issued while the underlying policy is in force", () => {
-    const r = certificateStatus({ ...base, issuedOn: "2026-03-01" }, [gl], asOf).value;
-    expect(r.status).toBe("issued");
-    expect(r.underlyingPolicyIds).toEqual(["gl"]);
-  });
-
-  it("needs reissue when the underlying policy expired by the as-of date", () => {
-    // policy expired 2026-10-01 < as-of
-    const old = policy("old", { effectiveDate: "2025-10-01", expiryDate: "2026-10-01" });
-    const r = certificateStatus({ ...base, issuedOn: "2026-03-01" }, [old], asOf).value;
-    expect(r.status).toBe("reissue_needed");
-    expect(r.reasons[0]).toMatch(/expired on 2026-10-01/);
-  });
-
-  it("needs reissue once the underlying policy is renewed after the issue date", () => {
-    const successor = policy("gl2", { effectiveDate: "2027-01-11", expiryDate: "2028-01-11", previousPolicyId: "gl", renewalStatus: "not_started" });
-    const renewed = { ...gl, renewalStatus: "renewed" as const, renewedOn: "2026-11-12" };
-    const r = certificateStatus({ ...base, issuedOn: "2026-03-01" }, [renewed, successor], asOf).value;
-    expect(r.status).toBe("reissue_needed");
-    expect(r.reasons[0]).toMatch(/renewed on 2026-11-12 \(successor effective 2027-01-11\)/);
-    // Reissued on the day of the renewal: the renewal is not "since issuance" → issued
-    expect(certificateStatus({ ...base, issuedOn: "2026-11-12" }, [renewed, successor], asOf).value.status).toBe("issued");
-  });
-
-  it("needs reissue when a requested line had no policy in force at issuance", () => {
-    const r = certificateStatus({ ...base, coverages: ["General Liability", "Cyber"], issuedOn: "2026-03-01" }, [gl], asOf).value;
-    expect(r.status).toBe("reissue_needed");
-    expect(r.reasons).toEqual(["Cyber: no policy was in force on the issue date 2026-03-01"]);
   });
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "brokeros",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -17,6 +17,8 @@
   "dependencies": {
     "@hookform/resolvers": "^7.0.6",
     "@neondatabase/serverless": "^1.2.0",
+    "@react-pdf/renderer": "^4.9.0",
+    "@vercel/blob": "^2.9.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.2",
     "drizzle-orm": "^0.45.4",

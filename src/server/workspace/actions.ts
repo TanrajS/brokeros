@@ -10,6 +10,7 @@ import { describeFailure, fail, fieldErrorsFromZod, ok, type ActionResult } from
 import { RESET_CONFIRMATION, workspaceSettingsSchema, type WorkspaceSettingsInput } from "@/lib/schemas/workspace";
 import { getExecutor } from "@/server/db/tx";
 import { syncStages } from "@/server/renewals/stages";
+import { deleteUserBlobs } from "@/server/documents/cleanup";
 import { writeWorkspaceCookie } from "./cookie";
 import { countAccounts, createWorkspace, getWorkspaceBySlug, todayISO } from "./queries";
 
@@ -58,7 +59,10 @@ export async function loadDemoBookAction(slug: string, options: { replace: boole
       return fail("This workspace already has accounts. Confirm replacement to load the demo book over them.");
     }
     const db = getDb();
-    if (existing > 0) await db.delete(accounts).where(eq(accounts.workspaceId, ws.id));
+    if (existing > 0) {
+      await deleteUserBlobs(db, ws.id);
+      await db.delete(accounts).where(eq(accounts.workspaceId, ws.id));
+    }
     const summary = await loadDemoBook(db, ws.id, ws.asOfDate);
     revalidatePath(`/w/${slug}`, "layout");
     return ok({ accounts: summary.accounts, policies: summary.policies });
@@ -103,6 +107,7 @@ export async function resetWorkspace(slug: string, confirmation: string): Promis
     const ws = await getWorkspaceBySlug(slug);
     if (!ws) return fail("That workspace no longer exists.");
     const db = getDb();
+    await deleteUserBlobs(db, ws.id);
     await db.delete(accounts).where(eq(accounts.workspaceId, ws.id));
     revalidatePath(`/w/${slug}`, "layout");
     return ok(undefined);

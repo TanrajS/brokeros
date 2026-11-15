@@ -115,7 +115,6 @@ export const COMMON_CHECKLIST_ITEMS = [
 export const LINE_CHECKLIST_ITEMS: Partial<Record<LineOfBusiness, string>> = {
   Property: "Statement of values",
   "Commercial Auto": "Driver and vehicle list",
-  "Workers Compensation": "Payroll by class",
   "Umbrella/Excess": "Underlying policy schedule",
   Cyber: "Security questionnaire",
 };

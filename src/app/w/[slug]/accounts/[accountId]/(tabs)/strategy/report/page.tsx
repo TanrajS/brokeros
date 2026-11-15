@@ -4,21 +4,21 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PrintButton } from "@/components/marketing/PrintButton";
+import { PrintButton } from "@/components/strategy/PrintButton";
 import { TowerDiagram } from "@/components/program/TowerDiagram";
 import { ConsiderationsPanel } from "@/components/strategy/ConsiderationsPanel";
+import { EstimatedOptionsTable } from "@/components/strategy/EstimatedOptionsTable";
+import { FindingsList } from "@/components/strategy/FindingsList";
 import { OptimizerTable } from "@/components/strategy/OptimizerTable";
 import { ReplayTable } from "@/components/strategy/ReplayTable";
 import { TcorSection } from "@/components/strategy/TcorSection";
 import { parseStrategyQuery, strategyHref } from "@/components/strategy/params";
-import { EXPOSURE_BASIS_LABELS, SUBMISSION_STATUS_LABELS } from "@/lib/constants";
+import { EXPOSURE_BASIS_LABELS } from "@/lib/constants";
 import { policyYearSummary } from "@/lib/domain/lossRuns";
 import { formatLimit } from "@/lib/domain/money";
-import { COVERAGE_STATUS_LABELS, LAYER_BASIS_LABELS, LINE_GROUP_LABELS, REQUIREMENT_STATUS_LABELS, analyzeTower, checkRequirements, coverageProfile, isAdvancedProgram, programTotals, towerInputsFrom, type LineGroup } from "@/lib/domain/program";
+import { COVERAGE_STATUS_LABELS, LINE_GROUP_LABELS, analyzeTower, coverageProfile, isAdvancedProgram, programTotals, towerInputsFrom } from "@/lib/domain/program";
 import { describeRule } from "@/lib/domain/deductibles";
-import { formatCurrency, formatDate, formatInteger, formatRatioPercent, formatSignedPercent, titleCase } from "@/lib/format";
-import { buildMarketingView } from "@/server/marketing/view";
-import { layersFor, loadProgramInputs, toProgramPolicy, toRequirementInput } from "@/server/program/queries";
+import { formatCurrency, formatDate, formatInteger, formatRatioPercent, titleCase } from "@/lib/format";
 import { buildStrategyView } from "@/server/strategy/view";
 import { requireWorkspace } from "../../../../../lib";
 
@@ -26,13 +26,12 @@ export const metadata: Metadata = { title: "Renewal strategy report" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
 const money = (n: number | null | undefined) => formatCurrency(n) ?? "—";
-const groupFor = (line: string): LineGroup | null => (line === "General Liability" ? "gl" : line === "Commercial Auto" ? "auto" : line === "Property" ? "property" : null);
 
 /**
  * The client-facing document: profile and exposures, program, loss history,
- * contract requirements, market results, retention options with the replay,
- * TCOR by option, considerations, and assumptions generated from the settings
- * in use. It compares; it never says what to buy.
+ * findings accepted for discussion, retention options with the replay, TCOR by
+ * option, considerations, and assumptions generated from the settings in use.
+ * It compares; it never says what to buy.
  */
 export default async function StrategyReportPage({ params, searchParams }: { params: Promise<{ slug: string; accountId: string }>; searchParams: Promise<SearchParams> }) {
   const [{ slug, accountId }, sp] = await Promise.all([params, searchParams]);
@@ -40,36 +39,24 @@ export default async function StrategyReportPage({ params, searchParams }: { par
   const q = parseStrategyQuery(sp);
   const view = await buildStrategyView(ws, accountId, q);
   if (!view || !view.policy) notFound();
-  const { policy, line, data, analysis, replay, schedule, inForce, otherLines, tcorByOption, tcorValues, considerations, assumptions } = view;
+  const { policy, line, data, analysis, replay, schedule, inForce, otherLines, tcorByOption, tcorValues, considerations, assumptions, group, groupLayers, tiv, findings, accepted, optionRows, premiumSource, tolerances } = view;
   const query = { ...q, policy: policy.id };
-  const [program, marketing] = await Promise.all([loadProgramInputs(ws, accountId), buildMarketingView(ws, accountId, { policy: policy.id, target: "", normalise: false, sort: "premium" })]);
-  if (!program) notFound();
   const acct = data.account;
   const a = analysis.value;
 
-  // Program summary: the tower for this line's group (GL or Auto), when one exists.
-  const group = groupFor(line);
-  const groupLayers = group ? layersFor(program, group) : [];
+  // Program summary: the tower for this line's group, when one exists.
   const towerInputs = towerInputsFrom(groupLayers);
   const tower = groupLayers.length ? analyzeTower(towerInputs) : null;
-  // v1.3: a subscription placement shows its coverage profile and participations instead of the single-insurer tower.
+  // A subscription placement shows its coverage profile and participations instead of the single-insurer tower.
   const advanced = isAdvancedProgram(groupLayers);
-  const tiv = policy.insurableValue ?? data.policies.find((p) => groupLayers.some((l) => l.policyId === p.id) && p.insurableValue !== null)?.insurableValue ?? null;
   const profile = advanced ? coverageProfile(groupLayers, tiv).value : null;
   const totals = advanced ? programTotals(groupLayers, tiv).value : null;
   const scheduleRules = schedule.filter((r) => !r.isDefault);
-
-  // Contract requirements against current terms, with the line group's tower (umbrella not counted, the checker's default view).
-  const superseded = new Set(program.policies.map((p) => p.previousPolicyId).filter((x): x is string => x !== null));
-  const currentPolicies = program.policies.filter((p) => !superseded.has(p.id) && p.expiryDate > ws.asOfDate).map((p) => toProgramPolicy(p, program.renewedOn.get(p.id) ?? null));
-  const requirements = checkRequirements(program.requirements.map(toRequirementInput), currentPolicies, towerInputs, { countUmbrella: false }).value;
 
   // Five-year loss history on the same basis as the replay.
   const losses = policyYearSummary({ claims: data.claims, policies: data.lrPolicies, line, asOf: ws.asOfDate, adjustments: replay.adjustments }).value;
   const lossRows = losses.rows.slice(-5);
 
-  const quotes = marketing && marketing.policy ? marketing.comparison.value.quotes : [];
-  const submissions = marketing && marketing.policy ? marketing.submissionViews : [];
 
   const h2 = "text-lg font-semibold print:text-base";
   const h3 = "mb-1 font-semibold print:text-sm";
@@ -188,7 +175,8 @@ export default async function StrategyReportPage({ params, searchParams }: { par
               {LINE_GROUP_LABELS[group]} placed on a subscription basis across {new Set(groupLayers.map((l) => l.towerLabel)).size} tower{new Set(groupLayers.map((l) => l.towerLabel)).size === 1 ? "" : "s"}: program premium {money(totals.totalPremium)}, placed limit{" "}
               {money(totals.totalPlacedLimit)}
               {totals.ratePer100Tiv !== null ? `, $${totals.ratePer100Tiv.toFixed(4)} per $100 of the ${money(tiv)} TIV` : ""}. Coverage is {profile.fullyPlaced ? "100% at every point" : `not fully placed (${money(profile.totalUnplacedDollars)} unplaced)`}.
-              {profile.bases.length > 1 ? ` Layers mix bases (${profile.bases.map((b) => LAYER_BASIS_LABELS[b].toLowerCase()).join(", ")}); the profile adds shares across bases.` : ""}
+              {" "}
+              Every layer is read per occurrence.
             </p>
             <div className="relative overflow-x-auto rounded-lg border">
               <table className="w-full min-w-[30rem] text-sm print:text-xs">
@@ -368,115 +356,27 @@ export default async function StrategyReportPage({ params, searchParams }: { par
         </div>
       </section>
 
-      {/* 4. Contract requirement status */}
-      <section aria-labelledby="rp-requirements" className={sec}>
-        <h2 id="rp-requirements" className={h2}>
-          4. Contract requirement status
+      {/* 4. Findings */}
+      <section aria-labelledby="rp-findings" className={sec}>
+        <h2 id="rp-findings" className={h2}>
+          4. Findings and candidates for discussion
         </h2>
-        {requirements.length === 0 ? (
-          <p className="text-sm text-muted-foreground print:text-xs">No contract requirements are recorded for this account.</p>
+        <p className="text-sm text-muted-foreground print:text-xs">
+          Findings the broker accepted into this report. Each is a heuristic on the loss history, the program and the risk tolerances stated in the assumptions; none is a decision.
+        </p>
+        {findings ? (
+          <FindingsList slug={slug} accountId={accountId} findings={findings.value.findings} modifiers={findings.value.modifiers} accepted={[...accepted]} print />
         ) : (
-          <div className="relative overflow-x-auto rounded-lg border">
-            <table className="w-full min-w-[36rem] text-sm print:text-xs">
-              <caption className="sr-only">Contract requirements against current policies</caption>
-              <thead className="border-b bg-muted/40">
-                <tr>
-                  <th className={th}>Contract</th>
-                  <th className={th}>Coverage</th>
-                  <th className={`${th} text-right`}>Required ($ occ / agg)</th>
-                  <th className={`${th} text-right`}>Provided ($ occ / agg)</th>
-                  <th className={th}>Endorsements missing</th>
-                  <th className={th}>Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {requirements.map((r) => (
-                  <tr key={r.requirement.id}>
-                    <td className={td}>
-                      {r.requirement.contractName}
-                      <span className="block text-xs text-muted-foreground">{r.requirement.counterparty}</span>
-                    </td>
-                    <td className={td}>{r.requirement.coverage}</td>
-                    <td className={`${td} text-right whitespace-nowrap`}>
-                      {formatLimit(r.requirement.requiredOccurrence, r.requirement.requiredAggregate).value}
-                    </td>
-                    <td className={`${td} text-right whitespace-nowrap`}>
-                      {formatLimit(r.providedOccurrence, r.providedAggregate).value}
-                    </td>
-                    <td className={td}>{r.endorsementsMissing.length ? r.endorsementsMissing.join(", ") : "None"}</td>
-                    <td className={td}>
-                      {r.status === "shortfall" && (r.shortfallOccurrence > 0 || r.shortfallAggregate > 0) ? `Shortfall ${money(Math.max(r.shortfallOccurrence, r.shortfallAggregate))}` : REQUIREMENT_STATUS_LABELS[r.status]}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <p className="text-sm text-muted-foreground print:text-xs">Findings were not run: the policy has no deductible or no tolerances are available.</p>
         )}
       </section>
 
-      {/* 5. Market results */}
-      <section aria-labelledby="rp-market" className={sec}>
-        <h2 id="rp-market" className={h2}>
-          5. Market results
-        </h2>
-        {submissions.length === 0 ? (
-          <p className="text-sm text-muted-foreground print:text-xs">No carriers have been approached for this renewal yet.</p>
-        ) : (
-          <>
-            <p className="text-sm text-muted-foreground print:text-xs">
-              {submissions.length} carrier{submissions.length === 1 ? "" : "s"} approached: {submissions.map((s) => `${s.carrier} (${SUBMISSION_STATUS_LABELS[s.status].toLowerCase()})`).join(", ")}. Expiring:{" "}
-              {money(policy.annualPremium)} with {policy.carrier}.
-            </p>
-            {quotes.length > 0 ? (
-              <div className="relative overflow-x-auto rounded-lg border">
-                <table className="w-full min-w-[36rem] text-sm print:text-xs">
-                  <caption className="sr-only">Quotes compared with the expiring terms</caption>
-                  <thead className="border-b bg-muted/40">
-                    <tr>
-                      <th className={th}>Carrier</th>
-                      <th className={`${th} text-right`}>Premium ($ per year)</th>
-                      <th className={`${th} text-right`}>Change vs expiring (%)</th>
-                      <th className={`${th} text-right`}>Limits ($ occ / agg)</th>
-                      <th className={`${th} text-right`}>Deductible ($)</th>
-                      <th className={th}>Terms vs expiring</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {quotes.map((c) => (
-                      <tr key={c.quote.id}>
-                        <td className={td}>
-                          {c.quote.carrier}
-                          {c.quote.isIncumbent ? <span className="block text-xs text-muted-foreground">incumbent</span> : null}
-                          {c.expired ? <span className="block text-xs text-red-800">quote expired</span> : null}
-                        </td>
-                        <td className={`${td} text-right`}>{money(c.quote.premium)}</td>
-                        <td className={`${td} text-right`}>{formatSignedPercent(c.premiumChange) ?? "—"}</td>
-                        <td className={`${td} text-right whitespace-nowrap`}>
-                          {formatLimit(c.quote.occurrenceLimit, c.quote.aggregateLimit).value}
-                        </td>
-                        <td className={`${td} text-right`}>{money(c.quote.deductible)}</td>
-                        <td className={td}>
-                          {c.termsMatched} of {c.termsCompared} match
-                          {c.mismatches.length ? <span className="block text-xs text-muted-foreground">{c.mismatches.map((m) => m.note).join("; ")}</span> : null}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground print:text-xs">No quotes recorded yet.</p>
-            )}
-          </>
-        )}
-      </section>
-
-      {/* 6. Retention options */}
+      {/* 5. Retention options */}
       <section aria-labelledby="rp-options" className={sec}>
         <h2 id="rp-options" className={h2}>
-          6. Retention options
+          5. Retention options
         </h2>
+        <EstimatedOptionsTable rows={optionRows} premiumSource={premiumSource} manualHref="" estimatedHref="" tolerancePerYear={tolerances?.perYear ?? null} print />
         <p className="text-sm text-muted-foreground print:text-xs">
           Each option replayed against {yearsText} ({a.years.length} year{a.years.length === 1 ? "" : "s"}) on {a.basisLabel}; the lowest deductible is the base. Retained = Σ min(incurred, deductible) per
           year, then the aggregate cap where one exists.
@@ -489,7 +389,7 @@ export default async function StrategyReportPage({ params, searchParams }: { par
       {/* 7. TCOR */}
       <section aria-labelledby="rp-tcor" className={sec}>
         <h2 id="rp-tcor" className={h2}>
-          7. Total cost of risk by option
+          6. Total cost of risk by option
         </h2>
         <p className="text-sm text-muted-foreground print:text-xs">
           TCOR = premiums + expected retained losses + broker fees ({money(acct.brokerFees)}) + risk control spend ({money(acct.riskControlSpend)}) + internal claims administration (
@@ -512,7 +412,7 @@ export default async function StrategyReportPage({ params, searchParams }: { par
       {/* 8. Considerations */}
       <section aria-labelledby="rp-considerations" className={sec}>
         <h2 id="rp-considerations" className={h2}>
-          8. Considerations
+          7. Considerations
         </h2>
         <ConsiderationsPanel items={considerations.value} print />
       </section>
@@ -520,7 +420,7 @@ export default async function StrategyReportPage({ params, searchParams }: { par
       {/* 9. Assumptions */}
       <section aria-labelledby="rp-assumptions" className={sec}>
         <h2 id="rp-assumptions" className={h2}>
-          9. Assumptions and limitations
+          8. Assumptions and limitations
         </h2>
         <ul className="list-disc pl-6 text-sm print:text-xs">
           {assumptions.value.map((l) => (

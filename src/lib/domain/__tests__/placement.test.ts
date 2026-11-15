@@ -32,7 +32,6 @@ const towerOne: ProgramLayerInput = {
   layerType: "primary",
   attachment: 0,
   limit: 300 * M,
-  basis: "per_occurrence",
   participations: [part("Westcoast Re (fictional)", 15, 120_000, null, true), part("Summit Indemnity (fictional)", 10, 72_000), part("Granville Specialty (fictional)", 10, 78_000), part("Kitsilano Mutual (fictional)", 5, 40_000)],
 };
 const b1: ProgramLayerInput = {
@@ -41,7 +40,6 @@ const b1: ProgramLayerInput = {
   layerType: "primary",
   attachment: 0,
   limit: 100 * M,
-  basis: "per_occurrence",
   participations: [part("Cascadia Mutual (fictional)", 20, 90_000, null, true), part("Northgate Mutual", 10, 48_000), part("Thames Syndicate 2140 (fictional)", 30, 126_000)],
 };
 const b2: ProgramLayerInput = {
@@ -50,7 +48,6 @@ const b2: ProgramLayerInput = {
   layerType: "excess",
   attachment: 100 * M,
   limit: 200 * M,
-  basis: "per_occurrence",
   participations: [part("Pacific Crest Insurance (fictional)", 25, 75_000, null, true), part("Ironwood Specialty (fictional)", 20, 64_000), part("Maplewood Underwriters (fictional)", 15, 42_000)],
 };
 const layers = [towerOne, b1, b2];
@@ -88,7 +85,7 @@ describe("layerSummary", () => {
   });
 
   it("a single insurer at 100% is the v0.5 special case", () => {
-    const s = layerSummary({ id: "x", towerLabel: "Tower 1", layerType: "primary", attachment: 0, limit: 1 * M, basis: "per_occurrence", participations: [part("Dominion Shield Insurance", 100, 150_000)] }).value;
+    const s = layerSummary({ id: "x", towerLabel: "Tower 1", layerType: "primary", attachment: 0, limit: 1 * M, participations: [part("Dominion Shield Insurance", 100, 150_000)] }).value;
     expect([s.placedShare, s.layerPremium, s.placedLimit, s.rateOnLine, s.underPlacedPct]).toEqual([1, 150_000, 1 * M, 0.15, 0]);
   });
 
@@ -130,11 +127,6 @@ describe("coverageProfile", () => {
     expect(over.segments[0]).toMatchObject({ status: "over_placed", excessShare: 0.1, shortfallShare: 0 });
   });
 
-  it("notes when bases differ", () => {
-    const c = coverageProfile([towerOne, { ...b1, basis: "per_location" }]);
-    expect(c.value.bases.sort()).toEqual(["per_location", "per_occurrence"]);
-    expect((c.math.steps.lines as string[]).some((l) => /Bases differ/.test(l))).toBe(true);
-  });
 });
 
 describe("programTotals", () => {

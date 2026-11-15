@@ -17,3 +17,15 @@ export function getDatabaseUrl(): string | undefined {
   const url = process.env.DATABASE_URL?.trim();
   return url ? url : undefined;
 }
+
+/** Vercel Blob read-write token (injected by the Vercel integration); undefined when documents are not configured. */
+export function getBlobToken(): string | undefined {
+  const t = process.env.BLOB_READ_WRITE_TOKEN?.trim();
+  return t ? t : undefined;
+}
+
+/** Shared secret the nightly cron sends as a bearer token; undefined disables the reset route. */
+export function getCronSecret(): string | undefined {
+  const s = process.env.CRON_SECRET?.trim();
+  return s ? s : undefined;
+}

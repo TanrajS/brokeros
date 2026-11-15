@@ -1,57 +1,68 @@
 import { describe, expect, it } from "vitest";
 import { bookTiles, lookbackWindow, retention } from "@/lib/domain/dashboard";
 import { deductibleForClaim, flatRule, matchRule } from "@/lib/domain/deductibles";
-import { coverageProfile, layerSummary, programTotals } from "@/lib/domain/program";
+import { coverageProfile, isAdvancedProgram, layerSummary, programTotals } from "@/lib/domain/program";
 import { analyzeRetentionOptions, groupClaimsByPolicyYear } from "@/lib/domain/strategy";
-import { buildDemoBook, buildFullDemoBook } from "../demoBookData";
+import { buildDemoBook } from "../demoBookData";
 import { demoBookToDashboard } from "../demoBookDashboard";
 import { demoAccountToLossRuns } from "../demoBookLossRuns";
 import { demoProgramLayers } from "../demoBookProgram";
 import { demoRetentionOptions } from "../demoBookStrategy";
 
 const asOf = "2026-11-12";
-const book = buildFullDemoBook(asOf);
-const base = buildDemoBook(asOf);
+const book = buildDemoBook(asOf);
 const find = (name: string) => book.find((a) => a.name === name)!;
 const M = 1_000_000;
+const FULL = ["Harbourline Foods Inc.", "Cedar Ridge Mechanical Ltd.", "Pacific Northwest Terminals Ltd.", "Kootenay Alpine Resorts Inc."];
 
-describe("v1.3 demo book", () => {
-  it("has at least 19 accounts, five of them new, on top of the unchanged 14-account base", () => {
-    expect(book.length).toBeGreaterThanOrEqual(19);
-    expect(book.length - base.length).toBe(5);
-    expect(base.map((a) => a.name)).toEqual(book.slice(0, base.length).map((a) => a.name));
-    for (const name of ["Pacific Northwest Terminals Ltd.", "Kootenay Alpine Resorts Inc.", "Fraser Valley Logistics Ltd.", "Summit Ridge Builders Inc.", "Coastline Dental Group"]) {
-      const a = find(name);
-      expect(a).toBeDefined();
-      expect(a.requirements.length).toBeGreaterThanOrEqual(1);
-      expect(a.certificates.length).toBeGreaterThanOrEqual(1);
-      const marketed = a.policies.find((p) => p.submissions.length > 0)!;
-      expect(marketed.submissions.length).toBeGreaterThanOrEqual(3);
-      expect(marketed.submissions.length).toBeLessThanOrEqual(5);
-      expect(marketed.submissions.some((s) => s.quotes.length > 0)).toBe(true);
-      expect(a.policies.some((p) => p.retentionOptions.length === 3)).toBe(true);
+describe("v1.4 demo book: ten accounts", () => {
+  it("has exactly 10 accounts: four fully populated, six with at least three policy years of claims", () => {
+    expect(book).toHaveLength(10);
+    for (const a of book) {
+      const { policies, claims } = demoAccountToLossRuns(a);
+      const linesWithClaims = [...new Set(claims.map((c) => c.lineOfBusiness))];
+      expect(linesWithClaims.length).toBeGreaterThan(0);
+      for (const line of linesWithClaims) {
+        const years = groupClaimsByPolicyYear(claims, policies, line, asOf).value.years;
+        if (FULL.includes(a.name)) expect(years.length).toBeGreaterThanOrEqual(5);
+        else if (claims.filter((c) => c.lineOfBusiness === line).length > 1) expect(years.length).toBeGreaterThanOrEqual(3);
+      }
+      if (FULL.includes(a.name)) expect(linesWithClaims.length).toBeGreaterThanOrEqual(2);
+      expect(a.towerLayers.length).toBeGreaterThanOrEqual(1);
+    }
+    // advanced programs for Terminals and Kootenay, simple everywhere else
+    expect(isAdvancedProgram(demoProgramLayers(find("Pacific Northwest Terminals Ltd."), "property"))).toBe(true);
+    expect(isAdvancedProgram(demoProgramLayers(find("Kootenay Alpine Resorts Inc."), "property"))).toBe(true);
+    for (const a of book.filter((x) => !["Pacific Northwest Terminals Ltd.", "Kootenay Alpine Resorts Inc."].includes(x.name))) {
+      expect(isAdvancedProgram(demoProgramLayers(a, "gl")) || isAdvancedProgram(demoProgramLayers(a, "auto")) || isAdvancedProgram(demoProgramLayers(a, "property"))).toBe(false);
     }
   });
 
-  it("keeps every new policy out of the trailing-12-month resolved set", () => {
+  it("keeps the trailing-12-month resolved set at exactly 10: 8 renewed, 1 lost, 1 non-renewed, 1,240,000 expiring and 1,085,000 renewed", () => {
     const { accounts, policies } = demoBookToDashboard(book);
     const window = lookbackWindow(asOf, 12).value;
-    const newNames = new Set(["Pacific Northwest Terminals Ltd.", "Kootenay Alpine Resorts Inc.", "Fraser Valley Logistics Ltd.", "Summit Ridge Builders Inc.", "Coastline Dental Group"]);
-    const inWindow = policies.filter((p) => newNames.has(p.accountId) && p.expiryDate >= window.start && p.expiryDate <= asOf);
-    expect(inWindow).toEqual([]);
     const r = retention(policies, accounts, window, asOf).value;
-    expect([r.countRetention, r.premiumRetention]).toEqual([0.8, 0.875]);
-    // the new accounts are in force (their current terms run past the as-of date)
+    expect([r.resolvedCount, r.renewedCount, r.lostCount, r.nonRenewedCount, r.unresolvedCount]).toEqual([10, 8, 1, 1, 0]);
+    expect([r.resolvedPremium, r.renewedExpiringPremium, r.countRetention, r.premiumRetention]).toEqual([1_240_000, 1_085_000, 0.8, 0.875]);
+    expect(r.lostRows.map((x) => [x.accountName, x.resolution, x.expiringPremium])).toEqual([
+      ["Northwind Engineering Partners Inc.", "non_renewed", 96_200],
+      ["Bramblewood Garden Centres Ltd.", "lost", 58_800],
+    ]);
     const tiles = bookTiles(policies, asOf).value;
-    expect(tiles.activeAccounts).toBeGreaterThanOrEqual(17);
+    expect(tiles.activeAccounts).toBe(10);
   });
 
   it("Fraser Valley's lost umbrella sits outside the 12-month window and inside the 24-month one", () => {
     const { accounts, policies } = demoBookToDashboard(book);
-    const twelve = retention(policies, accounts, lookbackWindow(asOf, 12).value, asOf).value;
     const twentyFour = retention(policies, accounts, lookbackWindow(asOf, 24).value, asOf).value;
-    expect(twelve.lostRows.some((r) => r.accountName === "Fraser Valley Logistics Ltd.")).toBe(false);
-    expect(twentyFour.lostRows.filter((r) => r.resolution === "lost").map((r) => r.accountName).sort()).toEqual(["Fraser Valley Logistics Ltd.", "Prairie Loop Logistics Inc."]);
+    expect(twentyFour.lostRows.filter((r) => r.resolution === "lost").map((r) => r.accountName).sort()).toEqual(["Bramblewood Garden Centres Ltd.", "Fraser Valley Logistics Ltd."]);
+  });
+
+  it("carries tolerance settings on the fully populated accounts and defaults elsewhere", () => {
+    expect([find("Harbourline Foods Inc.").toleranceOccurrence, find("Harbourline Foods Inc.").toleranceYear]).toEqual([125_000, 250_000]);
+    expect([find("Pacific Northwest Terminals Ltd.").toleranceOccurrence, find("Kootenay Alpine Resorts Inc.").toleranceOccurrence]).toEqual([500_000, 300_000]);
+    expect(find("Fraser Valley Logistics Ltd.").toleranceOccurrence).toBeNull();
+    expect(book.every((a) => a.permissibleLossRatio === 0.65)).toBe(true);
   });
 });
 
@@ -83,9 +94,7 @@ describe("Pacific Northwest Terminals placement (hand-verification case)", () =>
     expect(pr.deductible).toBe(100_000);
     expect(pr.deductibles).toHaveLength(11);
     const rules = [flatRule(pr.deductible!), ...pr.deductibles.map((r) => ({ ...r, amount: r.amount ?? null, percent: r.percent ?? null, minimum: r.minimum ?? null, maximum: r.maximum ?? null, hours: r.hours ?? null, isDefault: false }))];
-    // Earthquake 10% of loss, minimum 100,000: a 2,000,000 loss → 200,000
     expect(deductibleForClaim(matchRule(rules, "Earthquake").value!, 2_000_000).value.amount).toBe(200_000);
-    // Stock flat 10,000 on a 30,000 loss → 10,000; Theft → 10,000; an unlisted peril → the 100,000 default
     expect(deductibleForClaim(matchRule(rules, "stock").value!, 30_000).value.amount).toBe(10_000);
     expect(matchRule(rules, "Hail").value?.isDefault).toBe(true);
   });
@@ -97,31 +106,24 @@ describe("Pacific Northwest Terminals placement (hand-verification case)", () =>
     const grouped = groupClaimsByPolicyYear(claims, policies, "Property", asOf).value;
     expect(grouped.years.map((y) => y.label)).toEqual(["PY2021", "PY2022", "PY2023", "PY2024", "PY2025"]);
     const a = analyzeRetentionOptions(grouped, demoRetentionOptions(pr), { yearsToUse: 5, includeCurrentYear: true, adjustments: { trendRate: null, factors: null }, schedule }).value;
-    const at100k = a.options[0];
-    // PY2021: Stock 48,000 → min(48,000, 10,000) = 10,000; Vehicle impact 22,000 → 10,000 → 20,000
-    // PY2022: Flood 1,850,000 → 250,000; Theft 14,000 → 10,000 → 260,000
-    // PY2023: fire 310,000 (default) → 100,000; Glass 3,200 → 1,000 → 101,000
-    // PY2024: Equipment breakdown 96,000 → 25,000; Stock 27,500 → 10,000 → 35,000
-    // PY2025: Sewer backup 61,000 → 50,000; Transit 8,900 → 5,000 → 55,000
-    expect(at100k.years.map((y) => y.retained)).toEqual([20_000, 260_000, 101_000, 35_000, 55_000]);
-    // at $500,000 only the PY2023 fire (default peril) moves: 100,000 → 310,000
+    // PY2021: Stock 48,000 → 10,000; Vehicle impact 22,000 → 10,000 → 20,000 · PY2022: Flood → 250,000; Theft → 10,000 → 260,000
+    // PY2023: fire 310,000 (default) → 100,000; Glass → 1,000 → 101,000 · PY2024: EB → 25,000; Stock → 10,000 → 35,000 · PY2025: Sewer backup → 50,000; Transit → 5,000 → 55,000
+    expect(a.options[0].years.map((y) => y.retained)).toEqual([20_000, 260_000, 101_000, 35_000, 55_000]);
     expect(a.options[2].years.map((y) => y.retained)).toEqual([20_000, 260_000, 311_000, 35_000, 55_000]);
-    expect(a.options[0].years.every((y) => y.excludedClaims.length === 0)).toBe(true);
   });
 });
 
-describe("the other new accounts", () => {
-  it("Kootenay: primary shared 50/50 with a single-insurer excess, fully placed to the $120M TIV", () => {
+describe("the other accounts", () => {
+  it("Kootenay: primary shared 50/50 with a single-insurer excess, fully placed to the $120M TIV; prior term renewed at 360,000", () => {
     const koot = find("Kootenay Alpine Resorts Inc.");
     const layers = demoProgramLayers(koot, "property");
     expect(layers.map((l) => l.participations.map((p) => p.signedLinePct))).toEqual([[50, 50], [100]]);
-    const c = coverageProfile(layers, 120 * M).value;
-    expect(c.fullyPlaced).toBe(true);
-    const eq = koot.policies.find((p) => p.key === "koot-pr")!.deductibles.find((r) => r.appliesTo === "Earthquake")!;
-    expect([eq.kind, eq.percent, eq.minimum]).toEqual(["percent_of_value", 10, 250_000]);
+    expect(coverageProfile(layers, 120 * M).value.fullyPlaced).toBe(true);
+    const prior = koot.policies.find((p) => p.key === find("Kootenay Alpine Resorts Inc.").policies.find((x) => x.key === "koot-pr")!.previousKey)!;
+    expect([prior.annualPremium, prior.outcome?.type]).toEqual([360_000, "renewed"]);
   });
 
-  it("Fraser Valley: 22 auto claims over five years, every one below 20,000", () => {
+  it("Fraser Valley: 22 auto claims over five years, every one below 20,000; prior term renewed at 293,500", () => {
     const fvl = find("Fraser Valley Logistics Ltd.");
     const auto = fvl.claims.filter((c) => c.lineOfBusiness === "Commercial Auto");
     expect(auto).toHaveLength(22);
@@ -129,21 +131,17 @@ describe("the other new accounts", () => {
     expect(fvl.policies.find((p) => p.key === "fvl-um-lost")!.outcome).toMatchObject({ type: "lost", lostReason: "price" });
   });
 
-  it("Summit Ridge: the $5M umbrella falls short of the $10M contract and the wrap-up certificate is still requested", () => {
-    const srb = find("Summit Ridge Builders Inc.");
-    const umbrella = srb.towerLayers.find((t) => t.layerType === "umbrella")!;
-    expect(umbrella.limit).toBe(5 * M);
-    expect(srb.requirements.find((r) => r.coverage === "Umbrella/Excess")!.requiredOccurrence).toBe(10 * M);
-    expect(srb.certificates[0].issuedOnOffset).toBeNull();
-  });
-
-  it("Coastline Dental: one large open cyber claim and a cheaper quote with a lower aggregate", () => {
+  it("Coastline Dental: one large open cyber claim; the cyber policy expires in 30 days", () => {
     const cdg = find("Coastline Dental Group");
     const cyber = cdg.claims.filter((c) => c.lineOfBusiness === "Cyber");
     expect(cyber).toHaveLength(1);
     expect([cyber[0].status, cyber[0].paid + cyber[0].reserved]).toEqual(["open", 250_000]);
-    const quotes = cdg.policies.find((p) => p.key === "cdg-cy")!.submissions.flatMap((s) => s.quotes);
-    const cheapest = [...quotes].sort((a, b) => a.premium - b.premium)[0];
-    expect([cheapest.premium, cheapest.aggregateLimit]).toEqual([17_800, 500_000]);
+    expect(cdg.policies.find((p) => p.key === "cdg-cy")!.expiryOffsetDays).toBe(30);
+  });
+
+  it("the three new accounts carry the boundary policies: Harbourview 0 days, Bramblewood 121, Northwind 90", () => {
+    expect(find("Harbourview Inns & Taverns Ltd.").policies.filter((p) => p.expiryOffsetDays === 0)).toHaveLength(2);
+    expect(find("Bramblewood Garden Centres Ltd.").policies.some((p) => p.expiryOffsetDays === 121)).toBe(true);
+    expect(find("Northwind Engineering Partners Inc.").policies.some((p) => p.expiryOffsetDays === 90)).toBe(true);
   });
 });

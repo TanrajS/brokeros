@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { ValueOrMissing } from "@/components/Missing";
@@ -10,8 +9,7 @@ import { TasksSection } from "@/components/tasks/TasksSection";
 import { formatDate } from "@/lib/format";
 import { listAccountActivities, listAccountTasks } from "@/server/renewals/queries";
 import { countDeductibles } from "@/server/deductibles/queries";
-import { countParticipants, listAccountCertificates } from "@/server/program/queries";
-import { CertificatesSection } from "@/components/program/CertificatesSection";
+import { countParticipants } from "@/server/program/queries";
 import { formatCurrency, formatInteger } from "@/lib/format";
 import { getAccountDetail } from "@/server/accounts/queries";
 import { requireWorkspace } from "../../../lib";
@@ -32,11 +30,7 @@ export default async function AccountPage({ params }: { params: Params }) {
   if (!detail) notFound();
   const { account, contacts, policies } = detail;
   const [tasks, activities] = await Promise.all([listAccountTasks(ws.id, account.id), listAccountActivities(ws.id, account.id)]);
-  const [certificateRows, coinsurerCounts, deductibleCounts] = await Promise.all([
-    listAccountCertificates(ws, account.id, policies),
-    countParticipants(ws.id, policies.map((p) => p.id)),
-    countDeductibles(ws.id, policies.map((p) => p.id)),
-  ]);
+  const [coinsurerCounts, deductibleCounts] = await Promise.all([countParticipants(ws.id, policies.map((p) => p.id)), countDeductibles(ws.id, policies.map((p) => p.id))]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -67,28 +61,6 @@ export default async function AccountPage({ params }: { params: Params }) {
 
       <ContactsSection slug={slug} accountId={account.id} contacts={contacts} />
       <PoliciesTable slug={slug} accountId={account.id} asOf={ws.asOfDate} policies={policies} coinsurerCounts={Object.fromEntries(coinsurerCounts)} deductibleCounts={Object.fromEntries(deductibleCounts)} />
-      <div className="flex flex-col gap-2">
-        <CertificatesSection
-          slug={slug}
-          accountId={account.id}
-          asOf={ws.asOfDate}
-          compact
-          rows={certificateRows.map(({ certificate: c, result: r }) => ({
-            id: c.id,
-            holder: c.holder,
-            operationsDescription: c.operationsDescription,
-            coverages: c.coverages,
-            requiredBy: c.requiredBy,
-            issuedOn: c.issuedOn,
-            notes: c.notes,
-            status: r.status,
-            reasons: r.reasons,
-          }))}
-        />
-        <Link href={`/w/${slug}/accounts/${account.id}/program`} className="w-fit text-sm underline-offset-4 hover:underline">
-          Manage certificates, the program and contract requirements on the Program tab
-        </Link>
-      </div>
       <TasksSection
         slug={slug}
         accountId={account.id}

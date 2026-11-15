@@ -49,7 +49,11 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
               Anyone with the link <code className="rounded bg-muted px-1 py-0.5 text-xs">/w/{slug}</code> can view and edit this workspace. There are no
               accounts or passwords.
             </li>
-            <li>The only secret the app uses is the database connection string. There are no third-party services, payments or analytics.</li>
+            <li>
+              The app reads three environment variables: the database connection string, the Vercel Blob token that stores uploaded documents and generated
+              certificates privately, and the cron secret that guards the nightly demo reset. There are no logins, payments, AI features or analytics.
+            </li>
+            <li>Uploaded files are not virus-scanned and sit on a free storage tier. Upload only fictional documents.</li>
           </ul>
         </CardContent>
       </Card>

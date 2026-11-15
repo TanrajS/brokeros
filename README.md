@@ -22,18 +22,33 @@ printable renewal strategy report with its assumptions generated from the
 settings in use. Version 1.3 folds Placement into the account as tabs, models
 subscription placements (several insurers per layer, several towers, a coverage
 profile and sign-down), adds per-peril deductible schedules to policies and
-claims, and seeds five more fictional accounts.
+claims, and seeds five more fictional accounts. Version 1.4 adds a Documents tab
+per account backed by Vercel Blob, a Policy page that generates certificates of
+insurance as PDFs, automatic strategy findings with estimated retention options,
+and a focused ten-account demo book; it removes the Marketing tab, contract
+requirements, layer bases, the coverage strip and Workers Compensation, so the
+history above describes features that no longer exist.
 
 ## Local setup
 
 1. **Create a Neon Postgres database** at <https://neon.tech> and copy its
    connection string (Connect → Connection string).
-2. **Configure the only secret:**
+2. **Configure the environment** (three variables, read only in
+   `src/server/env.ts`):
 
    ```bash
    cp .env.example .env.local
    # edit .env.local and paste the string into DATABASE_URL
    ```
+
+   - `DATABASE_URL` is required.
+   - `BLOB_READ_WRITE_TOKEN` (optional) switches on the Documents tab and
+     certificate generation. On Vercel, add the Blob store through the Vercel
+     Blob integration and the token is injected; locally, copy it from the
+     store's settings. Without it the app runs and says documents are off.
+   - `CRON_SECRET` (optional) guards `/api/cron/reset-demo`, which `vercel.json`
+     schedules daily at 09:00 UTC to re-load the demo book into every workspace
+     flagged `reset_nightly` (seed one with `SEED_NIGHTLY_RESET=1`).
 
 3. **Install, migrate, seed (optional) and run:**
 
@@ -41,6 +56,7 @@ claims, and seeds five more fictional accounts.
    npm install
    npm run db:migrate                     # creates the tables
    SEED_AS_OF=2026-11-12 npm run db:seed  # optional: a demo workspace; omit SEED_AS_OF to use today
+   # the seed uploads its fictional PDFs once under seed/ when BLOB_READ_WRITE_TOKEN is set
    npm run dev
    ```
 
@@ -251,7 +267,7 @@ paid + reserved**; it is always computed, never stored.
   missing or non-numeric amounts, an unknown status and duplicate numbers. Only
   valid rows are imported, all in one database transaction.
 
-### Program: tower, contract requirements, certificates, adequacy
+### Program: tower and adequacy
 
 - **Tower layers** are the primary, umbrella and excess layers of a casualty
   program (General Liability or Commercial Auto, each with Umbrella/Excess).
@@ -266,28 +282,9 @@ paid + reserved**; it is always computed, never stored.
   only then does it have a total limit (the sum of the limits). A primary that
   attaches above zero and a layer whose rate on line exceeds the layer below it
   are flagged as worth a question, not as errors.
-- **Contract requirements** compare each required coverage with the account's
-  current policies. Provided per-occurrence and aggregate limits are the largest
-  found among policies in that line; endorsements are the union of the line's
-  endorsements. **Shortfall** = required − provided (never below zero). Status is
-  Meets, Shortfall or Missing coverage (no policy in the line). Workers
-  Compensation is statutory: it is met by having a policy. An Umbrella/Excess
-  requirement is met by the tower's umbrella and excess layers (or an umbrella
-  policy).
-- **Counting the umbrella** is an option, off by default: when on, the tower's
-  umbrella and excess limits are added to the primary's per-occurrence limit for
-  the comparison. They never count toward an aggregate requirement. Whether a
-  contract accepts an umbrella toward its limit is contract-specific, so both
-  bases are shown and the decision is left to you.
-- **Certificates of insurance** have a derived status, never stored:
-  **Requested** until an issue date is set (and the required-by date has not
-  passed); **Expired** when the required-by date is before the as-of date and no
-  certificate was issued; **Issued** while every underlying policy (the policies
-  in the requested lines that were in force on the issue date) is still in force
-  at the as-of date with no successor; **Reissue needed** once any underlying
-  policy has expired, has been renewed with a successor policy, or a requested
-  line had no policy in force on the issue date. Issue and Reissue stamp the
-  as-of date. The Renewals page lists every certificate needing reissue.
+- **Per-occurrence basis.** Every layer is read as responding per occurrence;
+  the Program tab states this once. (v1.3's per-location and aggregate bases were
+  removed in v1.4 because the coverage arithmetic could not honour them.)
 - **Property adequacy (coinsurance):** required limit = insurable value ×
   coinsurance percent. If the limit carried is at least the required limit, the
   insurer pays min(loss, carried) − deductible. Otherwise it pays (carried ÷
@@ -305,50 +302,12 @@ paid + reserved**; it is always computed, never stored.
   sub-limits with their own deductibles; the policy's limit and deductible stay
   the defaults for everything not listed.
 
-### Marketing: submissions, quotes, comparison and the market log
-
-- **Carriers approached** move through planned → submitted → quoted → bound,
-  with declined and no response as exits (both can be reopened). A quote can be
-  recorded only against a submission that has been sent (submitted, or quoted
-  for a further option). Only one submission per policy can be bound; an expired
-  quote cannot be bound, and nothing can be bound once the policy has an
-  outcome. Binding opens the Renewed outcome with the quote's carrier, premium,
-  limits, deductible, commission and exposure filled in, and the new policy
-  takes the quote's endorsements. **Days to respond** = response date − sent
-  date; while a submission is outstanding the app shows days waiting (as-of date
-  − sent date). A quote whose valid-until date is before the as-of date is
-  flagged expired.
-- **Like-for-like comparison**, per quote against the expiring policy:
-  - **Premium change** = quoted premium ÷ expiring premium − 1.
-  - **Rate** = premium ÷ exposure units on the v0.2 basis ($1,000 of revenue or
-    payroll, 100 sq ft, or per unit), using the exposure the carrier quoted on
-    (or the expiring exposure); **rate change** = quote rate ÷ expiring rate − 1.
-  - **Premium per $1M** = premium ÷ occurrence limit × 1,000,000.
-  - **Commission** = quoted premium × the quote's own commission rate, shown
-    beside the client's cost.
-  - **Terms**: occurrence limit, aggregate limit, deductible and the four
-    endorsements. Against the **expiring terms** a term matches only when it is
-    the same (a higher limit or a lower deductible is a difference, marked as
-    broader; a higher deductible is flagged as more retained risk). Against a
-    **contract requirement** a limit matches when it meets the requirement, only
-    the required endorsements are checked, and the deductible is not specified.
-    The result is a count such as "5 of 7 terms match" with every mismatch
-    listed, never a combined score.
-- **Normalise** keeps only quotes whose occurrence limit, aggregate limit and
-  deductible all match the target, so what remains differs on price. Endorsement
-  differences stay visible but do not exclude a quote. The app says how many
-  quotes were excluded and why.
-- **Market log**, per carrier, over submissions sent within the lookback window:
-  **hit ratio** = quotes ÷ submissions (a submission with several quote options
-  counts once); **bind ratio** = binds ÷ quotes; median days to respond over
-  submissions with a response date; declines by reason. A carrier with three or
-  more submissions and no quotes is flagged.
-
 ### Strategy: retained-loss replay, break-even, worst-year test, TCOR
 
 - **Retention options** are deductibles (or self-insured retentions) with their
-  annual premium and an optional aggregate cap, entered by hand or imported from
-  the quotes recorded in Marketing (the link to the quote is kept for audit).
+  annual premium and an optional aggregate cap, entered by hand (manual options)
+  or generated automatically with an estimated premium (see Strategy findings
+  below). Manual premiums are not quotes either; nothing in the app is.
 - **Retained-loss replay.** The account's own claims for the line are grouped by
   policy year (effective ≤ date of loss < expiry). For every option and year:
   **retained = Σ min(incurred, deductible)**, then **min(retained, aggregate cap)**
@@ -386,10 +345,11 @@ paid + reserved**; it is always computed, never stored.
   side by side. Fees, risk control and claims administration are entered on the
   account and default to zero.
 - **Renewal strategy report.** A print-styled route assembles profile and
-  exposures, the program tower, five-year losses with the basis stated, contract
-  requirement status, market results, the options with their per-year replay,
-  TCOR by option, the considerations and an **Assumptions and limitations**
-  section generated from the settings actually used. It compares options and
+  exposures, the program layers, five-year losses with the basis stated, the
+  findings accepted for discussion, the options (manual and estimated premiums
+  side by side) with their per-year replay, TCOR by option, the considerations
+  and an **Assumptions and limitations** section generated from the settings
+  actually used, including the tolerances and permissible loss ratio. It compares options and
   never says what the client should buy. Every input is exportable as JSON.
 
 #### Strategy limitations (what an actuary would do differently)
@@ -425,13 +385,13 @@ transparent and easy to audit, and it is not a forecast. In particular:
 
 ### Placement: subscription layers, several towers, deductible schedules
 
-- **Account tabs.** Each account has Overview, Loss Runs, Program, Marketing and
-  Strategy tabs under its name (`/w/<slug>/accounts/<id>/<tab>`). Marketing and
-  Strategy open on the policy with the fewest days to expiry that has no outcome
-  yet, and remember the chosen policy in the URL. Old `/placement/…` links
+- **Account tabs.** Each account has Overview, Loss Runs, Program, Documents and
+  Strategy tabs under its name (`/w/<slug>/accounts/<id>/<tab>`). Strategy
+  opens on the policy with the fewest days to expiry that has no outcome yet,
+  and remembers the chosen policy in the URL. Old `/placement/…` links
   redirect to the matching tab.
 - **Layers and participations.** A program layer (tower, type, attachment,
-  limit, basis) carries one or more insurer participations, each with a written
+  limit) carries one or more insurer participations, each with a written
   line (optional), a signed line and its own premium. A v0.5 layer is one
   participation signed at 100%.
   - **Placed share** = Σ signed lines. **Layer premium** = Σ participation
@@ -444,8 +404,9 @@ transparent and easy to audit, and it is not a forecast. In particular:
   is the sum of the signed shares of every layer in every tower that covers it:
   **Fully placed** within 0.01 points of 100%, **Under-placed** (shortfall % and
   unplaced $ = shortfall × segment width), **Over-placed** (excess %) or **Not
-  covered**. Within one tower the v0.5 gap and overlap checks still apply;
-  across towers overlapping ranges are expected.
+  covered**. The segment table shows the placed % in red whenever it is not 100%
+  and the unplaced dollars beside it; within one tower the v0.5 gap and overlap
+  checks still apply; across towers overlapping ranges are expected.
 - **Program totals:** total premium, total placed limit, **rate per $100 of TIV**
   = total premium ÷ TIV × 100, and a blended rate on line per segment =
   Σ(layer premium ÷ limit) ÷ Σ placed shares of the layers covering it.
@@ -453,10 +414,6 @@ transparent and easy to audit, and it is not a forecast. In particular:
   target ÷ Σ written; when they fall short, signed = written and the layer is
   flagged under-subscribed by the difference. Written lines are optional; without
   them, signed lines are entered directly.
-- **Bases.** Layers carry a per-occurrence, per-location or aggregate basis. The
-  coverage profile adds shares across bases as if they responded to the same
-  loss and says so when the bases differ; a placing broker should confirm how a
-  per-location layer sits against per-occurrence layers for the risk in question.
 - **Deductible schedules.** A policy's deductible field is its **default (all
   other perils)** deductible and is mirrored by the schedule row marked default;
   the two stay in sync. Other rows name a peril or coverage part with a kind:
@@ -470,6 +427,87 @@ transparent and easy to audit, and it is not a forecast. In particular:
   the claim's peril (case-insensitive), otherwise the default rule. A retention
   option replaces only the default deductible amount, so claims under a named
   peril keep their own deductible whichever option is chosen.
+
+### Documents and certificates (v1.4)
+
+- **Four folders per account:** Proposals (status Draft or Final, policy year),
+  Submissions (policy year and the markets they went to, chosen from the insurers
+  already in the workspace or typed in), Certificates (generated on a policy
+  page or uploaded) and Policy documents (optionally linked to a policy). Files
+  go to Vercel Blob privately under a random pathname and are served only
+  through `/w/<slug>/documents/<id>`, which checks the workspace cookie. The
+  limit is 10 MB and the types are pdf, docx, xlsx, csv, png and jpg. A missing
+  title, a disallowed type, an oversize file or a submission with no market is
+  a field error and stores nothing. Deleting a document deletes its blob, except
+  for the demo book's shared `seed/` files, where only the row goes.
+- **Certificate of insurance.** The Policy page generates a PDF for the current
+  term: named insured, insurers (the layer's participations with signed lines
+  when the policy is placed by subscription), policy number, period, limits,
+  default deductible, exposure or TIV, the tracked endorsements present, any
+  other in-force policies ticked for inclusion, holder, issue date (the as-of
+  date) and a plain-language statement that it is informational and confers no
+  rights. It is Broker OS's own layout, not an industry form. The PDF is filed
+  as a certificate document on the policy and in the account's Certificates
+  folder.
+- **Reissue rule.** A certificate is flagged **Reissue needed** when its policy
+  has a successor (an outcome recorded it as renewed) or its expiry date is on
+  or before the as-of date. The flag is derived at read time, never stored.
+
+### Strategy findings (v1.4)
+
+All of these are heuristics computed in `src/lib/domain/strategy.ts` from the
+account's own loss history, program layers and the settings on the Strategy tab.
+They produce candidates for discussion, never recommendations.
+
+- **Settings.** Risk tolerance per occurrence (default 0.5% of revenue), per
+  policy year (default 1% of revenue) and a permissible loss ratio, PLR (default
+  0.65). The tab and report carry the sentence "Estimated premiums are derived
+  from your loss history and this ratio; they are not quotes."
+- **Band analysis.** The program's layers are read bottom up. The primary
+  responds from the deductible (band attachment = deductible, band limit =
+  limit − deductible). For each band and policy year, **in-band losses = Σ
+  min(max(incurred − attachment, 0), limit)**; average per year and worst year
+  follow. A band is **working** when any year has an in-band loss or its claim
+  frequency exceeds 0.2 per year, else **catastrophe**.
+- **Self-insure candidate** when the band limit ≤ the per-occurrence tolerance,
+  the worst year's in-band loss ≤ the annual tolerance and the layer premium >
+  average in-band loss ÷ PLR; the estimated impact is premium − average ÷ PLR.
+  Otherwise the band yields a **raise-deductible candidate** at the
+  per-occurrence tolerance and the matching option is generated automatically.
+  A catastrophe band never produces a retention candidate; it is priced only,
+  with a quota-share alternative noted.
+- **Price findings.** **Inverted pricing** when a layer's rate on line is ≥ the
+  layer below it (dollar difference = this layer's premium − premium at the lower
+  rate). **Participation above the book** when a layer's rate on line is ≥25%
+  above the premium-weighted average rate on line of the other lines. **Rate
+  change above exposure change** when the renewal's rate change exceeds the
+  exposure change by ten points or more. Each states the dollar difference.
+- **Limit adequacy (property).** Underinsured by $X when the program top is
+  below the TIV; **excess limit** when the top exceeds the TIV by more than 10%,
+  priced at the top layer's rate on line.
+- **Automatic options:** the current deductible, the per-occurrence tolerance
+  and the p50, p75 and p90 claim severities (nearest-rank percentiles, rounded
+  to $5,000, or to $25,000 above $100,000), de-duplicated. **Estimated premium =
+  current premium − (increase in average retained vs the current deductible) ÷
+  PLR**, floored at 25% of the current premium and flagged when the floor
+  applies. Manual and estimated premiums sit in two columns; the replay runs on
+  the chosen source, defaulting to manual where one exists.
+- **Modifiers** that temper every finding: a rising claim frequency, a high open
+  reserve share, and fewer than three policy years of history.
+
+## Limitations
+
+- **Findings are heuristics.** The band threshold (any in-band loss, or more
+  than 0.2 claims a year), the tolerance defaults, the 25%/10-point price
+  thresholds and the 10% excess-limit rule are judgement calls a broker should
+  challenge; an actuary would fit distributions and model credibility.
+- **Estimated premiums are not quotes.** They rescale the current premium by the
+  change in expected retained losses at a fixed permissible loss ratio and
+  ignore expense loads, risk charges, market cycle and minimum premiums.
+- **Files are not virus-scanned** and are served to anyone holding the workspace
+  link. Upload only fictional documents.
+- **Vercel Blob free tier.** Storage and bandwidth are capped; the demo keeps one
+  shared copy of its PDFs under `seed/` and the nightly reset re-uses it.
 
 ## Changelog
 
@@ -488,5 +526,7 @@ v1.1 — Marketing: submission package, carriers approached, quotes, like-for-li
 v1.2 — Strategy: retention optimizer, total cost of risk, renewal strategy report.
 
 v1.3 — Account tabs replace Placement; subscription placements with signed lines and multiple towers; deductible schedules with per-peril replay; five more demo accounts.
+
+v1.4 — Documents tab with Vercel Blob; Policy page with certificate generation; automatic strategy findings and estimated retention options; removed Marketing, contract requirements, layer basis, coverage strip and Workers Compensation; ten-account demo book.
 
 Full details in [CHANGELOG.md](CHANGELOG.md).

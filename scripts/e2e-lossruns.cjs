@@ -40,7 +40,7 @@ const summaryRow = (p, label) => main(p).locator("section[aria-labelledby='summa
   await settle(page);
   const harbourUrl = page.url();
   check("Loss Runs tab is selected", (await main(page).getByRole("tab", { name: /^Loss Runs/ }).getAttribute("aria-selected")) === "true");
-  check("tabs show Overview, Loss Runs, Program, Marketing, Strategy", /Overview Loss Runs.*Program.*Marketing.*Strategy/.test((await main(page).getByRole("navigation", { name: "Account sections" }).innerText()).replace(/\s+/g, " ").trim()));
+  check("tabs show Overview, Loss Runs, Program, Documents, Strategy", /Overview Loss Runs.*Program.*Documents.*Strategy/.test((await main(page).getByRole("navigation", { name: "Account sections" }).innerText()).replace(/\s+/g, " ").trim()));
 
   const py23 = (await summaryRow(page, "PY2023").innerText()).replace(/\s+/g, " ");
   check("PY2023 incurred $135,000", py23.includes("$135,000"), py23);

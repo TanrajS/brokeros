@@ -1,10 +1,10 @@
 /**
- * Program analysis (v1): tower structure, contract requirements, certificate
- * status, property coinsurance and co-insurer participation. Pure: no React,
+ * Program analysis (v1): tower structure, property coinsurance, co-insurer
+ * participation and (v1.3) subscription placements. Pure: no React,
  * no database, no clock. Every export returns { value, math }.
  */
-import type { Endorsement, LineOfBusiness, RenewalStatus } from "@/lib/constants";
-import type { Calc, ISODate } from "./types";
+import type { LineOfBusiness } from "@/lib/constants";
+import type { Calc } from "./types";
 
 /* ------------------------------------------------------------------ */
 /* Shared                                                              */
@@ -21,9 +21,6 @@ export const LAYER_TYPE_LABELS: Record<LayerType, string> = { primary: "Primary"
 /** A primary or quota-share layer sits at the bottom of a tower; umbrella and excess layers sit above. */
 export const isBottomLayer = (t: LayerType) => t === "primary" || t === "quota_share";
 
-export const LAYER_BASES = ["per_occurrence", "per_location", "aggregate"] as const;
-export type LayerBasis = (typeof LAYER_BASES)[number];
-export const LAYER_BASIS_LABELS: Record<LayerBasis, string> = { per_occurrence: "Per occurrence", per_location: "Per location", aggregate: "Aggregate" };
 
 function group(n: number, decimals: number): string {
   const [int, frac] = Math.abs(n).toFixed(decimals).split(".");
@@ -160,193 +157,6 @@ export function analyzeTower(input: TowerLayerInput[]): Calc<TowerAnalysis> {
       inputs: { layers: input.length },
       formula: "exhaustion = attachment + limit; rate on line = premium ÷ limit; gap = attachment − exhaustion below (positive), overlap (negative)",
       steps: { lines },
-    },
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Contract requirements                                               */
-/* ------------------------------------------------------------------ */
-
-export const REQUIREMENT_COVERAGES = ["General Liability", "Umbrella/Excess", "Commercial Auto", "Workers Compensation"] as const satisfies readonly LineOfBusiness[];
-export type RequirementCoverage = (typeof REQUIREMENT_COVERAGES)[number];
-
-export interface RequirementInput {
-  id: string;
-  contractName: string;
-  counterparty: string;
-  coverage: RequirementCoverage;
-  requiredOccurrence: number | null;
-  requiredAggregate: number | null;
-  requiredEndorsements: Endorsement[];
-}
-
-export interface ProgramPolicy {
-  id: string;
-  lineOfBusiness: LineOfBusiness;
-  occurrenceLimit: number | null;
-  aggregateLimit: number | null;
-  endorsements: Endorsement[];
-  effectiveDate: ISODate;
-  expiryDate: ISODate;
-  renewalStatus: RenewalStatus;
-  previousPolicyId: string | null;
-  /** The as-of date on which a renewed outcome was recorded, or null. */
-  renewedOn: ISODate | null;
-}
-
-export type RequirementStatus = "meets" | "shortfall" | "missing";
-export const REQUIREMENT_STATUS_LABELS: Record<RequirementStatus, string> = { meets: "Meets", shortfall: "Shortfall", missing: "Missing coverage" };
-
-export interface RequirementResult {
-  requirement: RequirementInput;
-  status: RequirementStatus;
-  providedOccurrence: number | null;
-  providedAggregate: number | null;
-  /** Limit from umbrella and excess layers counted toward occurrence (0 when the option is off). */
-  umbrellaCounted: number;
-  shortfallOccurrence: number;
-  shortfallAggregate: number;
-  endorsementsPresent: Endorsement[];
-  endorsementsMissing: Endorsement[];
-  policyIds: string[];
-}
-
-export interface RequirementOptions {
-  /** Count umbrella and excess limits toward the per-occurrence requirement. */
-  countUmbrella: boolean;
-}
-
-/**
- * Compares each requirement with what the account's policies provide.
- * Provided occurrence = the largest occurrence limit among policies in the
- * coverage (plus umbrella/excess tower limit when the option is on); provided
- * aggregate = the largest aggregate limit. Umbrella never counts toward an
- * aggregate. Statutory lines (Workers Compensation) are met by having a policy.
- */
-export function checkRequirements(requirements: RequirementInput[], policies: ProgramPolicy[], tower: TowerLayerInput[], options: RequirementOptions): Calc<RequirementResult[]> {
-  const umbrellaLimit = sumMoney(tower.filter((l) => !isBottomLayer(l.layerType)).map((l) => l.limit));
-  const lines: string[] = [];
-  const value = requirements.map((req): RequirementResult => {
-    const inLine = policies.filter((p) => p.lineOfBusiness === req.coverage);
-    const maxOrNull = (xs: (number | null)[]) => {
-      const nums = xs.filter((x): x is number => x !== null);
-      return nums.length ? Math.max(...nums) : null;
-    };
-    let providedOccurrence = maxOrNull(inLine.map((p) => p.occurrenceLimit));
-    const providedAggregate = maxOrNull(inLine.map((p) => p.aggregateLimit));
-    // The Umbrella/Excess requirement is met by the tower's umbrella and excess layers, or by an umbrella policy.
-    if (req.coverage === "Umbrella/Excess" && umbrellaLimit > 0) providedOccurrence = Math.max(providedOccurrence ?? 0, umbrellaLimit);
-    let umbrellaCounted = 0;
-    if (options.countUmbrella && req.coverage !== "Umbrella/Excess" && umbrellaLimit > 0 && inLine.length > 0) {
-      umbrellaCounted = umbrellaLimit;
-      providedOccurrence = sumMoney([providedOccurrence ?? 0, umbrellaLimit]);
-    }
-    const present = [...new Set(inLine.flatMap((p) => p.endorsements))].filter((e) => req.requiredEndorsements.includes(e));
-    const missing = req.requiredEndorsements.filter((e) => !present.includes(e));
-    const shortfallOccurrence = req.requiredOccurrence === null ? 0 : Math.max(0, round2(req.requiredOccurrence - (providedOccurrence ?? 0)));
-    const shortfallAggregate = req.requiredAggregate === null ? 0 : Math.max(0, round2(req.requiredAggregate - (providedAggregate ?? 0)));
-    const hasCoverage = inLine.length > 0 || (req.coverage === "Umbrella/Excess" && umbrellaLimit > 0);
-    const status: RequirementStatus = !hasCoverage ? "missing" : shortfallOccurrence > 0 || shortfallAggregate > 0 || missing.length > 0 ? "shortfall" : "meets";
-    lines.push(
-      `${req.contractName} / ${req.coverage}: ` +
-        (!hasCoverage
-          ? "no policy in this coverage"
-          : `provided ${providedOccurrence === null ? "—" : usd(providedOccurrence)} occurrence` +
-            (umbrellaCounted ? ` (including ${usd(umbrellaCounted)} umbrella/excess)` : "") +
-            ` / ${providedAggregate === null ? "—" : usd(providedAggregate)} aggregate; required ${req.requiredOccurrence === null ? "statutory" : usd(req.requiredOccurrence)} / ${req.requiredAggregate === null ? "—" : usd(req.requiredAggregate)}; ` +
-            `shortfall ${usd(shortfallOccurrence)} / ${usd(shortfallAggregate)}; endorsements missing: ${missing.length ? missing.join(", ") : "none"}`) +
-        ` → ${REQUIREMENT_STATUS_LABELS[status]}`,
-    );
-    return { requirement: req, status, providedOccurrence, providedAggregate, umbrellaCounted, shortfallOccurrence, shortfallAggregate, endorsementsPresent: present, endorsementsMissing: missing, policyIds: inLine.map((p) => p.id) };
-  });
-  return {
-    value,
-    math: {
-      inputs: { requirements: requirements.length, policies: policies.length, towerLayers: tower.length, options },
-      formula: "shortfall = required − provided (floor 0); umbrella/excess limit counts toward occurrence only when the option is on, never toward aggregate",
-      steps: { umbrellaLimit, lines },
-    },
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Certificates                                                        */
-/* ------------------------------------------------------------------ */
-
-export type CertificateStatus = "requested" | "issued" | "expired" | "reissue_needed";
-export const CERTIFICATE_STATUS_LABELS: Record<CertificateStatus, string> = {
-  requested: "Requested",
-  issued: "Issued",
-  expired: "Expired",
-  reissue_needed: "Reissue needed",
-};
-
-export interface CertificateInput {
-  id: string;
-  holder: string;
-  coverages: LineOfBusiness[];
-  requiredBy: ISODate | null;
-  issuedOn: ISODate | null;
-}
-
-export interface CertificateStatusResult {
-  status: CertificateStatus;
-  reasons: string[];
-  /** Policies the certificate rests on: in force in a requested line on the issue date. */
-  underlyingPolicyIds: string[];
-}
-
-/**
- * requested: no issue date and the holder's required-by date has not passed.
- * expired: no issue date and required-by is before the as-of date.
- * issued: every underlying policy is still in force at the as-of date and has no successor.
- * reissue_needed: an underlying policy has expired, has been renewed with a successor since the issue date, or a requested line had no policy in force at issuance.
- */
-export function certificateStatus(cert: CertificateInput, policies: ProgramPolicy[], asOf: ISODate): Calc<CertificateStatusResult> {
-  const reasons: string[] = [];
-  let status: CertificateStatus;
-  let underlying: ProgramPolicy[] = [];
-  if (cert.issuedOn === null) {
-    if (cert.requiredBy !== null && cert.requiredBy < asOf) {
-      status = "expired";
-      reasons.push(`required by ${cert.requiredBy}, before the as-of date ${asOf}, and never issued`);
-    } else {
-      status = "requested";
-      reasons.push(cert.requiredBy ? `not yet issued; required by ${cert.requiredBy}` : "not yet issued");
-    }
-  } else {
-    const issuedOn = cert.issuedOn;
-    const successorOf = new Map(policies.filter((p) => p.previousPolicyId).map((p) => [p.previousPolicyId!, p]));
-    status = "issued";
-    for (const line of cert.coverages) {
-      const inForceAtIssue = policies.filter((p) => p.lineOfBusiness === line && p.effectiveDate <= issuedOn && issuedOn < p.expiryDate);
-      if (inForceAtIssue.length === 0) {
-        status = "reissue_needed";
-        reasons.push(`${line}: no policy was in force on the issue date ${issuedOn}`);
-        continue;
-      }
-      for (const p of inForceAtIssue) {
-        underlying.push(p);
-        if (p.expiryDate <= asOf) {
-          status = "reissue_needed";
-          reasons.push(`${line}: the underlying policy expired on ${p.expiryDate}`);
-        } else if (p.renewedOn !== null && p.renewedOn > issuedOn) {
-          status = "reissue_needed";
-          const successor = successorOf.get(p.id);
-          reasons.push(`${line}: the underlying policy was renewed on ${p.renewedOn}${successor ? ` (successor effective ${successor.effectiveDate})` : ""}`);
-        }
-      }
-    }
-    if (status === "issued") reasons.push(`issued ${issuedOn}; every underlying policy is in force on ${asOf}`);
-    underlying = [...new Set(underlying)];
-  }
-  return {
-    value: { status, reasons, underlyingPolicyIds: underlying.map((p) => p.id) },
-    math: {
-      inputs: { holder: cert.holder, coverages: cert.coverages, requiredBy: cert.requiredBy, issuedOn: cert.issuedOn, asOf },
-      formula: "requested until issued; expired if required-by passed unissued; issued while underlying policies are in force; reissue needed once one expires or is renewed after the issue date",
-      steps: { lines: [`${CERTIFICATE_STATUS_LABELS[status]}: ${reasons.join("; ")}`] },
     },
   };
 }
@@ -506,7 +316,7 @@ export interface ProgramLayerInput {
   layerType: LayerType;
   attachment: number;
   limit: number;
-  basis: LayerBasis;
+  /** v1.4: every layer is read per occurrence; the Program tab says so once. */
   participations: ParticipationInput[];
   policyId?: string | null;
   notes?: string | null;
@@ -612,8 +422,6 @@ export interface CoverageProfile {
   segments: CoverageSegment[];
   fullyPlaced: boolean;
   totalUnplacedDollars: number;
-  /** Bases present; more than one means the segments mix per-occurrence, per-location or aggregate limits. */
-  bases: LayerBasis[];
 }
 
 const TOLERANCE = 0.0001; // 0.01 percentage points
@@ -648,10 +456,8 @@ export function coverageProfile(layers: ProgramLayerInput[], programTop: number 
     );
     segments.push({ from, to, width, placedShare, status, shortfallShare, excessShare, unplacedDollars, contributions: covering.map((s) => ({ layerId: s.layer.id, towerLabel: s.layer.towerLabel, label: s.label, share: s.placedShare })) });
   }
-  const bases = [...new Set(layers.map((l) => l.basis))];
-  if (bases.length > 1) lines.push(`Bases differ (${bases.map((b) => LAYER_BASIS_LABELS[b].toLowerCase()).join(", ")}): the segments add shares across bases as if they responded to the same loss; confirm with the placing broker.`);
   return {
-    value: { programTop: top, segments, fullyPlaced: segments.length > 0 && segments.every((s) => s.status === "fully_placed"), totalUnplacedDollars: sumMoney(segments.map((s) => s.unplacedDollars)), bases },
+    value: { programTop: top, segments, fullyPlaced: segments.length > 0 && segments.every((s) => s.status === "fully_placed"), totalUnplacedDollars: sumMoney(segments.map((s) => s.unplacedDollars)) },
     math: {
       inputs: { layers: layers.length, programTop },
       formula: "placed % per segment = Σ signed shares of every layer covering it; fully placed within 0.01 points; unplaced $ = shortfall × segment width",

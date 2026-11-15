@@ -1,12 +1,11 @@
 "use server";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { formatCurrency } from "@/lib/format";
-import { quoteOptionFormSchema, tcorFeesFormSchema, type QuoteOptionFormInput, type TcorFeesFormInput } from "@/lib/schemas/strategy";
+import { quoteOptionFormSchema, tcorFeesFormSchema, toleranceFormSchema, type QuoteOptionFormInput, type TcorFeesFormInput, type ToleranceFormInput } from "@/lib/schemas/strategy";
 import { describeFailure, fail, fieldErrorsFromZod, ok, type ActionResult } from "@/server/actionResult";
 import { getDb } from "@/server/db/client";
-import { accounts, policies, quoteOptions, quotes, submissions } from "@/server/db/schema";
+import { accounts, policies, quoteOptions } from "@/server/db/schema";
 import { getWorkspaceBySlug } from "@/server/workspace/queries";
 
 function refresh(slug: string) {
@@ -36,7 +35,7 @@ export async function saveQuoteOption(slug: string, policyId: string, optionId: 
     }
     const [row] = await db
       .insert(quoteOptions)
-      .values({ workspaceId: ws.id, policyId, label: v.label, carrier: v.carrier, deductible: v.deductible, aggregateCap: v.aggregateCap, premium: v.premium, sourceQuoteId: null })
+      .values({ workspaceId: ws.id, policyId, label: v.label, carrier: v.carrier, deductible: v.deductible, aggregateCap: v.aggregateCap, premium: v.premium })
       .returning({ id: quoteOptions.id });
     refresh(slug);
     return ok({ id: row.id });
@@ -58,49 +57,6 @@ export async function deleteQuoteOption(slug: string, optionId: string): Promise
   }
 }
 
-/**
- * Imports quotes recorded in Marketing as retention options: the quote's
- * deductible and premium, the submission's carrier, and a link back to the quote.
- * Quotes without a deductible, or already imported, are skipped and reported.
- */
-export async function importQuoteOptions(slug: string, policyId: string, quoteIds: string[]): Promise<ActionResult<{ imported: number; skipped: string[] }>> {
-  try {
-    const ws = await getWorkspaceBySlug(slug);
-    if (!ws) return fail("That workspace no longer exists.");
-    const ids = [...new Set(quoteIds)].filter((id) => /^[0-9a-f-]{36}$/.test(id));
-    if (ids.length === 0) return fail("Choose at least one quote to import.");
-    const db = getDb();
-    const [rows, existing] = await Promise.all([
-      db
-        .select({ quote: quotes, carrier: submissions.carrier })
-        .from(quotes)
-        .innerJoin(submissions, eq(submissions.id, quotes.submissionId))
-        .where(and(eq(submissions.workspaceId, ws.id), eq(submissions.policyId, policyId), inArray(quotes.id, ids))),
-      db.select({ sourceQuoteId: quoteOptions.sourceQuoteId }).from(quoteOptions).where(and(eq(quoteOptions.workspaceId, ws.id), eq(quoteOptions.policyId, policyId))),
-    ]);
-    if (rows.length === 0) return fail("Those quotes do not belong to this policy.");
-    const imported = new Set(existing.map((e) => e.sourceQuoteId));
-    const skipped: string[] = [];
-    const values: (typeof quoteOptions.$inferInsert)[] = [];
-    for (const { quote, carrier } of rows) {
-      if (imported.has(quote.id)) {
-        skipped.push(`${carrier} ${formatCurrency(quote.quotedPremium)}: already imported`);
-        continue;
-      }
-      if (quote.deductible === null) {
-        skipped.push(`${carrier} ${formatCurrency(quote.quotedPremium)}: no deductible on the quote`);
-        continue;
-      }
-      values.push({ workspaceId: ws.id, policyId, label: `${formatCurrency(quote.deductible)} deductible`, carrier, deductible: quote.deductible, aggregateCap: null, premium: quote.quotedPremium, sourceQuoteId: quote.id });
-    }
-    if (values.length > 0) await db.insert(quoteOptions).values(values);
-    refresh(slug);
-    return ok({ imported: values.length, skipped });
-  } catch (err) {
-    return fail(describeFailure("importing quotes", err));
-  }
-}
-
 /** The account's broker fees, risk control spend and internal claims administration for TCOR. */
 export async function saveTcorFees(slug: string, accountId: string, input: TcorFeesFormInput): Promise<ActionResult> {
   try {
@@ -119,5 +75,44 @@ export async function saveTcorFees(slug: string, accountId: string, input: TcorF
     return ok(undefined);
   } catch (err) {
     return fail(describeFailure("saving the cost of risk inputs", err));
+  }
+}
+
+/** v1.4: the account's risk tolerances and permissible loss ratio. Blank tolerances mean the defaults from revenue. */
+export async function saveToleranceSettings(slug: string, accountId: string, input: ToleranceFormInput): Promise<ActionResult> {
+  try {
+    const ws = await getWorkspaceBySlug(slug);
+    if (!ws) return fail("That workspace no longer exists.");
+    const parsed = toleranceFormSchema.safeParse(input);
+    if (!parsed.success) return fail("Please fix the highlighted fields.", fieldErrorsFromZod(parsed.error));
+    const v = parsed.data;
+    const rows = await getDb()
+      .update(accounts)
+      .set({ toleranceOccurrence: v.toleranceOccurrence, toleranceYear: v.toleranceYear, permissibleLossRatio: v.permissibleLossRatio, updatedAt: new Date() })
+      .where(and(eq(accounts.id, accountId), eq(accounts.workspaceId, ws.id)))
+      .returning({ id: accounts.id });
+    if (rows.length === 0) return fail("That account no longer exists.");
+    refresh(slug);
+    return ok(undefined);
+  } catch (err) {
+    return fail(describeFailure("saving the tolerance settings", err));
+  }
+}
+
+/** v1.4: accept a finding into the report, or take it back out. Stored as the finding's stable key on the account. */
+export async function setFindingAccepted(slug: string, accountId: string, findingId: string, accepted: boolean): Promise<ActionResult> {
+  try {
+    const ws = await getWorkspaceBySlug(slug);
+    if (!ws) return fail("That workspace no longer exists.");
+    if (!/^[a-z_]+:[A-Za-z0-9_.:-]+$/.test(findingId)) return fail("That finding key is not valid.");
+    const db = getDb();
+    const account = await db.query.accounts.findFirst({ where: and(eq(accounts.id, accountId), eq(accounts.workspaceId, ws.id)) });
+    if (!account) return fail("That account no longer exists.");
+    const next = accepted ? [...new Set([...account.acceptedFindings, findingId])] : account.acceptedFindings.filter((f) => f !== findingId);
+    await db.update(accounts).set({ acceptedFindings: next, updatedAt: new Date() }).where(eq(accounts.id, accountId));
+    refresh(slug);
+    return ok(undefined);
+  } catch (err) {
+    return fail(describeFailure("updating the report findings", err));
   }
 }

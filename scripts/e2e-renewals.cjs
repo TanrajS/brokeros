@@ -42,7 +42,7 @@ const main = (page) => page.locator("main:visible");
   const expired = main(page).locator("section[aria-labelledby='col-expired-action-required']");
   // v0.3 seed: every expired policy in the trailing year has an outcome, so Expired is empty.
   check("Expired column is empty in the v0.3 demo", (await expired.getByText("No policies").count()) === 1);
-  check("summary strip shows overdue tasks = 6", (await main(page).getByText("Overdue tasks").locator("..").getByText("6", { exact: true }).count()) === 1);
+  check("summary strip shows overdue tasks = 3", (await main(page).getByText("Overdue tasks").locator("..").getByText("3", { exact: true }).count()) === 1);
   await main(page).getByText("Stage rules").click();
   check("stage rules panel lists the 91–120 rule", (await main(page).getByText("91 to 120 days to expiry, inclusive.").count()) === 1);
   await page.screenshot({ path: `${SHOTS}/renewals-board.png`, fullPage: true });
@@ -246,7 +246,7 @@ const main = (page) => page.locator("main:visible");
   await main(w).getByRole("button", { name: "Save settings" }).click();
   await w.getByText("Settings saved").waitFor();
   await w.goto(`${BASE}/w/${slug}`);
-  await main(w).getByRole("link", { name: "Kestrel Precision Components Corp." }).click();
+  await main(w).getByRole("link", { name: "Northwind Engineering Partners Inc." }).click();
   await main(w).getByRole("heading", { name: "Activity" }).waitFor();
   check("as-of change logs 90-day → 60-day move", (await main(w).getByText(/moved from 90-day: Marketing to 60-day: Quoting/).count()) >= 1);
 

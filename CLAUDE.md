@@ -19,11 +19,15 @@ before changing anything, and keep it current when the rules change.
 
 ## Hard constraints
 
-1. **No login, no payments, no third-party APIs, no AI features, no analytics
-   scripts.** The only secret is `DATABASE_URL`, read in `src/server/env.ts`
-   and nowhere else. `.env.example` is committed; `.env*` is git-ignored. If
+1. **No login, no payments, no AI features, no analytics scripts.** The only
+   permitted environment variables are `DATABASE_URL`, `BLOB_READ_WRITE_TOKEN`
+   (Vercel Blob, injected by the Vercel Blob integration; optional locally) and
+   `CRON_SECRET` (guards the nightly demo reset), all read in
+   `src/server/env.ts` and nowhere else. Vercel Blob is the one external
+   service. `.env.example` is committed; `.env*` is git-ignored. If
    `DATABASE_URL` is missing or the database is unreachable, the app renders
-   `/setup` instead of crashing.
+   `/setup` instead of crashing; if the Blob token is missing, the Documents tab
+   and certificate generation say so and switch off, nothing else breaks.
 2. **Workspaces replace accounts.** A workspace has a random 10-character slug;
    its id lives in the httpOnly cookie `brokeros_workspace`. Anyone with
    `/w/[slug]` sees and edits the same data. `/` (route handler) redirects to
@@ -68,7 +72,8 @@ before changing anything, and keep it current when the rules change.
 | Zod schemas | `src/lib/schemas/*.ts` (`z.input` = form strings, `z.output` = parsed values) |
 | Display formatting | `src/lib/format/` (returns `null` for missing, never a fake value) |
 | Enumerations | `src/lib/constants.ts` (shared by schema, Zod and UI) |
-| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of; `buildDemoBook` = the 14-account base every test pins, `buildFullDemoBook` adds the five v1.3 accounts the seed writes) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` / `demoBookProgram.ts` / `demoBookMarketing.ts` / `demoBookStrategy.ts` map it for tests |
+| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of; `buildDemoBook` = the ten accounts every test pins), `demoDocuments.tsx` (renders the seed PDFs and uploads them once under `seed/`) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` / `demoBookProgram.ts` / `demoBookStrategy.ts` map it for tests |
+| Documents and Blob | `src/server/documents/blob.ts` (the only module that imports `@vercel/blob`), `src/server/documents/{queries,actions}.ts`, download route `src/app/w/[slug]/documents/[documentId]/route.ts`; certificates in `src/server/certificates/` (`pdf.tsx` is the only `@react-pdf/renderer` user) |
 | Pages | `src/app/w/[slug]/…`; pages call `requireWorkspace(slug)` from `src/app/w/[slug]/lib.ts`. Account tabs live in the route group `accounts/[accountId]/(tabs)/` (layout = header + `AccountTabs`); edit and policy pages sit outside the group. `/placement/…` only redirects |
 | UI components | `src/components/<area>/`; shadcn primitives in `src/components/ui/` |
 
@@ -104,10 +109,13 @@ before changing anything, and keep it current when the rules change.
 - Deleting an account cascades to contacts and policies at the database level;
   the confirm dialog says so.
 - v0.2 added `checklist_items`, `tasks`, `activities` and `renewal_outcomes`.
-  Later versions add `claims`, `contract_requirements`, `certificates`,
-  `submissions`, `quotes`, `quote_options`, `program_layers`,
-  `layer_participations` and `policy_deductibles` through new migrations using
-  the same column helpers. `tower_layers` (v1) was converted into
+  Later versions add `claims`, `quote_options`, `program_layers`,
+  `layer_participations`, `policy_deductibles` and (v1.4) `documents` through
+  new migrations using the same column helpers. v1.4 dropped
+  `contract_requirements`, `certificates`, `submissions` and `quotes`
+  (`0011_removals`, after copying quote-derived option premiums into
+  `quote_options.premium` as manual options) and removed Workers Compensation
+  (`0010_remove_workers_compensation`, custom). `tower_layers` (v1) was converted into
   `program_layers` + `layer_participations` by `0007_convert_tower_layers` and
   dropped in `0008`; a data-moving migration is written with
   `drizzle-kit generate --custom`, never by editing a generated file. When `claims` arrives, wire its
@@ -188,46 +196,19 @@ before changing anything, and keep it current when the rules change.
 ## Program rules (v1)
 
 - **All program logic is in `src/lib/domain/program.ts`**: `analyzeTower`,
-  `checkRequirements`, `certificateStatus`, `coinsurancePayment`,
-  `analyzeParticipation`. `src/server/program/queries.ts` maps rows with
-  `toProgramPolicy` / `toTowerInput` / `toRequirementInput` /
-  `toCertificateInput`; the Program page does the computing.
-- **Certificate status is derived, never stored.** `listCertificatesDue` feeds
-  the Renewals panel; `listAccountCertificates` the Account page.
-- **The checker uses current terms only** (no successor, expiry after as-of)
-  and the selected line group's tower for umbrella/excess limits. Umbrella never
-  counts toward an aggregate.
-- **Checker and adequacy never say compliant / adequate.** Labels are Meets,
-  Shortfall $X, Missing coverage, or the arithmetic; the decision is the user's.
+  `coinsurancePayment`, `analyzeParticipation` and the v1.3 placement functions.
+  `src/server/program/queries.ts` maps rows (`loadProgramLayers`, `layersFor`);
+  the Program page does the computing. Contract requirements and the v0.5
+  certificates table were removed in v1.4.
+- **Adequacy never says adequate.** Labels are the arithmetic; the decision is
+  the user's.
 - **Tower diagram:** blocks are `flex: span 1 0%` so one markup works as a
   column (md+) and a row (mobile); gaps hatched red, overlaps amber; the table
   beside carries every figure.
 - **Participants and sub-limits** cascade with their policy. The policy's own
   `carrier` is the lead insurer; participants are the full schedule.
-- The demo program cases (Harbourline tower/contract/certificates, Cedar gap and
-  adequacy, Kestrel participants) are checked in
-  `src/server/db/seed/__tests__/demoBookProgram.test.ts`.
-
-## Marketing rules (v1.1)
-
-- **All marketing logic is in `src/lib/domain/marketing.ts`**: `checkTransition`,
-  `canRecordQuote`, `daysToRespond`, `isQuoteExpired`, `compareQuotes`,
-  `normaliseQuotes`, `marketLog`. Actions in `src/server/marketing/actions.ts`
-  must call `checkTransition` before any status change; `bindQuote` and
-  `unbindSubmission` run in `withTransaction` with the policy row locked.
-- **Status is stored but moves only through the rules**; days to respond is
-  derived from `sent_on` / `responded_on`, never stored.
-- **Comparison never scores.** Show "N of M terms match" and list every
-  mismatch; commission is always shown beside the client cost.
-- **Normalise = limits and deductible match the target.** Endorsements do not
-  exclude. Against a contract requirement, "match" means "meets".
-- **Binding** sets `quotes.is_bound` and the submission to bound, then sends the
-  user to the policy page with `?outcome=renewed`; `recordRenewedOutcome` copies
-  the bound quote's endorsements onto the successor.
-- `buildMarketingView` (`src/server/marketing/view.ts`) is shared by the tab and
-  the printable summary. Print styles: app chrome carries `print:hidden`.
-- The demo marketing case is checked in
-  `src/server/db/seed/__tests__/demoBookMarketing.test.ts`.
+- The demo program cases (Harbourline tower, Cedar gap and adequacy) are
+  checked in `src/server/db/seed/__tests__/demoBookProgram.test.ts`.
 
 ## Strategy rules (v1.2)
 
@@ -251,8 +232,9 @@ before changing anything, and keep it current when the rules change.
 - **TCOR premiums are in-force current terms** (the v0.3 rule) with the option's
   premium in place of the analysed line; other lines without loss runs count as
   zero and are flagged, never silently.
-- `quote_options.source_quote_id` is kept (ON DELETE SET NULL) so the report
-  can say which premiums came from quotes and which were entered by hand.
+- Options are entered by hand (`quote_options`, "manual") or estimated by the
+  v1.4 findings engine; the report says which is which and never calls either a
+  quote.
 - The demo strategy cases (Harbourline, Cedar Ridge) are checked in
   `src/server/db/seed/__tests__/demoBookStrategy.test.ts`.
 
@@ -263,7 +245,8 @@ before changing anything, and keep it current when the rules change.
   `towerInputsFrom` (feeds a tower to `analyzeTower` for the v0.5 gap and
   overlap checks), `isAdvancedProgram`, `validatePlacementRows`,
   `placementScheduleRows`. `program_layers` hold tower label, type (incl.
-  `quota_share`), attachment, limit and basis; `layer_participations` hold each
+  `quota_share`), attachment and limit (per occurrence is assumed and stated
+  once on the Program tab; the v1.3 `basis` column was dropped in v1.4); `layer_participations` hold each
   insurer's written line, signed line, premium and lead flag. A simple layer is
   one participation signed at 100%; `saveTowerLayer` keeps that invariant and
   refuses to edit a multi-insurer layer.
@@ -271,8 +254,9 @@ before changing anything, and keep it current when the rules change.
   selects a group's layers. TIV comes from the linked policy's
   `insurable_value`.
 - **Coverage across towers adds shares; within a tower gaps and overlaps are
-  findings.** Bases are added as if they responded to the same loss and the
-  profile says so when they differ; never silently.
+  findings.** The segment table is the only coverage view (the strip was
+  removed); Placed % is red whenever it is not 100% and the unplaced dollars are
+  shown beside it.
 - **Deductible schedules** (`policy_deductibles`): the row with `is_default`
   mirrors `policies.deductible`. Every policy write calls
   `syncDefaultDeductible` (`src/server/deductibles/sync.ts`); editing the
@@ -285,19 +269,67 @@ before changing anything, and keep it current when the rules change.
   uses the rule matching the claim's peril and lets the option replace only the
   default amount; waiting-period and unknown-value claims are excluded with a
   flag, never counted as zero.
-- **Marketing and Strategy default policy**: fewest days to expiry with no
-  outcome yet (ties: the policy with submissions / options), remembered in the
-  URL.
-- The v1.3 demo cases (Pacific Northwest Terminals two-tower placement and
-  schedule, the other four accounts, retention unchanged) are checked in
+- **Strategy default policy**: fewest days to expiry with no outcome yet (ties:
+  the policy with options), remembered in the URL.
+- The v1.3/v1.4 demo cases (Pacific Northwest Terminals two-tower placement and
+  schedule, the ten-account retention set, boundary policies) are checked in
   `src/server/db/seed/__tests__/demoBookAdvanced.test.ts`.
+
+## Documents, certificates and findings rules (v1.4)
+
+- **Documents** (`documents` table) belong to an account, optionally a policy;
+  `doc_type` is proposal | submission | certificate | policy_document. Only
+  proposals carry `status`; only submissions carry `markets`. File rules
+  (`MAX_DOCUMENT_BYTES`, `ALLOWED_DOCUMENT_TYPES`, `checkDocumentFile`), the
+  policy-year label and `certificateReissueNeeded` live in
+  `src/lib/domain/documents.ts`. The upload action re-runs the same checks and
+  stores nothing on a field error.
+- **Blob is private.** `uploadDocumentBlob` always uses `access: "private"` and
+  a random suffix; files are read only through the download route, which
+  requires the `brokeros_workspace` cookie to match the workspace. Deleting a
+  document deletes its blob unless `is_seed` is true (seed files are shared
+  under the fixed `seed/<key>.pdf` pathname; `ensureSeedDocuments` heads before
+  it puts, so they are uploaded once). Anything that deletes accounts in bulk
+  (delete account, reset workspace, replace with the demo book, nightly reset)
+  calls `deleteUserBlobs` (`src/server/documents/cleanup.ts`) first, because
+  document rows cascade but blobs do not. `blobReady()` gates every Blob feature.
+- **Certificates are documents.** `generateCertificate` renders
+  `certificateContent` (pure, `src/lib/domain/certificates.ts`) with
+  `@react-pdf/renderer`, uploads the PDF and inserts a `certificate` row linked
+  to the policy. The issue date is the as-of date. Reissue needed = the policy
+  has a successor or expiry ≤ as-of; derived on read, never stored. The PDF is
+  Broker OS's own layout, never an industry form; the preview on screen uses the
+  same `certificateContent`.
+- **Findings are pure** (`src/lib/domain/strategy.ts`): `bandAnalysis`,
+  `priceFindings`, `limitAdequacy`, `automaticOptions`, `estimatePremium`,
+  `severityPercentile`, `modifiers`, `strategyFindings`. `buildStrategyView`
+  is the one place that assembles them. Wording: "candidate", "for discussion";
+  "recommended" only as "recommended for discussion"; the tab and report always
+  carry "Estimated premiums are derived from your loss history and this ratio;
+  they are not quotes." Tolerances and PLR live on `accounts`
+  (`tolerance_occurrence`, `tolerance_year`, `permissible_loss_ratio`, null =
+  defaults 0.5% / 1% of revenue / 0.65); accepted finding ids in
+  `accounts.accepted_findings`.
+- **Band rules:** the primary responds from the deductible (attachment =
+  deductible, limit = limit − deductible); in-band loss per year = Σ min(max(
+  incurred − attachment, 0), limit); working = any in-band loss or frequency
+  > 0.2/yr (`WORKING_BAND_FREQUENCY`); a catastrophe band never yields a
+  retention candidate. Estimated premium = current − increase in average
+  retained ÷ PLR, floored at 25% (`PREMIUM_FLOOR_SHARE`) and flagged.
+  Percentiles are nearest rank, rounded to $5,000 or $25,000 above $100,000.
+  `src/lib/domain/__tests__/findings.test.ts` pins the Harbourline, inverted
+  pricing and Maplewood figures; never edit an expected value to make it pass.
+- **Nightly reset.** `/api/cron/reset-demo` (Bearer `CRON_SECRET`, scheduled
+  in `vercel.json`) calls `resetDemoWorkspace` for workspaces with
+  `reset_nightly`; it re-uses the `seed/` blobs and never re-uploads.
 
 ## Commands
 
 `npm run dev` · `npm run build` · `npm run typecheck` · `npm run lint` ·
 `npm test` · `npm run db:generate` · `npm run db:migrate` · `npm run db:seed`
 (`SEED_AS_OF=YYYY-MM-DD` fixes the as-of date; `SEED_WORKSPACE_SLUG=…` seeds an
-existing empty workspace). Browser smoke tests: `scripts/e2e-renewals.cjs`, `scripts/e2e-dashboard.cjs`,
-`scripts/e2e-lossruns.cjs`, `scripts/e2e-program.cjs`, `scripts/e2e-marketing.cjs`,
-`scripts/e2e-strategy.cjs`, `scripts/e2e-advanced.cjs`
+existing empty workspace; `SEED_NIGHTLY_RESET=1` flags it for the cron reset;
+with `BLOB_READ_WRITE_TOKEN` the seed PDFs are uploaded once under `seed/`). Browser smoke tests: `scripts/e2e-renewals.cjs`, `scripts/e2e-dashboard.cjs`,
+`scripts/e2e-lossruns.cjs`, `scripts/e2e-program.cjs`,
+`scripts/e2e-strategy.cjs`, `scripts/e2e-advanced.cjs`, `scripts/e2e-documents.cjs`
 (see its header; Playwright is not a dependency).

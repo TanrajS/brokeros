@@ -33,9 +33,6 @@ import {
 import { formatCurrency, formatDate, formatRatioPercent } from "@/lib/format";
 import { forecastAssumptionsSchema, parseForward, parseLookback } from "@/lib/schemas/dashboard";
 import { loadDashboardInputs } from "@/server/dashboard/queries";
-import { listMarketSubmissions } from "@/server/marketing/queries";
-import { MarketLogTable } from "@/components/marketing/MarketLogTable";
-import { marketLog } from "@/lib/domain/marketing";
 import { requireWorkspace } from "../lib";
 
 export const metadata: Metadata = { title: "Dashboard" };
@@ -69,7 +66,6 @@ export default async function DashboardPage({ params, searchParams }: { params: 
   const months = expiringByMonth(policies, forward);
   const top = topExpiring(policies, accounts, forward, asOf, 10);
   const conc = concentration(policies, accounts, asOf);
-  const market = marketLog(await listMarketSubmissions(ws, producer ? accounts.map((a) => a.id) : undefined), lookback);
 
   // Forecast assumptions: URL values when valid, otherwise defaults.
   const defaultRetention = ret.value.premiumRetention ?? DEFAULT_RETENTION;
@@ -394,21 +390,6 @@ export default async function DashboardPage({ params, searchParams }: { params: 
             </div>
           </div>
         </div>
-      </section>
-
-      {/* ---------------- Market log ---------------- */}
-      <section aria-labelledby="market-heading" className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 id="market-heading" className="text-lg font-semibold">
-            Market log, {formatDate(lookback.start)} to {formatDate(lookback.end)}
-          </h2>
-          <Link href={`/w/${slug}/market-log?lookback=${query.lookback}`} className="text-sm underline-offset-4 hover:underline">
-            Open the market log
-          </Link>
-        </div>
-        <p className="text-xs text-muted-foreground">Per carrier, submissions sent in the lookback window. Hit ratio = quotes ÷ submissions; bind ratio = binds ÷ quotes.</p>
-        <MarketLogTable carriers={market.value.carriers} total={market.value.total} compact />
-        <ShowMath lines={market.math.steps.lines as string[]} />
       </section>
 
       {/* ---------------- Concentration ---------------- */}

@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { cn } from "cn";
 
 export interface AccountTab {
-  segment: "overview" | "loss-runs" | "program" | "marketing" | "strategy";
+  segment: "overview" | "loss-runs" | "program" | "documents" | "strategy";
   label: string;
   /** Count badge; omitted when there is nothing to count. */
   count?: number;

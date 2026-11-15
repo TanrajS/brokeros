@@ -18,8 +18,18 @@ import { commissionAmount, formatLimit } from "@/lib/domain/money";
 import { getRenewalStage } from "@/lib/domain/renewals";
 import { formatCurrency, formatDate, formatInteger, formatPercent } from "@/lib/format";
 import { getPolicyPageData } from "@/server/renewals/queries";
-import { loadPolicyExtras } from "@/server/program/queries";
-import { boundQuoteForPolicy } from "@/server/marketing/queries";
+import { layersFor, loadPolicyExtras, loadProgramLayers } from "@/server/program/queries";
+import { loadLossRunInputs } from "@/server/lossRuns/queries";
+import { listPolicyDocuments } from "@/server/documents/queries";
+import { blobReady } from "@/server/documents/blob";
+import { certificateInsurers, toCertificatePolicy } from "@/server/certificates/queries";
+import { CertificatesPanel } from "@/components/policy/CertificatesPanel";
+import { DocumentsFolder } from "@/components/documents/DocumentsFolder";
+import { ShowMath } from "@/components/dashboard/ShowMath";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { assignPolicyYear, incurred, policyPeriods, policyYearSummary } from "@/lib/domain/lossRuns";
+import { analyzeTower, layerSummary, towerInputsFrom } from "@/lib/domain/program";
+import { formatRatioPercent } from "@/lib/format";
 import { AdequacyPanel } from "@/components/program/AdequacyPanel";
 import { ParticipantsSection } from "@/components/program/ParticipantsSection";
 import { SublimitsSection } from "@/components/program/SublimitsSection";
@@ -37,18 +47,30 @@ export default async function PolicyPage({ params, searchParams }: { params: Par
   const data = await getPolicyPageData(ws, accountId, policyId);
   if (!data) notFound();
   const { account, policy, checklist, tasks, outcome, predecessor, successor, successorHasOutcome, accountPolicies } = data;
-  const [extras, bound, deductibleRows] = await Promise.all([loadPolicyExtras(ws.id, policy.id), boundQuoteForPolicy(ws.id, policy.id), listPolicyDeductibles(ws.id, policy.id)]);
-  const prefill = bound
-    ? {
-        carrier: bound.carrier,
-        premium: bound.quote.quotedPremium,
-        exposureAmount: bound.quote.exposureAmount,
-        deductible: bound.quote.deductible,
-        occurrenceLimit: bound.quote.occurrenceLimit,
-        aggregateLimit: bound.quote.aggregateLimit,
-        commissionRate: bound.quote.commissionRate,
-      }
-    : null;
+  const [extras, deductibleRows, losses, program, policyDocs, insurers] = await Promise.all([
+    loadPolicyExtras(ws.id, policy.id),
+    listPolicyDeductibles(ws.id, policy.id),
+    loadLossRunInputs(ws, account.id),
+    loadProgramLayers(ws.id, account.id),
+    listPolicyDocuments(ws, policy.id, accountPolicies),
+    certificateInsurers(ws.id, policy),
+  ]);
+  const prefill = null;
+  // v1.4: claims under this policy (by the term that contains their loss date) with the line's policy-year summary.
+  const periods = losses ? policyPeriods(losses.policies, policy.lineOfBusiness).value : [];
+  const policyClaims = losses ? losses.claims.filter((c) => c.lineOfBusiness === policy.lineOfBusiness && assignPolicyYear(c, periods).value?.policyId === policy.id) : [];
+  const lineSummary = losses ? policyYearSummary({ claims: losses.claims, policies: losses.policies, line: policy.lineOfBusiness, asOf: ws.asOfDate, adjustments: { trendRate: null, factors: null } }) : null;
+  const group = policy.lineOfBusiness === "General Liability" ? "gl" : policy.lineOfBusiness === "Commercial Auto" ? "auto" : policy.lineOfBusiness === "Property" ? "property" : null;
+  const groupLayers = group ? layersFor(program, group) : [];
+  const towerAnalysis = groupLayers.length ? analyzeTower(towerInputsFrom(groupLayers)) : null;
+  const superseded = new Set(accountPolicies.map((p) => p.previousPolicyId).filter((x): x is string => x !== null));
+  const otherInForce = accountPolicies.filter((p) => p.id !== policy.id && !superseded.has(p.id) && p.effectiveDate <= ws.asOfDate && ws.asOfDate < p.expiryDate && p.renewalStatus !== "lost" && p.renewalStatus !== "non_renewed");
+  const certificateRows = policyDocs
+    .filter((d) => d.docType === "certificate")
+    .map((d) => ({ id: d.id, title: d.title, policyYear: d.policyYear, status: d.status, markets: d.markets, policyLabel: d.policyLabel, fileName: d.fileName, sizeBytes: d.sizeBytes, uploadedAt: d.uploadedAt.toISOString(), isSeed: d.isSeed, reissueNeeded: d.reissueNeeded, reissueReason: d.reissueReason, notes: d.notes }));
+  const otherDocRows = policyDocs
+    .filter((d) => d.docType !== "certificate")
+    .map((d) => ({ id: d.id, title: d.title, policyYear: d.policyYear, status: d.status, markets: d.markets, policyLabel: d.policyLabel, fileName: d.fileName, sizeBytes: d.sizeBytes, uploadedAt: d.uploadedAt.toISOString(), isSeed: d.isSeed, reissueNeeded: false, reissueReason: null, notes: d.notes }));
 
   const days = daysBetween(ws.asOfDate, policy.expiryDate).value;
   const stage = getRenewalStage(days, policy.renewalStatus).value;
@@ -208,6 +230,165 @@ export default async function PolicyPage({ params, searchParams }: { params: Par
       />
 
       <DeductibleScheduleSection slug={slug} policyId={policy.id} policyDeductible={policy.deductible} rows={deductibleRows} />
+
+      <section aria-labelledby="policy-claims-heading" className="flex flex-col gap-3">
+        <h2 id="policy-claims-heading" className="text-lg font-semibold">
+          Claims under this policy
+          <span className="ml-2 text-sm font-normal text-muted-foreground">{policyClaims.length} in this term</span>
+        </h2>
+        {policyClaims.length === 0 ? (
+          <p className="rounded-lg border p-4 text-sm text-muted-foreground">No claims fall in this policy&apos;s term.</p>
+        ) : (
+          <div className="relative overflow-x-auto rounded-lg border">
+            <Table>
+              <caption className="sr-only">Claims whose loss date falls in this term</caption>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Claim</TableHead>
+                  <TableHead>Date of loss</TableHead>
+                  <TableHead>Peril</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead className="text-right">Paid ($)</TableHead>
+                  <TableHead className="text-right">Reserved ($)</TableHead>
+                  <TableHead className="text-right">Incurred ($)</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {policyClaims.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell className="font-medium">{c.claimNumber}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDate(c.dateOfLoss)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs">{c.peril || "All other perils"}</TableCell>
+                    <TableCell className="min-w-48 whitespace-normal">{c.description ?? <Missing what="Description" />}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatCurrency(c.paid)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatCurrency(c.reserved)}</TableCell>
+                    <TableCell className="text-right font-medium tabular-nums">{formatCurrency(incurred(c.paid, c.reserved).value)}</TableCell>
+                    <TableCell>{c.status === "open" ? "Open" : "Closed"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+        {lineSummary && lineSummary.value.rows.length > 0 ? (
+          <>
+            <h3 className="text-sm font-medium">{policy.lineOfBusiness} policy-year summary (raw)</h3>
+            <div className="relative overflow-x-auto rounded-lg border">
+              <Table>
+                <caption className="sr-only">Policy-year summary for the line</caption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Policy year</TableHead>
+                    <TableHead className="text-right">Claims</TableHead>
+                    <TableHead className="text-right">Open</TableHead>
+                    <TableHead className="text-right">Incurred ($)</TableHead>
+                    <TableHead className="text-right">Earned premium ($)</TableHead>
+                    <TableHead className="text-right">Loss ratio (%)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lineSummary.value.rows.map((r) => (
+                    <TableRow key={r.period.policyId} className={r.period.policyId === policy.id ? "bg-primary/5" : undefined}>
+                      <TableCell className="whitespace-nowrap">
+                        {r.label}
+                        {r.period.policyId === policy.id ? <span className="ml-1 text-xs text-muted-foreground">(this term)</span> : null}
+                        {r.current ? <span className="ml-1 text-xs text-muted-foreground">running</span> : null}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{r.claimCount}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.openCount}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatCurrency(r.incurred)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatCurrency(r.earnedPremium)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.lossRatio === null ? <Missing what="Loss ratio (no earned premium)" /> : formatRatioPercent(r.lossRatio)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <ShowMath lines={lineSummary.math.steps.lines as string[]} />
+          </>
+        ) : null}
+        <Link href={`${base}/loss-runs?line=${encodeURIComponent(policy.lineOfBusiness)}`} className="w-fit text-sm underline-offset-4 hover:underline">
+          Open the Loss Runs tab for {policy.lineOfBusiness}
+        </Link>
+      </section>
+
+      <section aria-labelledby="policy-program-heading" className="flex flex-col gap-3">
+        <h2 id="policy-program-heading" className="text-lg font-semibold">
+          Program layers in this line group
+        </h2>
+        {group === null ? (
+          <p className="rounded-lg border p-4 text-sm text-muted-foreground">{policy.lineOfBusiness} is not part of a program group (General Liability, Commercial Auto or Property).</p>
+        ) : groupLayers.length === 0 ? (
+          <p className="rounded-lg border p-4 text-sm text-muted-foreground">No layers recorded for this group yet.</p>
+        ) : (
+          <>
+            <div className="relative overflow-x-auto rounded-lg border">
+              <Table>
+                <caption className="sr-only">Program layers</caption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Tower</TableHead>
+                    <TableHead>Layer</TableHead>
+                    <TableHead>Insurers (signed line)</TableHead>
+                    <TableHead className="text-right">Attachment ($)</TableHead>
+                    <TableHead className="text-right">Limit ($)</TableHead>
+                    <TableHead className="text-right">Placed (%)</TableHead>
+                    <TableHead className="text-right">Premium ($)</TableHead>
+                    <TableHead className="text-right">Rate on line (%)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {groupLayers.map((l) => {
+                    const s = layerSummary(l).value;
+                    return (
+                      <TableRow key={l.id} className={l.policyId === policy.id ? "bg-primary/5" : undefined}>
+                        <TableCell>{l.towerLabel}</TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {s.label}
+                          {l.policyId === policy.id ? <span className="ml-1 text-xs text-muted-foreground">(this policy)</span> : null}
+                        </TableCell>
+                        <TableCell className="min-w-48 whitespace-normal text-xs">{l.participations.map((x) => `${x.insurer} ${x.signedLinePct}%`).join(" · ") || "Unplaced"}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatCurrency(l.attachment)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatCurrency(l.limit)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{(s.placedShare * 100).toFixed(1)}%</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatCurrency(s.layerPremium)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{s.rateOnLine === null ? "—" : `${(s.rateOnLine * 100).toFixed(4)}%`}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+            {towerAnalysis ? <ShowMath lines={towerAnalysis.math.steps.lines as string[]} /> : null}
+            <Link href={`${base}/program?group=${group}`} className="w-fit text-sm underline-offset-4 hover:underline">
+              Open the Program tab
+            </Link>
+          </>
+        )}
+      </section>
+
+      <CertificatesPanel
+        slug={slug}
+        accountId={account.id}
+        asOf={ws.asOfDate}
+        namedInsured={{ name: account.name, province: account.province, industry: account.industry }}
+        policy={toCertificatePolicy(policy)}
+        insurers={insurers}
+        otherPolicies={otherInForce.map(toCertificatePolicy)}
+        certificates={certificateRows}
+        blobReady={blobReady()}
+      />
+
+      {otherDocRows.length > 0 ? (
+        <section aria-labelledby="policy-docs-heading" className="flex flex-col gap-3">
+          <h2 id="policy-docs-heading" className="text-lg font-semibold">
+            Documents linked to this policy
+          </h2>
+          <DocumentsFolder slug={slug} accountId={account.id} folder="policy_document" rows={otherDocRows} policyYears={[]} insurers={[]} policies={[]} canUpload={false} />
+        </section>
+      ) : null}
+
       <SublimitsSection
         slug={slug}
         policyId={policy.id}

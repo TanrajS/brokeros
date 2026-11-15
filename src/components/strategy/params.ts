@@ -12,14 +12,16 @@ export interface StrategyQuery {
   trend: string;
   /** Five comma-separated development factors; present means development is on. */
   ldf: string;
+  /** "estimated" runs the replay on estimated premiums for every option; "" = manual where one exists. */
+  premiums: string;
 }
 
-export const EMPTY_STRATEGY_QUERY: StrategyQuery = { policy: "", years: "", current: "", trend: "", ldf: "" };
+export const EMPTY_STRATEGY_QUERY: StrategyQuery = { policy: "", years: "", current: "", trend: "", ldf: "", premiums: "" };
 
 export function strategyHref(slug: string, accountId: string, q: StrategyQuery, patch: Partial<StrategyQuery> = {}, page: "" | "/report" | "/report/export" = ""): string {
   const next = { ...q, ...patch };
   const params = new URLSearchParams();
-  for (const key of ["policy", "years", "current", "trend", "ldf"] as const) if (next[key]) params.set(key, next[key]);
+  for (const key of ["policy", "years", "current", "trend", "ldf", "premiums"] as const) if (next[key]) params.set(key, next[key]);
   const qs = params.toString();
   return `/w/${slug}/accounts/${accountId}/strategy${page}${qs ? `?${qs}` : ""}`;
 }
@@ -28,7 +30,7 @@ type SP = Record<string, string | string[] | undefined>;
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? (v[0] ?? "") : (v ?? "")).trim();
 
 export function parseStrategyQuery(sp: SP): StrategyQuery {
-  return { policy: first(sp.policy), years: first(sp.years), current: first(sp.current) === "0" ? "0" : "", trend: first(sp.trend), ldf: first(sp.ldf) };
+  return { policy: first(sp.policy), years: first(sp.years), current: first(sp.current) === "0" ? "0" : "", trend: first(sp.trend), ldf: first(sp.ldf), premiums: first(sp.premiums) === "estimated" ? "estimated" : "" };
 }
 
 /** URL → form input → validated settings. Invalid URL values fall back to the defaults and say so. */
@@ -52,9 +54,10 @@ export function settingsFromQuery(q: StrategyQuery): { input: StrategySettingsIn
 }
 
 /** Validated settings → URL parameters (only non-default values). */
-export function queryFromSettings(v: StrategySettingsValues, policy: string): StrategyQuery {
+export function queryFromSettings(v: StrategySettingsValues, policy: string, premiums = ""): StrategyQuery {
   return {
     policy,
+    premiums,
     years: v.years === 5 ? "" : String(v.years),
     current: v.includeCurrent ? "" : "0",
     trend: v.trendOn ? String(v.trend) : "",

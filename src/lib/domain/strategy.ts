@@ -10,6 +10,8 @@
  */
 import type { ClaimStatus, LineOfBusiness } from "@/lib/constants";
 import { DEFAULT_PERIL, deductibleForClaim, describeRule, flatRule, matchRule, type DeductibleRule } from "./deductibles";
+import { layerSummary, towerLabels, type ProgramLayerInput } from "./program";
+import { getRateMetrics, type RateTerm } from "./renewals";
 import {
   assignPolicyYear,
   developmentAge,
@@ -570,8 +572,6 @@ export interface Consideration {
 
 export interface ConsiderationInputs {
   years: ReplayYear[];
-  /** Contract requirements that apply to the analysed line, as short labels. */
-  contractRequirements: string[];
   revenue: number | null;
 }
 
@@ -614,17 +614,11 @@ export function considerations(i: ConsiderationInputs): Calc<Consideration[]> {
       favoursLower: "Open reserves can develop upward, pushing more of each claim across the deductible than the replay counts.",
       favoursHigher: "Reserves that close below their estimate reduce what was retained.",
     },
-    {
-      topic: "Contract requirements",
-      observation: i.contractRequirements.length ? `${i.contractRequirements.length} contract requirement${i.contractRequirements.length === 1 ? " applies" : "s apply"} to this line: ${i.contractRequirements.join("; ")}.` : "No contract requirements are recorded for this line.",
-      favoursLower: "Some contracts cap the deductible a counterparty will accept; check each one before raising retention.",
-      favoursHigher: "Where no contract constrains the deductible, the choice is the client's alone.",
-    },
   ];
   return {
     value: items,
     math: {
-      inputs: { years: i.years.map((y) => y.label), contractRequirements: i.contractRequirements, revenue: i.revenue },
+      inputs: { years: i.years.map((y) => y.label), revenue: i.revenue },
       formula: "each topic states the account's own figure, then what favours a lower and a higher retention; no weighting, no score",
       steps: { lines: items.map((c) => `${c.topic}: ${c.observation}`) },
     },
@@ -642,13 +636,17 @@ export interface AssumptionInputs {
   yearsUsed: { label: string; current: boolean }[];
   omittedYears: { label: string; reason: string }[];
   prospectiveYear: number | null;
-  options: { label: string; aggregateCap: number | null; linkedToQuote: boolean }[];
+  /** `source` says where each option's premium came from: entered by hand (manual) or estimated by the findings engine. */
+  options: { label: string; aggregateCap: number | null; source: "manual" | "estimated" }[];
   /** Items the report could not fill, e.g. "Annual revenue not entered". */
   missing: string[];
   /** Lines counted at zero retained in TCOR because they have no loss runs. */
   linesWithoutLossRuns: string[];
   /** The policy's non-default deductible rules in force, described (v1.3). */
   scheduleRules?: string[];
+  /** v1.4: the tolerances and permissible loss ratio behind the findings, and which premiums the replay used. */
+  tolerances?: ToleranceSettings | null;
+  premiumSource?: "manual" | "estimated";
 }
 
 /** The report's Assumptions and limitations, generated from the settings actually used. */
@@ -679,8 +677,15 @@ export function assumptionsAndLimitations(i: AssumptionInputs): Calc<string[]> {
   if (i.scheduleRules && i.scheduleRules.length) {
     lines.push(`Deductible schedule in force: ${i.scheduleRules.join("; ")}. Each option replaces only the all-other-perils deductible; claims whose peril matches a schedule rule keep that rule's deductible.`);
   }
-  const unlinked = i.options.filter((o) => !o.linkedToQuote);
-  if (unlinked.length) lines.push(`Premiums for ${unlinked.map((o) => o.label).join(", ")} were entered by hand and are not tied to a carrier quote.`);
+  const manual = i.options.filter((o) => o.source === "manual");
+  if (manual.length) lines.push(`Premiums for ${manual.map((o) => o.label).join(", ")} were entered by hand and are not quotes.`);
+  const estimated = i.options.filter((o) => o.source === "estimated");
+  if (estimated.length) lines.push(`Premiums for ${estimated.map((o) => o.label).join(", ")} are estimated from the loss history and the permissible loss ratio; they are not quotes.`);
+  if (i.tolerances) {
+    lines.push(`Risk tolerance used for the findings: ${usd(i.tolerances.perOccurrence)} per occurrence and ${usd(i.tolerances.perYear)} per policy year; permissible loss ratio ${r4(i.tolerances.permissibleLossRatio)}.`);
+    lines.push("Estimated premiums are derived from the loss history and this ratio; they are not quotes. Findings are heuristics on historical losses and the tolerances above, for discussion, not decisions.");
+  }
+  if (i.premiumSource) lines.push(i.premiumSource === "estimated" ? "The replay used estimated premiums for every option." : "The replay used premiums entered by hand where one exists and estimated premiums elsewhere.");
   if (i.linesWithoutLossRuns.length) lines.push(`Total cost of risk counts expected retained losses as zero for ${i.linesWithoutLossRuns.join(", ")} because no claims are recorded for ${i.linesWithoutLossRuns.length === 1 ? "that line" : "those lines"}.`);
   for (const m of i.missing) lines.push(`${m}.`);
   lines.push(
@@ -693,6 +698,508 @@ export function assumptionsAndLimitations(i: AssumptionInputs): Calc<string[]> {
       inputs: { line: i.line, asOf: i.asOf, settings: i.settings, yearsUsed: i.yearsUsed, omittedYears: i.omittedYears, options: i.options, missing: i.missing, linesWithoutLossRuns: i.linesWithoutLossRuns },
       formula: "one sentence per setting actually in use, plus the method's limits",
       steps: { lines },
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Automatic findings (v1.4)                                           */
+/* ------------------------------------------------------------------ */
+
+export interface ToleranceSettings {
+  /** Most the client would retain on one occurrence, in dollars. */
+  perOccurrence: number;
+  /** Most the client would retain in one policy year, in dollars. */
+  perYear: number;
+  /** Share of premium expected to pay losses; divides retained-loss changes into premium credits. */
+  permissibleLossRatio: number;
+}
+
+export const DEFAULT_PERMISSIBLE_LOSS_RATIO = 0.65;
+export const DEFAULT_TOLERANCE_OCCURRENCE_SHARE = 0.005;
+export const DEFAULT_TOLERANCE_YEAR_SHARE = 0.01;
+/** A band is "working" when its history shows losses, or when losses reach it more often than this per year. */
+export const WORKING_BAND_FREQUENCY = 0.2;
+/** Estimated premiums never fall below this share of the current premium. */
+export const PREMIUM_FLOOR_SHARE = 0.25;
+/** A participation priced this far above its layer's other lines is flagged. */
+export const LINE_PRICE_THRESHOLD = 0.25;
+/** A renewal rate change this many points above the exposure change is flagged. */
+export const RATE_CHANGE_THRESHOLD = 0.1;
+/** A program top this far above the TIV is flagged as excess limit. */
+export const EXCESS_LIMIT_SHARE = 0.1;
+
+/** Default tolerances: 0.5% of revenue per occurrence, 1% per policy year; null without a revenue figure. */
+export function defaultTolerances(revenue: number | null): Calc<{ perOccurrence: number | null; perYear: number | null }> {
+  const perOccurrence = revenue !== null && revenue > 0 ? round2(revenue * DEFAULT_TOLERANCE_OCCURRENCE_SHARE) : null;
+  const perYear = revenue !== null && revenue > 0 ? round2(revenue * DEFAULT_TOLERANCE_YEAR_SHARE) : null;
+  return {
+    value: { perOccurrence, perYear },
+    math: {
+      inputs: { revenue },
+      formula: "per occurrence = 0.5% of annual revenue; per policy year = 1% of annual revenue",
+      steps: { lines: revenue !== null && revenue > 0 ? [`${usd(revenue)} × 0.5% = ${usd(perOccurrence!)} per occurrence; × 1% = ${usd(perYear!)} per year`] : ["Annual revenue not entered: no default tolerances"] },
+    },
+  };
+}
+
+export type FindingKind = "self_insure" | "raise_deductible" | "catastrophe_price" | "inverted_pricing" | "line_above_layer" | "rate_above_exposure" | "underinsured" | "excess_limit";
+
+export interface Finding {
+  /** Stable key so an acceptance can be stored, e.g. "self_insure:<layerId>". */
+  id: string;
+  kind: FindingKind;
+  title: string;
+  /** Numbers that support the finding, one per line. */
+  evidence: string[];
+  /** Dollars per year the finding is about (saving, excess premium, unplaced limit); null when it is a comment. */
+  estimatedImpact: number | null;
+  caveats: string[];
+  /** One sentence; "candidate" wording, never a decision. */
+  suggestedAction: string;
+  math: string[];
+}
+
+export interface BandResult {
+  id: string;
+  towerLabel: string;
+  label: string;
+  /** Dollars from which the band responds and how much it can pay per occurrence. */
+  attachment: number;
+  limit: number;
+  /** Premium paid for the band (null for the deductible band, which the client already retains). */
+  premium: number | null;
+  perYear: { label: string; inBand: number; count: number }[];
+  averageInBand: number;
+  worstYear: { label: string; inBand: number } | null;
+  inBandClaims: number;
+  /** Claims reaching the band per year of history. */
+  frequency: number;
+  classification: "working" | "catastrophe";
+  isDeductibleBand: boolean;
+}
+
+export interface BandAnalysisInput {
+  years: ReplayYear[];
+  layers: ProgramLayerInput[];
+  defaultDeductible: number | null;
+  tolerances: ToleranceSettings;
+}
+
+/**
+ * Bottom-up band analysis. For each layer (and the deductible band below the
+ * primary): in-band losses per year = Σ min(max(incurred − attachment, 0), limit).
+ * A primary attaching at zero responds above the default deductible, so its band
+ * runs from the deductible to its limit.
+ */
+export function bandAnalysis(i: BandAnalysisInput): Calc<{ bands: BandResult[]; findings: Finding[] }> {
+  const n = i.years.length;
+  const lines: string[] = [];
+  const bands: BandResult[] = [];
+  const findings: Finding[] = [];
+  const ded = i.defaultDeductible ?? 0;
+  const inBandOf = (attachment: number, limit: number) =>
+    i.years.map((y) => {
+      const parts = y.claims.map((c) => Math.min(Math.max(c.adjustedIncurred - attachment, 0), limit));
+      return { label: y.label, inBand: sumMoney(parts), count: parts.filter((p) => p > 0).length };
+    });
+  const describe = (b: Omit<BandResult, "classification">) => {
+    const classification: BandResult["classification"] = b.inBandClaims > 0 || b.frequency > WORKING_BAND_FREQUENCY ? "working" : "catastrophe";
+    lines.push(
+      `${b.towerLabel} ${b.label} (${usd(b.attachment)} to ${usd(b.attachment + b.limit)}): in-band by year ${b.perYear.map((y) => `${y.label} ${usd(y.inBand)}`).join(", ") || "none"}; average ${usd2(b.averageInBand)}; worst ${b.worstYear ? `${b.worstYear.label} ${usd(b.worstYear.inBand)}` : "—"}; ${b.inBandClaims} claims reached it (${r4(b.frequency)} a year) → ${classification}`,
+    );
+    return { ...b, classification };
+  };
+  const summarize = (id: string, towerLabel: string, label: string, attachment: number, limit: number, premium: number | null, isDeductibleBand: boolean): BandResult => {
+    const perYear = inBandOf(attachment, limit);
+    const averageInBand = n ? round2(sumMoney(perYear.map((y) => y.inBand)) / n) : 0;
+    const worst = perYear.reduce<{ label: string; inBand: number } | null>((w, y) => (y.inBand > 0 && (w === null || y.inBand > w.inBand) ? { label: y.label, inBand: y.inBand } : w), null);
+    const inBandClaims = perYear.reduce((s, y) => s + y.count, 0);
+    return describe({ id, towerLabel, label, attachment, limit, premium, perYear, averageInBand, worstYear: worst, inBandClaims, frequency: n ? inBandClaims / n : 0, isDeductibleBand });
+  };
+
+  if (i.defaultDeductible !== null && i.defaultDeductible > 0) bands.push(summarize("deductible", "Retained", `${compact(i.defaultDeductible)} deductible`, 0, i.defaultDeductible, null, true));
+  for (const l of i.layers) {
+    const s = layerSummary(l).value;
+    const attachment = l.attachment === 0 ? ded : l.attachment;
+    const limit = l.attachment === 0 ? Math.max(0, l.limit - ded) : l.limit;
+    bands.push(summarize(l.id, l.towerLabel, s.label, attachment, limit, s.layerPremium, false));
+  }
+
+  const t = i.tolerances;
+  const deductibleBand = bands.find((b) => b.isDeductibleBand) ?? null;
+  for (const b of bands) {
+    if (b.isDeductibleBand || b.premium === null) continue;
+    const expectedAtPlr = round2(b.averageInBand / t.permissibleLossRatio);
+    const priceHigh = b.premium > expectedAtPlr;
+    const findingMath = [
+      `Average in-band losses ${usd2(b.averageInBand)} ÷ permissible loss ratio ${r4(t.permissibleLossRatio)} = ${usd2(expectedAtPlr)} premium the losses alone would support; layer premium ${usd(b.premium)}`,
+      `Band limit ${usd(b.limit)} vs per-occurrence tolerance ${usd(t.perOccurrence)}; worst year in band ${b.worstYear ? usd(b.worstYear.inBand) : "$0"} vs annual tolerance ${usd(t.perYear)}`,
+    ];
+    if (b.classification === "catastrophe") {
+      const multi = i.layers.find((l) => l.id === b.id)?.participations.length ?? 0;
+      findings.push({
+        id: `catastrophe_price:${b.id}`,
+        kind: "catastrophe_price",
+        title: `${b.towerLabel} ${b.label}: catastrophe band, price only`,
+        evidence: [`No in-band losses in ${n} year${n === 1 ? "" : "s"}`, `Premium ${usd(b.premium)} for ${usd(b.limit)} of limit (rate on line ${b.limit > 0 ? pctShare(b.premium / b.limit) : "—"})`],
+        estimatedImpact: null,
+        caveats: ["A band with no history is not a band without risk; the replay cannot see a loss larger than any that has happened.", ...(multi > 1 ? ["Several insurers share this layer: a smaller signed share is an alternative to dropping it."] : [])],
+        suggestedAction: multi > 1 ? "Candidate for a price discussion only; if cost must fall, reduce the signed share rather than drop the layer." : "Candidate for a price discussion only; retention is not proposed for a band with no loss history.",
+        math: findingMath,
+      });
+      continue;
+    }
+    const withinOccurrence = b.limit <= t.perOccurrence;
+    const withinYear = (b.worstYear?.inBand ?? 0) <= t.perYear;
+    if (withinOccurrence && withinYear && priceHigh) {
+      const saving = round2(b.premium - b.averageInBand);
+      const worstCost = round2((b.worstYear?.inBand ?? 0) - b.premium);
+      findings.push({
+        id: `self_insure:${b.id}`,
+        kind: "self_insure",
+        title: `${b.towerLabel} ${b.label}: candidate to self-insure this band`,
+        evidence: [
+          `Layer premium ${usd(b.premium)} against average in-band losses ${usd2(b.averageInBand)} a year`,
+          `Worst year ${b.worstYear ? `${b.worstYear.label} ${usd(b.worstYear.inBand)}` : "$0"} within the ${usd(t.perYear)} annual tolerance; band limit ${usd(b.limit)} within the ${usd(t.perOccurrence)} per-occurrence tolerance`,
+          `Break-even: in-band losses of ${usd(b.premium)} in a year cost the same as the premium`,
+        ],
+        estimatedImpact: saving,
+        caveats: ["Average saving from a historical replay; a year worse than the history would cost more.", worstCost > 0 ? `In ${b.worstYear!.label} self-insuring would have cost ${usd(worstCost)} more than the premium.` : "Even the worst year in the history stayed below the premium."],
+        suggestedAction: `Candidate to self-insure the ${b.label} band: expected saving ${usd(saving)} a year, break-even at ${usd(b.premium)} of in-band losses.`,
+        math: [...findingMath, `Saving = ${usd(b.premium)} − ${usd2(b.averageInBand)} = ${usd2(saving)}; worst-year cost = ${usd(b.worstYear?.inBand ?? 0)} − ${usd(b.premium)} = ${usd2(worstCost)}`],
+      });
+      continue;
+    }
+    if (!withinOccurrence && priceHigh && b.attachment === ded && t.perOccurrence > ded) {
+      const belowTolerance = inBandOf(ded, t.perOccurrence - ded);
+      const avgBelow = n ? round2(sumMoney(belowTolerance.map((y) => y.inBand)) / n) : 0;
+      const credit = Math.round(avgBelow / t.permissibleLossRatio);
+      findings.push({
+        id: `raise_deductible:${b.id}`,
+        kind: "raise_deductible",
+        title: `${b.towerLabel} ${b.label}: candidate to raise the deductible to ${usd(t.perOccurrence)}`,
+        evidence: [
+          `Band limit ${usd(b.limit)} exceeds the ${usd(t.perOccurrence)} per-occurrence tolerance, so self-insuring the whole band is not proposed`,
+          `Losses between ${usd(ded)} and ${usd(t.perOccurrence)} averaged ${usd(Math.round(avgBelow))} a year; at a ${r4(t.permissibleLossRatio)} loss ratio that supports an estimated credit of ${usd(Math.round(credit))}`,
+          `Layer premium ${usd(b.premium)} against ${usd(Math.round(expectedAtPlr))} the in-band losses alone would support`,
+        ],
+        estimatedImpact: credit,
+        caveats: ["The credit is an estimate from loss history and the permissible loss ratio, not a quote.", "Check the worst-year test on the generated option against the annual tolerance."],
+        suggestedAction: `Candidate to raise the deductible to ${usd(t.perOccurrence)}; the option is generated below with its estimated premium.`,
+        math: [...findingMath, `Average losses ${usd(ded)} to ${usd(t.perOccurrence)} = (${belowTolerance.map((y) => usd(y.inBand)).join(" + ") || "$0"}) ÷ ${n} = ${usd2(avgBelow)}; ÷ ${r4(t.permissibleLossRatio)} = ${usd2(credit)}`],
+      });
+    }
+  }
+  if (deductibleBand) lines.push(`The ${deductibleBand.label} band is what the client retains today: average ${usd2(deductibleBand.averageInBand)} a year.`);
+  return {
+    value: { bands, findings },
+    math: {
+      inputs: { years: i.years.map((y) => y.label), layers: i.layers.length, defaultDeductible: i.defaultDeductible, tolerances: i.tolerances },
+      formula: "in-band losses = Σ min(max(incurred − attachment, 0), limit); working = any in-band loss or frequency > 0.2 a year; self-insure when limit ≤ per-occurrence tolerance, worst year ≤ annual tolerance and premium > average in-band ÷ permissible loss ratio",
+      steps: { lines },
+    },
+  };
+}
+
+const compact = (n: number) => (n >= 1_000_000 ? `$${+(n / 1_000_000).toFixed(2)}M` : n >= 1_000 ? `$${+(n / 1_000).toFixed(1)}K` : `$${n}`);
+const pctShare = (ratio: number, d = 2) => `${group(ratio * 100, d)}%`;
+
+export interface PriceFindingsInput {
+  layers: ProgramLayerInput[];
+  /** The latest renewal of the analysed line: expiring and renewal terms, when both exist. */
+  latestRenewal?: { expiring: RateTerm; renewal: RateTerm } | null;
+}
+
+/**
+ * Price findings: inverted pricing (a layer's rate on line at or above the one
+ * below it in the same tower), a participation priced 25% or more above the
+ * premium-weighted rate on line of the other lines on its layer, and a renewal
+ * whose rate change exceeded its exposure change by ten points or more.
+ */
+export function priceFindings(i: PriceFindingsInput): Calc<Finding[]> {
+  const findings: Finding[] = [];
+  const lines: string[] = [];
+  for (const tower of towerLabels(i.layers)) {
+    const sorted = i.layers
+      .filter((l) => l.towerLabel === tower)
+      .map((l) => layerSummary(l).value)
+      .sort((a, b) => a.layer.attachment - b.layer.attachment);
+    for (let k = 1; k < sorted.length; k += 1) {
+      const below = sorted[k - 1];
+      const layer = sorted[k];
+      if (layer.rateOnLine === null || below.rateOnLine === null) continue;
+      lines.push(`${tower}: ${layer.label} ${pctShare(layer.rateOnLine, 4)} on line vs ${below.label} ${pctShare(below.rateOnLine, 4)} below`);
+      if (layer.rateOnLine >= below.rateOnLine) {
+        const atBelowRate = Math.round(below.rateOnLine * layer.placedLimit);
+        const difference = Math.round(layer.layerPremium - atBelowRate);
+        findings.push({
+          id: `inverted_pricing:${layer.layer.id}`,
+          kind: "inverted_pricing",
+          title: `${tower} ${layer.label}: priced at or above the layer below`,
+          evidence: [`Rate on line ${pctShare(layer.rateOnLine, 4)} vs ${pctShare(below.rateOnLine, 4)} for ${below.label}`, `Premium ${usd(layer.layerPremium)}; at the lower layer's rate it would be ${usd(atBelowRate)}, a difference of ${usd(difference)}`],
+          estimatedImpact: difference,
+          caveats: ["Higher layers normally cost less per dollar of limit; a different basis, a loss-affected layer or a thin market can explain an inversion."],
+          suggestedAction: `Candidate for a price discussion: ${usd(difference)} above the layer below's rate on line, recommended for discussion with the market.`,
+          math: [`${usd(layer.layerPremium)} ÷ ${usd(layer.placedLimit)} = ${r4(layer.rateOnLine)} ≥ ${usd(below.layerPremium)} ÷ ${usd(below.placedLimit)} = ${r4(below.rateOnLine)}`, `At the lower rate: ${r4(below.rateOnLine)} × ${usd(layer.placedLimit)} = ${usd(atBelowRate)}; difference ${usd(layer.layerPremium)} − ${usd(atBelowRate)} = ${usd(difference)}`],
+        });
+      }
+    }
+  }
+  for (const l of i.layers) {
+    const s = layerSummary(l).value;
+    if (s.participations.length < 2) continue;
+    for (const p of s.participations) {
+      if (p.rateOnLine === null) continue;
+      const others = s.participations.filter((o) => o.id !== p.id);
+      const otherPremium = sumMoney(others.map((o) => o.premium));
+      const otherExposed = sumMoney(others.map((o) => o.exposedLimit));
+      if (otherExposed <= 0) continue;
+      const average = otherPremium / otherExposed;
+      const above = average > 0 ? p.rateOnLine / average - 1 : null;
+      lines.push(`${l.towerLabel} ${s.label}, ${p.insurer}: ${pctShare(p.rateOnLine, 4)} vs other lines ${usd(otherPremium)} ÷ ${usd(otherExposed)} = ${pctShare(average, 4)}${above !== null ? ` (${group(above * 100, 0)}% ${above >= 0 ? "above" : "below"})` : ""}`);
+      if (above !== null && above >= LINE_PRICE_THRESHOLD) {
+        const atAverage = Math.round(average * p.exposedLimit);
+        const difference = Math.round(p.premium - atAverage);
+        findings.push({
+          id: `line_above_layer:${p.id}`,
+          kind: "line_above_layer",
+          title: `${l.towerLabel} ${s.label}: ${p.insurer}'s line priced above the layer`,
+          evidence: [`${p.insurer} ${pctShare(p.rateOnLine, 4)} on line vs ${pctShare(average, 4)} for the other ${others.length} line${others.length === 1 ? "" : "s"} (${group(above * 100, 0)}% above)`, `Premium ${usd(p.premium)} for ${usd(p.exposedLimit)} exposed; at the layer average it would be ${usd(atAverage)}, a difference of ${usd(difference)}`],
+          estimatedImpact: difference,
+          caveats: ["A lead's line often carries the engineering and claims handling; compare terms as well as rate."],
+          suggestedAction: `Candidate for a line-price discussion with ${p.insurer}: ${usd(difference)} above the layer's other lines, recommended for discussion.`,
+          math: [`Other lines: ${usd(otherPremium)} ÷ ${usd(otherExposed)} = ${r4(average)}; ${p.insurer}: ${usd(p.premium)} ÷ ${usd(p.exposedLimit)} = ${r4(p.rateOnLine)}; ${r4(p.rateOnLine)} ÷ ${r4(average)} − 1 = ${r4(above)}`, `At the average: ${r4(average)} × ${usd(p.exposedLimit)} = ${usd(atAverage)}; difference ${usd(difference)}`],
+        });
+      }
+    }
+  }
+  if (i.latestRenewal) {
+    const m = getRateMetrics(i.latestRenewal.expiring, i.latestRenewal.renewal).value;
+    if (m.rateChange !== null && m.exposureChange !== null) {
+      const gap = m.rateChange - m.exposureChange;
+      lines.push(`Latest renewal: rate change ${r4(m.rateChange)} vs exposure change ${r4(m.exposureChange)} (gap ${r4(gap)})`);
+      if (gap >= RATE_CHANGE_THRESHOLD) {
+        const exposureAdjusted = Math.round(i.latestRenewal.expiring.premium * (1 + m.exposureChange));
+        const difference = Math.round(i.latestRenewal.renewal.premium - exposureAdjusted);
+        findings.push({
+          id: "rate_above_exposure:latest",
+          kind: "rate_above_exposure",
+          title: "Latest renewal: rate rose faster than exposure",
+          evidence: [`Rate change ${pctShare(m.rateChange, 1)} vs exposure change ${pctShare(m.exposureChange, 1)}, a gap of ${group(gap * 100, 1)} points`, `Premium ${usd(i.latestRenewal.renewal.premium)} against ${usd(exposureAdjusted)} had the prior term's rate simply followed exposure: ${usd(difference)} more`],
+          estimatedImpact: difference,
+          caveats: ["Rate movements can reflect market cycle or loss experience rather than this account alone."],
+          suggestedAction: `Candidate to question the ${group(gap * 100, 1)}-point rate increase above exposure growth, ${usd(difference)} on this term, recommended for discussion.`,
+          math: [`${m.sentence}`, `Exposure-adjusted prior premium = ${usd(i.latestRenewal.expiring.premium)} × (1 + ${r4(m.exposureChange)}) = ${usd(exposureAdjusted)}; difference ${usd(i.latestRenewal.renewal.premium)} − ${usd(exposureAdjusted)} = ${usd(difference)}`],
+        });
+      }
+    }
+  }
+  return {
+    value: findings,
+    math: { inputs: { layers: i.layers.length, latestRenewal: !!i.latestRenewal }, formula: "inverted = rate on line ≥ layer below; line above layer = rate on line ≥ 1.25 × Σ other premiums ÷ Σ other exposed limits; rate change − exposure change ≥ 10 points", steps: { lines } },
+  };
+}
+
+/** Property limit adequacy: program top against the TIV. */
+export function limitAdequacy(layers: ProgramLayerInput[], tiv: number | null): Calc<Finding | null> {
+  if (tiv === null || tiv <= 0 || layers.length === 0) {
+    return { value: null, math: { inputs: { layers: layers.length, tiv }, formula: "program top vs TIV", steps: { lines: ["No TIV or no layers: nothing to compare"] } } };
+  }
+  const summaries = layers.map((l) => layerSummary(l).value);
+  const top = Math.max(...summaries.map((s) => s.exhaustion));
+  const topLayer = summaries.filter((s) => s.exhaustion === top).sort((a, b) => (b.rateOnLine ?? 0) - (a.rateOnLine ?? 0))[0];
+  const lines = [`Program top ${usd(top)} vs TIV ${usd(tiv)}`];
+  let value: Finding | null = null;
+  if (top < tiv) {
+    const gap = round2(tiv - top);
+    value = {
+      id: "underinsured:program",
+      kind: "underinsured",
+      title: `Underinsured by ${usd(gap)} against TIV`,
+      evidence: [`Program top ${usd(top)} against a total insured value of ${usd(tiv)}`],
+      estimatedImpact: gap,
+      caveats: ["A deliberate limit below TIV (a loss limit) may be intended; confirm the basis of the TIV."],
+      suggestedAction: `Candidate to extend the program by ${usd(gap)} to reach the TIV, recommended for discussion.`,
+      math: [`${usd(tiv)} − ${usd(top)} = ${usd(gap)}`],
+    };
+  } else if (top > tiv * (1 + EXCESS_LIMIT_SHARE)) {
+    const excess = round2(top - tiv);
+    const rate = topLayer?.rateOnLine ?? 0;
+    const premiumOnExcess = Math.round(excess * rate * (topLayer?.placedShare ?? 1));
+    value = {
+      id: "excess_limit:program",
+      kind: "excess_limit",
+      title: `Limit exceeds TIV by ${usd(excess)}`,
+      evidence: [`Program top ${usd(top)} is ${group((top / tiv - 1) * 100, 1)}% above the ${usd(tiv)} TIV`, `Premium on the excess portion is about ${usd(premiumOnExcess)} at the top layer's ${pctShare(rate, 4)} rate on line`],
+      estimatedImpact: premiumOnExcess,
+      caveats: ["Limits above TIV can be deliberate (debris removal, inflation guard, business interruption)."],
+      suggestedAction: `Candidate to review ${usd(excess)} of limit above the TIV, worth about ${usd(premiumOnExcess)} of premium, recommended for discussion.`,
+      math: [`${usd(top)} − ${usd(tiv)} = ${usd(excess)}; × ${r4(rate)} × placed share ${r4(topLayer?.placedShare ?? 1)} = ${usd(premiumOnExcess)}`],
+    };
+  } else lines.push("Within 10% of the TIV: no finding");
+  if (value) lines.push(...value.math);
+  return { value, math: { inputs: { layers: layers.length, tiv }, formula: "below TIV → underinsured by the gap; above TIV by more than 10% → excess limit priced at the top layer's rate on line", steps: { lines } } };
+}
+
+export interface EstimatedPremium {
+  premium: number;
+  credit: number;
+  increaseInRetained: number;
+  floored: boolean;
+}
+
+/** Estimated premium = current premium − (increase in average retained vs the current deductible) ÷ permissible loss ratio, floored at 25% of the current premium. */
+export function estimatePremium(currentPremium: number, increaseInRetained: number, permissibleLossRatio: number): Calc<EstimatedPremium> {
+  if (!Number.isFinite(permissibleLossRatio) || permissibleLossRatio <= 0 || permissibleLossRatio > 1) throw new Error(`Expected a permissible loss ratio between 0 and 1, received ${permissibleLossRatio}`);
+  const credit = Math.round(increaseInRetained / permissibleLossRatio);
+  const raw = round2(currentPremium - credit);
+  const floor = round2(currentPremium * PREMIUM_FLOOR_SHARE);
+  const floored = raw < floor;
+  const premium = floored ? floor : raw;
+  return {
+    value: { premium, credit, increaseInRetained, floored },
+    math: {
+      inputs: { currentPremium, increaseInRetained, permissibleLossRatio },
+      formula: "credit = increase in average retained ÷ permissible loss ratio; estimated premium = current premium − credit, floored at 25% of the current premium",
+      steps: { lines: [`${usd2(increaseInRetained)} ÷ ${r4(permissibleLossRatio)} = ${usd(credit)} credit; ${usd(currentPremium)} − ${usd(credit)} = ${usd(raw)}${floored ? ` → floored at 25% = ${usd(floor)}` : ""}`] },
+    },
+  };
+}
+
+/** Nearest-rank percentile of claim severities, rounded to the nearest $5,000 (nearest $25,000 above $100,000). */
+export function severityPercentile(severities: number[], percentile: number): Calc<{ raw: number | null; rounded: number | null }> {
+  const sorted = [...severities].filter((x) => Number.isFinite(x) && x > 0).sort((a, b) => a - b);
+  if (sorted.length === 0) return { value: { raw: null, rounded: null }, math: { inputs: { claims: 0, percentile }, formula: "nearest rank", steps: { lines: ["No claims"] } } };
+  const rank = Math.max(1, Math.ceil(percentile * sorted.length));
+  const raw = sorted[rank - 1];
+  const step = raw > 100_000 ? 25_000 : 5_000;
+  const rounded = Math.max(step, Math.round(raw / step) * step);
+  return {
+    value: { raw, rounded },
+    math: { inputs: { claims: sorted.length, percentile }, formula: "rank = ⌈p × n⌉; value rounded to the nearest $5,000 ($25,000 above $100,000)", steps: { lines: [`p${Math.round(percentile * 100)}: rank ${rank} of ${sorted.length} = ${usd(raw)} → ${usd(rounded)}`] } },
+  };
+}
+
+export interface AutomaticOption {
+  deductible: number;
+  /** Where the deductible came from. */
+  source: "current" | "tolerance" | "p50" | "p75" | "p90" | "manual";
+  averageRetained: number;
+  worstYear: { label: string; retained: number } | null;
+  increaseInRetained: number;
+  estimated: EstimatedPremium;
+  withinAnnualTolerance: boolean;
+}
+
+export interface AutomaticOptionsInput {
+  years: ReplayYear[];
+  currentDeductible: number;
+  /** Premium at the current deductible: the manual option at that deductible, else the expiring premium. */
+  currentPremium: number;
+  tolerances: ToleranceSettings;
+  schedule?: DeductibleRule[];
+  /** Deductibles entered by hand that are not in the automatic set; they get an estimate too. */
+  extraDeductibles?: number[];
+}
+
+/**
+ * The automatic option set: the current deductible, the per-occurrence tolerance
+ * and the 50th, 75th and 90th severity percentiles, de-duplicated and replayed;
+ * each option's premium is estimated from the change in average retained losses.
+ */
+export function automaticOptions(i: AutomaticOptionsInput): Calc<AutomaticOption[]> {
+  const n = i.years.length;
+  const severities = i.years.flatMap((y) => y.claims.map((c) => c.adjustedIncurred));
+  const candidates: { deductible: number; source: AutomaticOption["source"] }[] = [{ deductible: i.currentDeductible, source: "current" }, { deductible: i.tolerances.perOccurrence, source: "tolerance" }];
+  const lines: string[] = [];
+  for (const [p, source] of [[0.5, "p50"], [0.75, "p75"], [0.9, "p90"]] as const) {
+    const pct = severityPercentile(severities, p);
+    lines.push(...(pct.math.steps.lines as string[]));
+    if (pct.value.rounded !== null) candidates.push({ deductible: pct.value.rounded, source });
+  }
+  for (const d of i.extraDeductibles ?? []) candidates.push({ deductible: d, source: "manual" });
+  const seen = new Set<number>();
+  const unique = candidates.filter((c) => c.deductible > 0 && !seen.has(c.deductible) && seen.add(c.deductible)).sort((a, b) => a.deductible - b.deductible);
+  const retainedFor = (deductible: number) => i.years.map((y) => replayYear(y, i.schedule?.length ? { defaultAmount: deductible, rules: i.schedule } : deductible, null).value);
+  const currentRows = retainedFor(i.currentDeductible);
+  const currentAverage = n ? round2(sumMoney(currentRows.map((r) => r.retained)) / n) : 0;
+  const value = unique.map((c) => {
+    const rows = retainedFor(c.deductible);
+    const averageRetained = n ? round2(sumMoney(rows.map((r) => r.retained)) / n) : 0;
+    const worst = rows.reduce<{ label: string; retained: number } | null>((w, r) => (w === null || r.retained > w.retained ? { label: r.label, retained: r.retained } : w), null);
+    const increaseInRetained = round2(averageRetained - currentAverage);
+    const estimated = estimatePremium(i.currentPremium, increaseInRetained, i.tolerances.permissibleLossRatio).value;
+    lines.push(
+      `${usd(c.deductible)} (${c.source}): retained ${rows.map((r) => `${r.label} ${usd(r.retained)}`).join(", ")}; average ${usd2(averageRetained)}; increase vs ${usd(i.currentDeductible)} = ${usd2(averageRetained)} − ${usd2(currentAverage)} = ${usd2(increaseInRetained)}; credit ${usd(estimated.credit)}; estimated premium ${usd(estimated.premium)}${estimated.floored ? " (floored)" : ""}; worst ${worst ? `${worst.label} ${usd(worst.retained)}` : "—"} ${worst && worst.retained <= i.tolerances.perYear ? "within" : "above"} the ${usd(i.tolerances.perYear)} annual tolerance`,
+    );
+    return { deductible: c.deductible, source: c.source, averageRetained, worstYear: worst, increaseInRetained, estimated, withinAnnualTolerance: (worst?.retained ?? 0) <= i.tolerances.perYear };
+  });
+  return {
+    value,
+    math: {
+      inputs: { currentDeductible: i.currentDeductible, currentPremium: i.currentPremium, tolerances: i.tolerances, years: i.years.map((y) => y.label) },
+      formula: "options = current deductible, per-occurrence tolerance, p50/p75/p90 severities (rounded); estimated premium = current − (average retained increase ÷ permissible loss ratio), floored at 25%",
+      steps: { lines },
+    },
+  };
+}
+
+export interface Modifier {
+  key: "frequency_trend" | "open_reserves" | "few_years";
+  text: string;
+}
+
+/** Plain-word modifiers: frequency trend, open-reserve share, and a warning for thin history. */
+export function modifiers(years: ReplayYear[]): Calc<Modifier[]> {
+  const complete = years.filter((y) => !y.current);
+  const half = Math.floor(complete.length / 2);
+  const avg = (ys: ReplayYear[]) => (ys.length ? ys.reduce((s, y) => s + y.claims.length, 0) / ys.length : 0);
+  const first = avg(complete.slice(0, half));
+  const second = avg(complete.slice(half));
+  const trend = complete.length < 2 ? "unknown" : second > first ? "rising" : second < first ? "falling" : "flat";
+  const incurred = sumMoney(years.map((y) => y.incurred));
+  const openReserved = sumMoney(years.map((y) => y.openReserved));
+  const share = incurred > 0 ? openReserved / incurred : 0;
+  const out: Modifier[] = [
+    { key: "frequency_trend", text: complete.length < 2 ? "Frequency trend cannot be read from fewer than two complete years." : `Claim frequency is ${trend} over the history (${first.toFixed(1)} a year in the earlier half, ${second.toFixed(1)} in the later half); ${trend === "rising" ? "the replay understates what is coming" : trend === "falling" ? "the replay overstates it" : "the replay is a fair guide"}.` },
+    { key: "open_reserves", text: incurred > 0 ? `${pctShare(share, 1)} of incurred (${usd(openReserved)} of ${usd(incurred)}) is still in open reserves and can move either way.` : "No incurred losses in the years used." },
+  ];
+  if (years.length < 3) out.push({ key: "few_years", text: `Only ${years.length} year${years.length === 1 ? "" : "s"} of history: the findings are weak and should carry little weight.` });
+  return {
+    value: out,
+    math: { inputs: { years: years.map((y) => y.label) }, formula: "trend from claim counts in the earlier and later halves of complete years; open share = open reserves ÷ incurred", steps: { lines: out.map((m) => m.text) } },
+  };
+}
+
+export interface StrategyFindingsInput extends BandAnalysisInput {
+  tiv: number | null;
+  latestRenewal?: PriceFindingsInput["latestRenewal"];
+  currentPremium: number;
+  schedule?: DeductibleRule[];
+}
+
+export interface StrategyFindings {
+  findings: Finding[];
+  bands: BandResult[];
+  options: AutomaticOption[];
+  modifiers: Modifier[];
+}
+
+/** Everything the Strategy tab shows, with findings sorted by estimated impact (comments last). */
+export function strategyFindings(i: StrategyFindingsInput): Calc<StrategyFindings> {
+  const bands = bandAnalysis(i);
+  const price = priceFindings({ layers: i.layers, latestRenewal: i.latestRenewal ?? null });
+  const adequacy = limitAdequacy(i.layers, i.tiv);
+  const options = i.defaultDeductible !== null && i.defaultDeductible >= 0 ? automaticOptions({ years: i.years, currentDeductible: i.defaultDeductible, currentPremium: i.currentPremium, tolerances: i.tolerances, schedule: i.schedule }) : null;
+  const mods = modifiers(i.years);
+  const findings = [...bands.value.findings, ...price.value, ...(adequacy.value ? [adequacy.value] : [])].sort((a, b) => (b.estimatedImpact ?? -1) - (a.estimatedImpact ?? -1));
+  return {
+    value: { findings, bands: bands.value.bands, options: options?.value ?? [], modifiers: mods.value },
+    math: {
+      inputs: { tolerances: i.tolerances, tiv: i.tiv, currentPremium: i.currentPremium, defaultDeductible: i.defaultDeductible },
+      formula: "bands, price findings and limit adequacy, sorted by estimated impact; options from the automatic set",
+      steps: { lines: [...(bands.math.steps.lines as string[]), ...(price.math.steps.lines as string[]), ...(adequacy.math.steps.lines as string[]), ...((options?.math.steps.lines as string[]) ?? []), ...(mods.math.steps.lines as string[])] },
     },
   };
 }

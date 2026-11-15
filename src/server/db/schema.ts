@@ -11,7 +11,7 @@
  * added claims; v1 added tower_layers (replaced in v1.3 by program_layers and
  * layer_participations), contract_requirements, certificates,
  * policy_participants and policy_sublimits; v1.1 added submissions and quotes
- * (a quote "option" is simply another quote on the same submission); v1.2 added
+ * (removed in v1.4 with the Marketing tab); v1.2 added
  * quote_options (retention options for the Strategy tab) and the account's
  * broker fee, risk control and claims administration figures for TCOR; v1.3
  * added program_layers, layer_participations, policy_deductibles and the
@@ -34,15 +34,14 @@ import {
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { DEDUCTIBLE_KINDS } from "@/lib/domain/deductibles";
-import { LAYER_BASES, LAYER_TYPES, LINE_GROUPS, REQUIREMENT_COVERAGES } from "@/lib/domain/program";
+import { DOCUMENT_STATUSES, DOCUMENT_TYPES } from "@/lib/domain/documents";
+import { LAYER_TYPES, LINE_GROUPS } from "@/lib/domain/program";
 import {
   ACCOUNT_STATUSES,
   ACTIVITY_KINDS,
   CHECKLIST_SOURCES,
   CLAIM_STATUSES,
-  DECLINE_REASONS,
   PARTICIPANT_ROLES,
-  SUBMISSION_STATUSES,
   ENDORSEMENTS,
   LOST_REASONS,
   OUTCOME_TYPES,
@@ -63,12 +62,10 @@ export const lostReasonEnum = pgEnum("lost_reason", LOST_REASONS);
 export const claimStatusEnum = pgEnum("claim_status", CLAIM_STATUSES);
 export const lineGroupEnum = pgEnum("line_group", LINE_GROUPS);
 export const layerTypeEnum = pgEnum("layer_type", LAYER_TYPES);
-export const layerBasisEnum = pgEnum("layer_basis", LAYER_BASES);
 export const deductibleKindEnum = pgEnum("deductible_kind", DEDUCTIBLE_KINDS);
-export const requirementCoverageEnum = pgEnum("requirement_coverage", REQUIREMENT_COVERAGES);
 export const participantRoleEnum = pgEnum("participant_role", PARTICIPANT_ROLES);
-export const submissionStatusEnum = pgEnum("submission_status", SUBMISSION_STATUSES);
-export const declineReasonEnum = pgEnum("decline_reason", DECLINE_REASONS);
+export const documentTypeEnum = pgEnum("document_type", DOCUMENT_TYPES);
+export const documentStatusEnum = pgEnum("document_status", DOCUMENT_STATUSES);
 
 /** Column helpers so every table shares the same audit columns and types. */
 const timestamps = {
@@ -83,6 +80,8 @@ export const workspaces = pgTable("workspaces", {
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
   asOfDate: date("as_of_date", { mode: "string" }).notNull(),
+  /** v1.4: the nightly cron reloads the demo book into workspaces flagged here. */
+  resetNightly: boolean("reset_nightly").notNull().default(false),
   ...timestamps,
 });
 
@@ -106,6 +105,11 @@ export const accounts = pgTable(
     brokerFees: money("broker_fees").notNull().default(0),
     riskControlSpend: money("risk_control_spend").notNull().default(0),
     claimsAdminCost: money("claims_admin_cost").notNull().default(0),
+    /** v1.4 strategy inputs: null = the defaults (0.5% / 1% of revenue); findings the broker accepted into the report. */
+    toleranceOccurrence: money("tolerance_occurrence"),
+    toleranceYear: money("tolerance_year"),
+    permissibleLossRatio: rate("permissible_loss_ratio").notNull().default(0.65),
+    acceptedFindings: text("accepted_findings").array().notNull().default(sql`'{}'::text[]`),
     ...timestamps,
   },
   (t) => [index("accounts_workspace_idx").on(t.workspaceId), index("accounts_workspace_name_idx").on(t.workspaceId, t.name)],
@@ -311,56 +315,6 @@ export const claims = pgTable(
 /* ---------- v1 Program ---------- */
 
 
-export const contractRequirements = pgTable(
-  "contract_requirements",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    workspaceId: uuid("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    accountId: uuid("account_id")
-      .notNull()
-      .references(() => accounts.id, { onDelete: "cascade" }),
-    contractName: text("contract_name").notNull(),
-    counterparty: text("counterparty").notNull(),
-    coverage: requirementCoverageEnum("coverage").notNull(),
-    requiredOccurrence: money("required_occurrence"),
-    requiredAggregate: money("required_aggregate"),
-    requiredEndorsements: endorsementEnum("required_endorsements")
-      .array()
-      .notNull()
-      .default(sql`'{}'::endorsement[]`),
-    notes: text("notes"),
-    ...timestamps,
-  },
-  (t) => [index("contract_requirements_account_idx").on(t.accountId), index("contract_requirements_workspace_idx").on(t.workspaceId)],
-);
-
-/** Certificate status (requested / issued / expired / reissue needed) is derived in src/lib/domain/program.ts, never stored. */
-export const certificates = pgTable(
-  "certificates",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    workspaceId: uuid("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    accountId: uuid("account_id")
-      .notNull()
-      .references(() => accounts.id, { onDelete: "cascade" }),
-    holder: text("holder").notNull(),
-    operationsDescription: text("operations_description"),
-    coverages: lineOfBusinessEnum("coverages")
-      .array()
-      .notNull()
-      .default(sql`'{}'::line_of_business[]`),
-    requiredBy: date("required_by", { mode: "string" }),
-    issuedOn: date("issued_on", { mode: "string" }),
-    notes: text("notes"),
-    ...timestamps,
-  },
-  (t) => [index("certificates_account_idx").on(t.accountId), index("certificates_workspace_idx").on(t.workspaceId)],
-);
-
 /** Co-insurers on a larger placement. The policy's own carrier is the lead; rows here are the full signed-line schedule. */
 export const policyParticipants = pgTable(
   "policy_participants",
@@ -406,70 +360,6 @@ export const policySublimits = pgTable(
 /* ---------- v1.1 Marketing ---------- */
 
 /**
- * A carrier approached for a policy's renewal. Status moves are enforced in
- * src/lib/domain/marketing.ts (checkTransition); days to respond is derived
- * from sent_on and responded_on, never stored.
- */
-export const submissions = pgTable(
-  "submissions",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    workspaceId: uuid("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    accountId: uuid("account_id")
-      .notNull()
-      .references(() => accounts.id, { onDelete: "cascade" }),
-    policyId: uuid("policy_id")
-      .notNull()
-      .references(() => policies.id, { onDelete: "cascade" }),
-    carrier: text("carrier").notNull(),
-    sentOn: date("sent_on", { mode: "string" }),
-    respondedOn: date("responded_on", { mode: "string" }),
-    status: submissionStatusEnum("status").notNull().default("planned"),
-    declinedReason: declineReasonEnum("declined_reason"),
-    notes: text("notes"),
-    ...timestamps,
-  },
-  (t) => [
-    index("submissions_policy_idx").on(t.policyId),
-    index("submissions_account_idx").on(t.accountId),
-    index("submissions_workspace_sent_idx").on(t.workspaceId, t.sentOn),
-  ],
-);
-
-/** A carrier's quote (or one of several options) against a submission. At most one quote per policy is bound. */
-export const quotes = pgTable(
-  "quotes",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    workspaceId: uuid("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    submissionId: uuid("submission_id")
-      .notNull()
-      .references(() => submissions.id, { onDelete: "cascade" }),
-    quotedPremium: money("quoted_premium").notNull(),
-    occurrenceLimit: money("occurrence_limit"),
-    aggregateLimit: money("aggregate_limit"),
-    deductible: money("deductible"),
-    endorsements: endorsementEnum("endorsements")
-      .array()
-      .notNull()
-      .default(sql`'{}'::endorsement[]`),
-    commissionRate: rate("commission_rate").notNull(),
-    /** Exposure the carrier rated on; null means the expiring policy's exposure. */
-    exposureAmount: money("exposure_amount"),
-    subjectivities: text("subjectivities"),
-    validUntil: date("valid_until", { mode: "string" }).notNull(),
-    isIncumbentRenewal: boolean("is_incumbent_renewal").notNull().default(false),
-    isBound: boolean("is_bound").notNull().default(false),
-    ...timestamps,
-  },
-  (t) => [index("quotes_submission_idx").on(t.submissionId), index("quotes_workspace_idx").on(t.workspaceId)],
-);
-
-/**
  * v1.3: a layer of a program placed on a subscription basis. One tower is the
  * v0.5 case; several towers split the risk horizontally and their layers'
  * signed shares add up at every point of the limit.
@@ -489,7 +379,6 @@ export const programLayers = pgTable(
     layerType: layerTypeEnum("layer_type").notNull(),
     attachment: money("attachment").notNull(),
     limit: money("limit").notNull(),
-    basis: layerBasisEnum("basis").notNull().default("per_occurrence"),
     /** Optional link to the account's policy this layer is written on. */
     policyId: uuid("policy_id").references(() => policies.id, { onDelete: "set null" }),
     notes: text("notes"),
@@ -575,10 +464,48 @@ export const quoteOptions = pgTable(
     deductible: money("deductible").notNull(),
     aggregateCap: money("aggregate_cap"),
     premium: money("premium").notNull(),
-    sourceQuoteId: uuid("source_quote_id").references(() => quotes.id, { onDelete: "set null" }),
     ...timestamps,
   },
   (t) => [index("quote_options_policy_idx").on(t.policyId), index("quote_options_workspace_idx").on(t.workspaceId)],
+);
+
+/**
+ * v1.4: a document in the account's filing cabinet. The file lives in Vercel
+ * Blob (private); `file_url` is read back through the download route handler
+ * only. Seed documents share blobs under `seed/` and carry `is_seed`, so a
+ * workspace deleting one removes the row, never the shared file.
+ */
+export const documents = pgTable(
+  "documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    policyId: uuid("policy_id").references(() => policies.id, { onDelete: "set null" }),
+    docType: documentTypeEnum("doc_type").notNull(),
+    title: text("title").notNull(),
+    /** "2025-26", chosen from the account's policy periods or typed. */
+    policyYear: text("policy_year"),
+    /** Proposals only. */
+    status: documentStatusEnum("status"),
+    /** Submissions only: insurers the submission went to. */
+    markets: text("markets").array().notNull().default(sql`'{}'::text[]`),
+    fileUrl: text("file_url").notNull(),
+    /** Blob pathname, used to delete the file. */
+    filePathname: text("file_pathname").notNull(),
+    fileName: text("file_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    notes: text("notes"),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    isSeed: boolean("is_seed").notNull().default(false),
+    ...timestamps,
+  },
+  (t) => [index("documents_account_type_idx").on(t.accountId, t.docType), index("documents_policy_idx").on(t.policyId), index("documents_workspace_idx").on(t.workspaceId)],
 );
 
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
@@ -618,13 +545,10 @@ export type Task = typeof tasks.$inferSelect;
 export type Activity = typeof activities.$inferSelect;
 export type RenewalOutcome = typeof renewalOutcomes.$inferSelect;
 export type Claim = typeof claims.$inferSelect;
-export type ContractRequirement = typeof contractRequirements.$inferSelect;
-export type Certificate = typeof certificates.$inferSelect;
 export type PolicyParticipant = typeof policyParticipants.$inferSelect;
 export type PolicySublimit = typeof policySublimits.$inferSelect;
-export type Submission = typeof submissions.$inferSelect;
-export type Quote = typeof quotes.$inferSelect;
 export type QuoteOption = typeof quoteOptions.$inferSelect;
 export type ProgramLayer = typeof programLayers.$inferSelect;
 export type LayerParticipation = typeof layerParticipations.$inferSelect;
 export type PolicyDeductible = typeof policyDeductibles.$inferSelect;
+export type Document = typeof documents.$inferSelect;

@@ -54,9 +54,9 @@ async function openAccount(p, slug, account) {
   const harbourUrl = await openAccount(page, SEED, "Harbourline Foods Inc.");
   const tabs = main(page).getByRole("tablist");
   const tabNames = (await tabs.getByRole("tab").allInnerTexts()).map(flat);
-  check("five tabs under the account name", /^Overview$/.test(tabNames[0]) && /^Loss Runs/.test(tabNames[1]) && /^Program/.test(tabNames[2]) && /^Marketing/.test(tabNames[3]) && /^Strategy/.test(tabNames[4]), tabNames.join(" | "));
+  check("five tabs under the account name", /^Overview$/.test(tabNames[0]) && /^Loss Runs/.test(tabNames[1]) && /^Program/.test(tabNames[2]) && /^Documents/.test(tabNames[3]) && /^Strategy/.test(tabNames[4]), tabNames.join(" | "));
   check("Overview is selected on the account page", (await tabs.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")) === "true");
-  check("count badges: 12 claims, 3 layers, 3 quotes, 3 options", /Loss Runs 12/.test(tabNames[1]) && /Program 3/.test(tabNames[2]) && /Marketing 3/.test(tabNames[3]) && /Strategy 3/.test(tabNames[4]));
+  check("count badges: 17 claims (12 GL + 5 Property), 3 layers, 4 documents, 3 options", /Loss Runs 17/.test(tabNames[1]) && /Program 3/.test(tabNames[2]) && /Documents 4/.test(tabNames[3]) && /Strategy 3/.test(tabNames[4]), tabNames.join(" | "));
   check("overview keeps policies, contacts, certificates, tasks and activity", (await section(page, "policies-heading").count()) === 1 && (await section(page, "contacts-heading").count()) === 1 && (await section(page, "tasks-heading").count()) === 1);
   await tabs.getByRole("tab", { name: "Overview" }).focus();
   await page.keyboard.press("ArrowRight");
@@ -71,14 +71,6 @@ async function openAccount(p, slug, account) {
   await page.goto(`${BASE}/w/${SEED}/placement/${accountId}/strategy?years=3`);
   await page.waitForURL(new RegExp(`/accounts/${accountId}/strategy\\?years=3$`));
   check("old /placement bookmark redirects to the account tab with its query string", true);
-  await page.goto(`${BASE}/w/${SEED}/placement/marketing`);
-  await page.waitForURL(/\/market-log$/);
-  await settle(page);
-  check("market log moved to /market-log", /Market log/.test(await main(page).locator("h1").innerText()));
-  await page.goto(`${harbourUrl}/marketing`);
-  await settle(page);
-  check("Marketing defaults to the GL renewal (fewest days to expiry, marketed)", /General Liability · Dominion Shield Insurance/.test(await main(page).getByRole("navigation", { name: "Policy being marketed" }).locator('a[aria-current="page"]').innerText()));
-
   /* ---------- Pacific Northwest Terminals: two-tower placement ---------- */
   const pntUrl = await openAccount(page, SEED, "Pacific Northwest Terminals Ltd.");
   check("Overview policies table shows the 12-deductible chip", /12 deductibles/.test(await section(page, "policies-heading").innerText()));
@@ -96,7 +88,8 @@ async function openAccount(p, slug, account) {
   check("Westcoast Re: 15% signed, 120,000, exposed 45,000,000 at 0.2667% on line", /15% \$120,000 \$45,000,000 0\.2667%/.test(west), west);
   const b1 = await rowText(parts, "Tower 2 $100M primary: layer total");
   check("B1 layer total 60%, 264,000, 0.4400% on line", /60\.0% short 40% \$264,000 \$60,000,000 0\.4400%/.test(b1), b1);
-  check("towers drawn side by side with a coverage strip", (await adv.getByRole("img").count()) === 1 && /Tower 1.*Tower 2.*Placed/.test(flat(await adv.locator("figure").innerText())));
+  check("towers drawn side by side without a coverage strip", (await adv.getByRole("img").count()) === 1 && /Tower 1.*Tower 2/.test(flat(await adv.locator("figure").innerText())) && !/Placed\b/.test(flat(await adv.locator("figure").innerText())));
+  check("no basis column or per-location wording on the Program tab", !/per location|Basis/.test(advText) && /per-occurrence basis/.test(flat(await main(page).innerText())));
   await adv.screenshot({ path: `${SHOTS}/advanced-program.png` });
 
   // Inline edit recomputes immediately, before saving
@@ -104,6 +97,7 @@ async function openAccount(p, slug, account) {
   await parts.getByLabel("Signed line %").fill("15");
   const second = flat(await coverage.locator("tbody tr").nth(1).innerText());
   check("Pacific Crest at 15%: 100M–300M segment 90.00% placed, $20,000,000 unplaced, Under-placed", /90\.00%/.test(second) && /\$20,000,000/.test(second) && /Under-placed/.test(second), second);
+  check("under-placed Placed % is shown in red", (await coverage.locator("tbody tr").nth(1).locator(".text-red-800").count()) >= 1);
   check("program premium falls with the draft (310,000 + 264,000 + 181,000 unchanged premium)", /\$755,000/.test(flat(await adv.innerText())));
   await parts.getByRole("button", { name: "Cancel editing Pacific Crest Insurance (fictional)" }).click();
   check("cancelling the edit restores 100%", /100\.00%/.test(flat(await coverage.locator("tbody tr").nth(1).innerText())));
@@ -136,7 +130,7 @@ async function openAccount(p, slug, account) {
   await settle(page);
   const opt = section(page, "optimizer-heading").locator("table").first();
   // (20,000 + 260,000 + 101,000 + 35,000 + 55,000) ÷ 5 = 94,200 at the $100,000 default; 136,200 at $500,000
-  check("PNT replay respects the schedule: average retained 94,200 / 124,200 / 136,200", /\$94,200 \$124,200 \$136,200/.test(await rowText(opt, "Average retained losses")), await rowText(opt, "Average retained losses"));
+  check("PNT replay respects the schedule: manual options still average 94,200 / 124,200 / 136,200 beside the estimated ones", /\$94,200[\s\S]*\$124,200[\s\S]*\$136,200/.test(await rowText(opt, "Average retained losses")), await rowText(opt, "Average retained losses"));
   check("assumptions state the schedule in force", /Deductible schedule in force: .*Earthquake: 10% of loss, minimum \$100,000/.test(await section(page, "assumptions-heading").innerText()));
   await main(page).getByRole("link", { name: "Generate report" }).click();
   await page.waitForURL(/strategy\/report/);
@@ -153,11 +147,11 @@ async function openAccount(p, slug, account) {
   const srbUrl = await openAccount(page, SEED, "Summit Ridge Builders Inc.");
   await page.goto(`${srbUrl}/program`);
   await settle(page);
-  check("Summit Ridge: simple tower, $10M umbrella requirement short by $5,000,000, wrap-up certificate requested", (await section(page, "tower-heading").count()) === 1 && /Shortfall \$5,000,000/.test(flat(await section(page, "requirements-heading").innerText())) && /Requested/.test(flat(await section(page, "certificates-heading").innerText())));
+  check("Summit Ridge: simple tower, no requirements or certificates sections", (await section(page, "tower-heading").count()) === 1 && (await main(page).locator("section[aria-labelledby='requirements-heading']").count()) === 0 && (await main(page).locator("section[aria-labelledby='certificates-heading']").count()) === 0);
   await page.goto(`${BASE}/w/${SEED}/dashboard`);
   await settle(page);
   const dash = flat(await main(page).innerText());
-  check("dashboard retention still 80.0% count and 87.5% premium with 19 accounts", /80\.0%/.test(dash) && /87\.5%/.test(dash));
+  check("dashboard retention still 80.0% count and 87.5% premium with ten accounts", /80\.0%/.test(dash) && /87\.5%/.test(dash));
   await page.goto(`${BASE}/w/${SEED}/dashboard?lookback=24`);
   await settle(page);
   check("24-month lookback shows Fraser Valley's lost umbrella", /Fraser Valley Logistics/.test(flat(await main(page).innerText())));

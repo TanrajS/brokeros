@@ -18,16 +18,13 @@ const analyse = (name: string, policyKey: string) => {
 describe("Harbourline Foods retention options (hand-verification case)", () => {
   const { account, policy, analysis: a } = analyse("Harbourline Foods Inc.", "harbour-gl");
 
-  it("seeds three Pacific Crest options, the $10,000 one linked to the Pacific Crest quote", () => {
+  it("seeds three Pacific Crest options as manual (quoted) premiums", () => {
     expect(policy.retentionOptions.map((o) => [o.deductible, o.premium])).toEqual([
       [10_000, 142_000],
       [25_000, 124_000],
       [50_000, 110_000],
     ]);
-    expect(policy.retentionOptions[0].sourceQuoteKey).toBe("harbour-pacific-crest");
-    const quote = policy.submissions.flatMap((s) => s.quotes).find((q) => q.key === "harbour-pacific-crest")!;
-    expect(quote.premium).toBe(142_000);
-    expect(quote.deductible).toBe(10_000);
+    expect(policy.retentionOptions.every((o) => o.carrier === "Pacific Crest Insurance (fictional)")).toBe(true);
   });
 
   it("replays the specified retained figures and averages", () => {

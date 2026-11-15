@@ -1,19 +1,13 @@
 import { z } from "zod";
-import { COINSURANCE_PERCENTS, ENDORSEMENTS, LINES_OF_BUSINESS, PARTICIPANT_ROLES } from "@/lib/constants";
-import { LAYER_BASES, LAYER_TYPES, LINE_GROUPS, REQUIREMENT_COVERAGES } from "@/lib/domain/program";
-import { currencySchema, isoDateSchema, optionalCurrencySchema, optionalText, percentSchema, requiredText, uuidSchema } from "./common";
+import { COINSURANCE_PERCENTS, PARTICIPANT_ROLES } from "@/lib/constants";
+import { LAYER_TYPES, LINE_GROUPS } from "@/lib/domain/program";
+import { currencySchema, optionalCurrencySchema, optionalText, percentSchema, requiredText, uuidSchema } from "./common";
 
 const optionalUuid = z
   .string()
   .trim()
   .transform((s) => (s === "" ? null : s))
   .pipe(uuidSchema.nullable());
-
-const optionalDate = z
-  .string()
-  .trim()
-  .transform((s) => (s === "" ? null : s))
-  .pipe(isoDateSchema.nullable());
 
 /* ---------- Tower layers ---------- */
 
@@ -37,7 +31,6 @@ export const layerFormSchema = z.object({
   layerType: z.enum(LAYER_TYPES, { error: "Choose a layer type" }),
   attachment: currencySchema,
   limit: currencySchema.refine((n) => n > 0, "Limit must be more than zero"),
-  basis: z.enum(LAYER_BASES, { error: "Choose a basis" }),
   policyId: optionalUuid,
   notes: optionalText(500),
 });
@@ -66,45 +59,6 @@ export const participationFormSchema = z
   });
 export type ParticipationFormInput = z.input<typeof participationFormSchema>;
 export type ParticipationFormValues = z.output<typeof participationFormSchema>;
-
-/* ---------- Contract requirements ---------- */
-
-export const requirementFormSchema = z
-  .object({
-    contractName: requiredText("Contract name", 160),
-    counterparty: requiredText("Counterparty", 120),
-    coverage: z.enum(REQUIREMENT_COVERAGES, { error: "Choose a coverage" }),
-    requiredOccurrence: optionalCurrencySchema,
-    requiredAggregate: optionalCurrencySchema,
-    requiredEndorsements: z.array(z.enum(ENDORSEMENTS)),
-    notes: optionalText(2000),
-  })
-  .superRefine((v, ctx) => {
-    if (v.coverage !== "Workers Compensation" && v.requiredOccurrence === null) {
-      ctx.addIssue({ code: "custom", path: ["requiredOccurrence"], message: "Enter the required per-occurrence limit (Workers Compensation is statutory and needs none)" });
-    }
-  });
-export type RequirementFormInput = z.input<typeof requirementFormSchema>;
-export type RequirementFormValues = z.output<typeof requirementFormSchema>;
-
-/* ---------- Certificates ---------- */
-
-export function certificateFormSchema(asOf: string) {
-  return z
-    .object({
-      holder: requiredText("Certificate holder", 160),
-      operationsDescription: optionalText(2000),
-      coverages: z.array(z.enum(LINES_OF_BUSINESS)).min(1, "Choose at least one coverage"),
-      requiredBy: optionalDate,
-      issuedOn: optionalDate,
-      notes: optionalText(2000),
-    })
-    .superRefine((v, ctx) => {
-      if (v.issuedOn !== null && v.issuedOn > asOf) ctx.addIssue({ code: "custom", path: ["issuedOn"], message: `Issue date cannot be after the as-of date (${asOf})` });
-    });
-}
-export type CertificateFormInput = z.input<ReturnType<typeof certificateFormSchema>>;
-export type CertificateFormValues = z.output<ReturnType<typeof certificateFormSchema>>;
 
 /* ---------- Participants (co-insurers) ---------- */
 

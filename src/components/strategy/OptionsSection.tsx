@@ -4,9 +4,8 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Download, Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -22,11 +21,9 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Field, fieldA11y } from "@/components/form/Field";
-import { NativeCheckbox } from "@/components/form/Checkbox";
-import { Missing } from "@/components/Missing";
 import { formatCurrency } from "@/lib/format";
 import { quoteOptionFormSchema, type QuoteOptionFormInput, type QuoteOptionFormValues } from "@/lib/schemas/strategy";
-import { deleteQuoteOption, importQuoteOptions, saveQuoteOption } from "@/server/strategy/actions";
+import { deleteQuoteOption, saveQuoteOption } from "@/server/strategy/actions";
 
 export interface OptionRow {
   id: string;
@@ -35,17 +32,6 @@ export interface OptionRow {
   deductible: number;
   aggregateCap: number | null;
   premium: number;
-  /** Carrier and premium of the quote this option was imported from, or null when entered by hand. */
-  source: string | null;
-}
-
-export interface ImportableRow {
-  id: string;
-  carrier: string;
-  premium: number;
-  deductible: number | null;
-  expired: boolean;
-  alreadyImported: boolean;
 }
 
 interface Props {
@@ -53,15 +39,14 @@ interface Props {
   policyId: string;
   expiringCarrier: string;
   rows: OptionRow[];
-  importable: ImportableRow[];
 }
 
-type Dialogs = { kind: "edit"; o: OptionRow | null } | { kind: "import" } | { kind: "delete"; o: OptionRow } | null;
+type Dialogs = { kind: "edit"; o: OptionRow | null } | { kind: "delete"; o: OptionRow } | null;
 const str = (n: number | null) => (n === null ? "" : String(n));
 const money = (n: number | null | undefined) => formatCurrency(n) ?? "—";
 
 /** The retention options table: a deductible (or SIR) and its annual premium, by hand or imported from Marketing quotes. */
-export function OptionsSection({ slug, policyId, expiringCarrier, rows, importable }: Props) {
+export function OptionsSection({ slug, policyId, expiringCarrier, rows }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [dialog, setDialog] = useState<Dialogs>(null);
@@ -86,19 +71,15 @@ export function OptionsSection({ slug, policyId, expiringCarrier, rows, importab
           Retention options
         </h2>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" size="sm" variant="outline" onClick={() => setDialog({ kind: "import" })} disabled={importable.length === 0} title={importable.length === 0 ? "No quotes recorded in Marketing for this policy" : undefined}>
-            <Download aria-hidden="true" />
-            Import from quotes
-          </Button>
           <Button type="button" size="sm" onClick={() => setDialog({ kind: "edit", o: null })}>
             <Plus aria-hidden="true" />
             Add option
           </Button>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">Each option is a deductible (or self-insured retention) with its annual premium. An aggregate cap limits what the client retains in a year.</p>
+      <p className="text-xs text-muted-foreground">Manual options override the estimated ones: a deductible (or self-insured retention) with the annual premium entered by hand. An aggregate cap limits what the client retains in a year.</p>
       {rows.length === 0 ? (
-        <p className="rounded-lg border p-4 text-sm text-muted-foreground">No options yet. Add the quoted deductibles, or import them from the quotes recorded in Marketing.</p>
+        <p className="rounded-lg border p-4 text-sm text-muted-foreground">No manual options yet. The findings below estimate premiums from the loss history; add options entered by hand here to override them.</p>
       ) : (
         <div className="relative overflow-x-auto rounded-lg border">
           <Table>
@@ -109,8 +90,7 @@ export function OptionsSection({ slug, policyId, expiringCarrier, rows, importab
                 <TableHead>Carrier</TableHead>
                 <TableHead className="text-right">Deductible ($ per claim)</TableHead>
                 <TableHead className="text-right">Aggregate cap ($ per year)</TableHead>
-                <TableHead className="text-right">Premium ($ per year)</TableHead>
-                <TableHead>Source</TableHead>
+                <TableHead className="text-right">Premium ($ per year, entered by hand)</TableHead>
                 <TableHead>
                   <span className="sr-only">Actions</span>
                 </TableHead>
@@ -124,7 +104,6 @@ export function OptionsSection({ slug, policyId, expiringCarrier, rows, importab
                   <TableCell className="text-right tabular-nums">{money(o.deductible)}</TableCell>
                   <TableCell className="text-right tabular-nums">{o.aggregateCap === null ? <span className="text-muted-foreground">No cap</span> : money(o.aggregateCap)}</TableCell>
                   <TableCell className="text-right tabular-nums">{money(o.premium)}</TableCell>
-                  <TableCell className="text-xs">{o.source ? <Badge variant="outline">Quote: {o.source}</Badge> : <span className="text-muted-foreground">Entered by hand</span>}</TableCell>
                   <TableCell className="whitespace-nowrap text-right">
                     <Button type="button" size="icon-sm" variant="ghost" aria-label={`Edit ${o.label}`} onClick={() => setDialog({ kind: "edit", o })}>
                       <Pencil aria-hidden="true" />
@@ -141,7 +120,6 @@ export function OptionsSection({ slug, policyId, expiringCarrier, rows, importab
       )}
 
       {dialog?.kind === "edit" ? <OptionDialog slug={slug} policyId={policyId} expiringCarrier={expiringCarrier} o={dialog.o} onClose={() => setDialog(null)} /> : null}
-      {dialog?.kind === "import" ? <ImportDialog slug={slug} policyId={policyId} importable={importable} onClose={() => setDialog(null)} /> : null}
       <AlertDialog open={dialog?.kind === "delete"} onOpenChange={(open) => !open && setDialog(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -197,7 +175,7 @@ function OptionDialog({ slug, policyId, expiringCarrier, o, onClose }: { slug: s
         <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>{o ? `Edit ${o.label}` : "Add retention option"}</DialogTitle>
-            <DialogDescription>A deductible or self-insured retention with the annual premium quoted for it. Amounts in dollars.</DialogDescription>
+            <DialogDescription>A deductible or self-insured retention with the annual premium entered for it; it is not a quote. Amounts in dollars.</DialogDescription>
           </DialogHeader>
           <Field id="opt-label" label="Label" required error={msg("label")} hint="For example: $25,000 deductible">
             <Input {...register("label")} {...fieldA11y("opt-label", msg("label"), "hint")} autoComplete="off" />
@@ -222,83 +200,6 @@ function OptionDialog({ slug, policyId, expiringCarrier, o, onClose }: { slug: s
             </Button>
             <Button type="submit" disabled={!formState.isValid || pending}>
               {pending ? "Saving…" : "Save"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ImportDialog({ slug, policyId, importable, onClose }: { slug: string; policyId: string; importable: ImportableRow[]; onClose: () => void }) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  const selectable = importable.filter((q) => !q.alreadyImported && q.deductible !== null);
-  const [chosen, setChosen] = useState<Set<string>>(() => new Set(selectable.map((q) => q.id)));
-
-  function toggle(id: string, on: boolean) {
-    setChosen((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }
-
-  function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    startTransition(async () => {
-      const res = await importQuoteOptions(slug, policyId, [...chosen]);
-      if (!res.ok) {
-        toast.error(res.message);
-        return;
-      }
-      toast.success(`${res.data.imported} option${res.data.imported === 1 ? "" : "s"} imported`, { description: res.data.skipped.length ? `Skipped: ${res.data.skipped.join("; ")}` : undefined });
-      onClose();
-      router.refresh();
-    });
-  }
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
-        <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <DialogHeader>
-            <DialogTitle>Import quotes as retention options</DialogTitle>
-            <DialogDescription>Each quote becomes an option with its deductible and premium, linked back to the quote for the report&apos;s audit trail.</DialogDescription>
-          </DialogHeader>
-          <ul className="flex flex-col gap-2">
-            {importable.map((q) => {
-              const disabled = q.alreadyImported || q.deductible === null;
-              return (
-                <li key={q.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm">
-                  <NativeCheckbox
-                    id={`imp-${q.id}`}
-                    label={`${q.carrier}: ${money(q.premium)} premium, ${q.deductible === null ? "no deductible" : `${money(q.deductible)} deductible`}`}
-                    checked={chosen.has(q.id)}
-                    disabled={disabled}
-                    onChange={(e) => toggle(q.id, e.target.checked)}
-                  />
-                  <span className="flex gap-1">
-                    {q.alreadyImported ? <Badge variant="outline">Already imported</Badge> : null}
-                    {q.deductible === null ? <Badge variant="secondary">No deductible</Badge> : null}
-                    {q.expired ? <Badge variant="destructive">Expired</Badge> : null}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          {importable.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              <Missing what="Quotes for this policy" /> No quotes are recorded in Marketing yet.
-            </p>
-          ) : null}
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={pending || chosen.size === 0}>
-              {pending ? "Importing…" : `Import ${chosen.size} quote${chosen.size === 1 ? "" : "s"}`}
             </Button>
           </DialogFooter>
         </form>

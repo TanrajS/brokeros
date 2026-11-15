@@ -7,6 +7,10 @@
  *   - SEED_WORKSPACE_SLUG=abc123def4 npm run db:seed → seeds that existing
  *     workspace, using its own as-of date, if it is empty.
  *   - SEED_AS_OF=2026-11-12 overrides the as-of date for a new workspace.
+ *   - SEED_NIGHTLY_RESET=1 marks the workspace for the nightly cron reset
+ *     (/api/cron/reset-demo re-loads the demo book into every such workspace).
+ *   - BLOB_READ_WRITE_TOKEN (optional) lets the seed upload the demo PDFs once
+ *     under the shared seed/ prefix; without it the documents folders stay empty.
  */
 import { eq } from "drizzle-orm";
 import { loadLocalEnv, getDatabaseUrl } from "../src/server/env";
@@ -53,9 +57,12 @@ async function main() {
     workspace = created;
   }
 
-  const summary = await loadDemoBook(db, workspace.id, workspace.asOfDate);
+  if (process.env.SEED_NIGHTLY_RESET === "1") {
+    await db.update(workspaces).set({ resetNightly: true }).where(eq(workspaces.id, workspace.id));
+  }
+  const summary = await loadDemoBook(db, workspace.id, workspace.asOfDate, (line) => console.log(line));
   console.log(
-    `Seeded workspace /w/${workspace.slug} (as of ${workspace.asOfDate}): ${summary.accounts} accounts, ${summary.contacts} contacts, ${summary.policies} policies.`,
+    `Seeded workspace /w/${workspace.slug} (as of ${workspace.asOfDate}): ${summary.accounts} accounts, ${summary.contacts} contacts, ${summary.policies} policies, ${summary.documents} documents${process.env.SEED_NIGHTLY_RESET === "1" ? ", nightly reset on" : ""}.`,
   );
 }
 

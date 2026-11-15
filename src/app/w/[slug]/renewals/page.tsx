@@ -7,8 +7,6 @@ import { RenewalBoard } from "@/components/renewals/RenewalBoard";
 import { RenewalFilters } from "@/components/renewals/RenewalFilters";
 import { RenewalList } from "@/components/renewals/RenewalList";
 import { StageRulesPanel } from "@/components/renewals/StageRulesPanel";
-import { CertificatesDuePanel } from "@/components/renewals/CertificatesDuePanel";
-import { listCertificatesDue } from "@/server/program/queries";
 import { SummaryStrip } from "@/components/renewals/SummaryStrip";
 import { renewalsHref, type RenewalsQuery } from "@/components/renewals/params";
 import { formatDate } from "@/lib/format";
@@ -42,7 +40,7 @@ export default async function RenewalsPage({ params, searchParams }: { params: P
   const invalid = (stage !== "" && query.stage === "") || (first(sp.month) !== "" && query.month === "");
   if (hasEmpty || invalid) redirect(renewalsHref(slug, query));
 
-  const [data, certificatesDue] = await Promise.all([listRenewals(ws, query, query.dir), listCertificatesDue(ws)]);
+  const data = await listRenewals(ws, query, query.dir);
 
   return (
     <div className="flex flex-col gap-5">
@@ -89,7 +87,6 @@ export default async function RenewalsPage({ params, searchParams }: { params: P
         <RenewalList slug={slug} query={query} rows={data.rows} />
       )}
 
-      <CertificatesDuePanel slug={slug} rows={certificatesDue} />
 
       <StageRulesPanel asOf={formatDate(ws.asOfDate) ?? ws.asOfDate} />
     </div>

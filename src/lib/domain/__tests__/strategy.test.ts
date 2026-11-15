@@ -327,15 +327,14 @@ describe("otherLineRetained", () => {
 
 describe("considerations", () => {
   const years = selectReplayYears(grouped, DEFAULT_REPLAY_SETTINGS).value.years;
-  it("lists the five neutral topics with the account's own figures", () => {
-    const c = considerations({ years, contractRequirements: ["Westbay Grocers: GL $2,000,000 / $4,000,000"], revenue: 25_000_000 }).value;
-    expect(c.map((x) => x.topic)).toEqual(["Cash flow", "Claim volatility", "Frequency trend", "Open reserves", "Contract requirements"]);
+  it("lists the four neutral topics with the account's own figures", () => {
+    const c = considerations({ years, revenue: 25_000_000 }).value;
+    expect(c.map((x) => x.topic)).toEqual(["Cash flow", "Claim volatility", "Frequency trend", "Open reserves"]);
     expect(c[1].observation).toBe("Incurred ranged from $30,000 to $135,000 across the 5 years used (average $61,000.00).");
     // complete years PY2022–PY2025: first half (3, 2) avg 2.5; second half (3, 1) avg 2 → falling
     expect(c[2].observation).toContain("frequency is falling");
     // open: PY2023 90,000 + PY2025 48,000 = 138,000
     expect(c[3].observation).toBe("2 open claims carry $138,000 of reserves that can still move.");
-    expect(c[4].observation).toContain("1 contract requirement applies to this line");
     for (const x of c) expect(`${x.favoursLower} ${x.favoursHigher}`).not.toMatch(/recommend/i);
   });
 });
@@ -350,8 +349,8 @@ describe("assumptionsAndLimitations", () => {
       omittedYears: [{ label: "PY2026", reason: "running year excluded by the settings" }],
       prospectiveYear: 2027,
       options: [
-        { label: "$10,000 deductible", aggregateCap: null, linkedToQuote: true },
-        { label: "$50,000 deductible", aggregateCap: 40_000, linkedToQuote: false },
+        { label: "$10,000 deductible", aggregateCap: null, source: "manual" },
+        { label: "$50,000 deductible", aggregateCap: 40_000, source: "estimated" },
       ],
       missing: ["Annual revenue not entered"],
       linesWithoutLossRuns: ["Property"],
@@ -361,7 +360,8 @@ describe("assumptionsAndLimitations", () => {
     expect(lines).toContain("Loss trend of 5.0% a year restates each year to 2027: factor = (1 + trend) ^ (2027 − policy year).");
     expect(lines).toContain("No loss development is applied: open claims are at their current paid plus reserved.");
     expect(lines).toContain("Aggregate caps: $50,000 deductible capped at $40,000 a year; other options have no cap.");
-    expect(lines).toContain("Premiums for $50,000 deductible were entered by hand and are not tied to a carrier quote.");
+    expect(lines).toContain("Premiums for $10,000 deductible were entered by hand and are not quotes.");
+    expect(lines).toContain("Premiums for $50,000 deductible are estimated from the loss history and the permissible loss ratio; they are not quotes.");
     expect(lines).toContain("Total cost of risk counts expected retained losses as zero for Property because no claims are recorded for that line.");
     expect(lines).toContain("Annual revenue not entered.");
     expect(lines[lines.length - 1]).toBe("This report compares options; it does not state which the client should buy.");

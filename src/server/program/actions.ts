@@ -4,24 +4,20 @@ import { and, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { LINE_GROUPS, LINE_GROUP_PRIMARY, validatePlacementRows, type LineGroup } from "@/lib/domain/program";
 import {
-  certificateFormSchema,
   layerFormSchema,
   participantFormSchema,
   participationFormSchema,
-  requirementFormSchema,
   sublimitFormSchema,
   towerLayerFormSchema,
-  type CertificateFormInput,
   type LayerFormInput,
   type ParticipantFormInput,
   type ParticipationFormInput,
-  type RequirementFormInput,
   type SublimitFormInput,
   type TowerLayerFormInput,
 } from "@/lib/schemas/program";
 import { describeFailure, fail, fieldErrorsFromZod, ok, type ActionResult } from "@/server/actionResult";
 import { getDb } from "@/server/db/client";
-import { accounts, certificates, contractRequirements, layerParticipations, policies, policyParticipants, policySublimits, programLayers, type Workspace } from "@/server/db/schema";
+import { accounts, layerParticipations, policies, policyParticipants, policySublimits, programLayers, type Workspace } from "@/server/db/schema";
 import { withTransaction, type Executor } from "@/server/db/tx";
 import { getWorkspaceBySlug } from "@/server/workspace/queries";
 
@@ -81,7 +77,7 @@ export async function saveTowerLayer(slug: string, accountId: string, layerId: s
       }
       const [row] = await tx
         .insert(programLayers)
-        .values({ workspaceId: ws.id, accountId, lineGroup: v.lineGroup, towerLabel: "Tower 1", layerType: v.layerType, attachment: v.attachment, limit: v.limit, basis: "per_occurrence", policyId: v.policyId })
+        .values({ workspaceId: ws.id, accountId, lineGroup: v.lineGroup, towerLabel: "Tower 1", layerType: v.layerType, attachment: v.attachment, limit: v.limit, policyId: v.policyId })
         .returning({ id: programLayers.id });
       await tx.insert(layerParticipations).values({ workspaceId: ws.id, layerId: row.id, insurer: v.carrier, writtenLinePct: null, signedLinePct: 100, premium: v.premium, isLead: true });
       return row.id;
@@ -105,7 +101,7 @@ export async function saveLayer(slug: string, accountId: string, layerId: string
     const policyError = await checkLayerPolicy(ws.id, accountId, v.lineGroup, v.policyId);
     if (policyError) return fail("Please fix the highlighted fields.", { policyId: policyError });
     const db = getDb();
-    const values = { lineGroup: v.lineGroup, towerLabel: v.towerLabel, layerType: v.layerType, attachment: v.attachment, limit: v.limit, basis: v.basis, policyId: v.policyId, notes: v.notes };
+    const values = { lineGroup: v.lineGroup, towerLabel: v.towerLabel, layerType: v.layerType, attachment: v.attachment, limit: v.limit, policyId: v.policyId, notes: v.notes };
     if (layerId) {
       const updated = await db.update(programLayers).set({ ...values, updatedAt: new Date() }).where(and(eq(programLayers.id, layerId), eq(programLayers.workspaceId, ws.id), eq(programLayers.accountId, accountId))).returning({ id: programLayers.id });
       if (updated.length === 0) return fail("That layer no longer exists.");
@@ -223,7 +219,7 @@ export async function importPlacementSchedule(slug: string, accountId: string, l
           if (!layerId) {
             const [row] = await tx
               .insert(programLayers)
-              .values({ workspaceId: ws.id, accountId, lineGroup, towerLabel: p.towerLabel, layerType: p.layerType, attachment: p.attachment, limit: p.limit, basis: "per_occurrence" })
+              .values({ workspaceId: ws.id, accountId, lineGroup, towerLabel: p.towerLabel, layerType: p.layerType, attachment: p.attachment, limit: p.limit })
               .returning({ id: programLayers.id });
             layerId = row.id;
             layerIdFor.set(key, layerId);
@@ -245,102 +241,6 @@ export async function importPlacementSchedule(slug: string, accountId: string, l
     return ok({ layersCreated, participationsAdded, total: rows.length, skipped: skipped.sort((a, b) => a.row - b.row) });
   } catch (err) {
     return fail(describeFailure("importing the placement schedule", err));
-  }
-}
-
-/* ---------- Contract requirements ---------- */
-
-export async function saveRequirement(slug: string, accountId: string, requirementId: string | null, input: RequirementFormInput): Promise<ActionResult<{ id: string }>> {
-  const parsed = requirementFormSchema.safeParse(input);
-  if (!parsed.success) return fail("Please fix the highlighted fields.", fieldErrorsFromZod(parsed.error));
-  try {
-    const ws = await loadAccount(slug, accountId);
-    if (!ws) return fail("That account no longer exists.");
-    const db = getDb();
-    if (requirementId) {
-      const updated = await db
-        .update(contractRequirements)
-        .set({ ...parsed.data, updatedAt: new Date() })
-        .where(and(eq(contractRequirements.id, requirementId), eq(contractRequirements.workspaceId, ws.id), eq(contractRequirements.accountId, accountId)))
-        .returning({ id: contractRequirements.id });
-      if (updated.length === 0) return fail("That requirement no longer exists.");
-      refresh(slug);
-      return ok({ id: requirementId });
-    }
-    const [row] = await db.insert(contractRequirements).values({ workspaceId: ws.id, accountId, ...parsed.data }).returning({ id: contractRequirements.id });
-    refresh(slug);
-    return ok({ id: row.id });
-  } catch (err) {
-    return fail(describeFailure("saving the requirement", err));
-  }
-}
-
-export async function deleteRequirement(slug: string, requirementId: string): Promise<ActionResult> {
-  try {
-    const ws = await getWorkspaceBySlug(slug);
-    if (!ws) return fail("That workspace no longer exists.");
-    await getDb().delete(contractRequirements).where(and(eq(contractRequirements.id, requirementId), eq(contractRequirements.workspaceId, ws.id)));
-    refresh(slug);
-    return ok(undefined);
-  } catch (err) {
-    return fail(describeFailure("deleting the requirement", err));
-  }
-}
-
-/* ---------- Certificates ---------- */
-
-export async function saveCertificate(slug: string, accountId: string, certificateId: string | null, input: CertificateFormInput): Promise<ActionResult<{ id: string }>> {
-  try {
-    const ws = await loadAccount(slug, accountId);
-    if (!ws) return fail("That account no longer exists.");
-    const parsed = certificateFormSchema(ws.asOfDate).safeParse(input);
-    if (!parsed.success) return fail("Please fix the highlighted fields.", fieldErrorsFromZod(parsed.error));
-    const db = getDb();
-    if (certificateId) {
-      const updated = await db
-        .update(certificates)
-        .set({ ...parsed.data, updatedAt: new Date() })
-        .where(and(eq(certificates.id, certificateId), eq(certificates.workspaceId, ws.id), eq(certificates.accountId, accountId)))
-        .returning({ id: certificates.id });
-      if (updated.length === 0) return fail("That certificate no longer exists.");
-      refresh(slug);
-      return ok({ id: certificateId });
-    }
-    const [row] = await db.insert(certificates).values({ workspaceId: ws.id, accountId, ...parsed.data }).returning({ id: certificates.id });
-    refresh(slug);
-    return ok({ id: row.id });
-  } catch (err) {
-    return fail(describeFailure("saving the certificate", err));
-  }
-}
-
-/** Marks a certificate issued (or reissued) on the as-of date. */
-export async function issueCertificate(slug: string, certificateId: string): Promise<ActionResult> {
-  try {
-    const ws = await getWorkspaceBySlug(slug);
-    if (!ws) return fail("That workspace no longer exists.");
-    const updated = await getDb()
-      .update(certificates)
-      .set({ issuedOn: ws.asOfDate, updatedAt: new Date() })
-      .where(and(eq(certificates.id, certificateId), eq(certificates.workspaceId, ws.id)))
-      .returning({ id: certificates.id });
-    if (updated.length === 0) return fail("That certificate no longer exists.");
-    refresh(slug);
-    return ok(undefined);
-  } catch (err) {
-    return fail(describeFailure("issuing the certificate", err));
-  }
-}
-
-export async function deleteCertificate(slug: string, certificateId: string): Promise<ActionResult> {
-  try {
-    const ws = await getWorkspaceBySlug(slug);
-    if (!ws) return fail("That workspace no longer exists.");
-    await getDb().delete(certificates).where(and(eq(certificates.id, certificateId), eq(certificates.workspaceId, ws.id)));
-    refresh(slug);
-    return ok(undefined);
-  } catch (err) {
-    return fail(describeFailure("deleting the certificate", err));
   }
 }
 

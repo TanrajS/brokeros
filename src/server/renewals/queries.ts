@@ -181,7 +181,7 @@ export interface PolicyPageData {
   predecessor: Policy | null;
   successor: Policy | null;
   successorHasOutcome: boolean;
-  accountPolicies: Pick<Policy, "id" | "lineOfBusiness" | "carrier" | "expiryDate">[];
+  accountPolicies: Policy[];
 }
 
 export async function getPolicyPageData(ws: Workspace, accountId: string, policyId: string): Promise<PolicyPageData | null> {
@@ -203,7 +203,7 @@ export async function getPolicyPageData(ws: Workspace, accountId: string, policy
       ? db.query.policies.findFirst({ where: and(eq(policies.id, policy.previousPolicyId), eq(policies.workspaceId, ws.id)) })
       : Promise.resolve(undefined),
     db
-      .select({ id: policies.id, lineOfBusiness: policies.lineOfBusiness, carrier: policies.carrier, expiryDate: policies.expiryDate })
+      .select()
       .from(policies)
       .where(and(eq(policies.accountId, accountId), eq(policies.workspaceId, ws.id)))
       .orderBy(asc(policies.expiryDate)),

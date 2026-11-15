@@ -75,7 +75,6 @@ describe("checklistTemplate", () => {
   it.each([
     ["Property", "Statement of values"],
     ["Commercial Auto", "Driver and vehicle list"],
-    ["Workers Compensation", "Payroll by class"],
     ["Umbrella/Excess", "Underlying policy schedule"],
     ["Cyber", "Security questionnaire"],
   ] as const)("adds the %s item", (line, item) => {

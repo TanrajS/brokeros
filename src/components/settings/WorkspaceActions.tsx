@@ -79,7 +79,7 @@ export function WorkspaceActions({ slug, accountCount }: { slug: string; account
         description={
           accountCount > 0
             ? `Replace the ${accountCount} ${accountCount === 1 ? "account" : "accounts"} in this workspace with the fictional demo book.`
-            : "Fill this empty workspace with 14 fictional accounts and about 45 policies."
+            : "Fill this empty workspace with ten fictional accounts, their policies, claims, programs and demo documents."
         }
       >
         <Button type="button" variant="outline" onClick={onLoadDemo} disabled={pending}>

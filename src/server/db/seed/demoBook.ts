@@ -4,28 +4,36 @@
  */
 import { randomUUID } from "node:crypto";
 import type { NeonHttpDatabase } from "drizzle-orm/neon-http";
-import { addDays, daysBetween } from "@/lib/domain/dates";
+import { daysBetween } from "@/lib/domain/dates";
 import { getRenewalStage } from "@/lib/domain/renewals";
 import type { ISODate } from "@/lib/domain/types";
 import * as schema from "../schema";
-import { buildFullDemoBook, type DemoAccount } from "./demoBookData";
+import { buildDemoBook, type DemoAccount } from "./demoBookData";
+import { ensureSeedDocuments, seedPolicyYear } from "./demoDocuments";
 
 type AnyDb = NeonHttpDatabase<typeof schema>;
 
-export { buildDemoBook, buildFullDemoBook, DEMO_WORKSPACE_NAME } from "./demoBookData";
+export { buildDemoBook, DEMO_WORKSPACE_NAME } from "./demoBookData";
 
 export interface SeedSummary {
   accounts: number;
   contacts: number;
   policies: number;
+  documents: number;
 }
 
-/** Inserts the demo book into an (assumed empty) workspace. Returns row counts. */
-export async function loadDemoBook(db: AnyDb, workspaceId: string, asOf: ISODate): Promise<SeedSummary> {
-  return insertBook(db, workspaceId, asOf, buildFullDemoBook(asOf));
+/**
+ * Inserts the demo book into an (assumed empty) workspace. Seed documents are
+ * uploaded to Blob once under `seed/` and referenced by every workspace that
+ * loads the book, so re-seeding and the nightly reset never re-upload.
+ */
+export async function loadDemoBook(db: AnyDb, workspaceId: string, asOf: ISODate, log: (line: string) => void = () => {}): Promise<SeedSummary> {
+  const book = buildDemoBook(asOf);
+  const blobs = await ensureSeedDocuments(book, asOf, log);
+  return insertBook(db, workspaceId, asOf, book, blobs);
 }
 
-async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: DemoAccount[]): Promise<SeedSummary> {
+async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: DemoAccount[], blobs: Map<string, { url: string; pathname: string; fileName: string; sizeBytes: number }> | null): Promise<SeedSummary> {
   // Ids are assigned here so predecessor/successor links can be written in one pass.
   const accountIds = new Map(book.map((a) => [a.name, randomUUID()]));
   const policyIds = new Map(book.flatMap((a) => a.policies.map((p) => [p.key, randomUUID()] as const)));
@@ -51,6 +59,9 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
       brokerFees: a.brokerFees,
       riskControlSpend: a.riskControlSpend,
       claimsAdminCost: a.claimsAdminCost,
+      toleranceOccurrence: a.toleranceOccurrence,
+      toleranceYear: a.toleranceYear,
+      permissibleLossRatio: a.permissibleLossRatio,
     })),
   );
 
@@ -194,7 +205,6 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
         layerType: t.layerType,
         attachment: t.attachment,
         limit: t.limit,
-        basis: t.basis ?? "per_occurrence",
         policyId: t.policyKey ? pid(t.policyKey) : null,
       });
       const parts = t.participations ?? [{ insurer: t.carrier, writtenLinePct: null, signedLinePct: 100, premium: t.premium, isLead: true }];
@@ -206,80 +216,41 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
   if (layerRows.length > 0) await db.insert(schema.programLayers).values(layerRows);
   if (participationRows.length > 0) await db.insert(schema.layerParticipations).values(participationRows);
 
-  const requirementRows = book.flatMap((a) => a.requirements.map((r) => ({ workspaceId, accountId: accountIds.get(a.name)!, ...r })));
-  if (requirementRows.length > 0) await db.insert(schema.contractRequirements).values(requirementRows);
-
-  const certificateRows = book.flatMap((a) =>
-    a.certificates.map((c) => ({
-      workspaceId,
-      accountId: accountIds.get(a.name)!,
-      holder: c.holder,
-      operationsDescription: c.operationsDescription,
-      coverages: c.coverages,
-      requiredBy: c.requiredByOffset === null ? null : addDays(asOf, c.requiredByOffset).value,
-      issuedOn: c.issuedOnOffset === null ? null : addDays(asOf, c.issuedOnOffset).value,
-      notes: null,
-    })),
-  );
-  if (certificateRows.length > 0) await db.insert(schema.certificates).values(certificateRows);
-
-  // Submissions get ids here so their quotes can reference them in one pass.
-  const submissionRows: (typeof schema.submissions.$inferInsert)[] = [];
-  const quoteRows: (typeof schema.quotes.$inferInsert)[] = [];
-  // Quotes with a key get ids here so retention options can point at them.
-  const quoteIds = new Map<string, string>();
-  for (const a of book) {
-    for (const p of a.policies) {
-      for (const s of p.submissions) {
-        const id = randomUUID();
-        submissionRows.push({
-          id,
-          workspaceId,
-          accountId: accountIds.get(a.name)!,
-          policyId: pid(p.key),
-          carrier: s.carrier,
-          sentOn: s.sentOffset === null ? null : addDays(asOf, s.sentOffset).value,
-          respondedOn: s.respondedOffset === null ? null : addDays(asOf, s.respondedOffset).value,
-          status: s.status,
-          declinedReason: s.declineReason,
-          notes: s.notes,
-        });
-        for (const qt of s.quotes) {
-          const quoteId = randomUUID();
-          if (qt.key) quoteIds.set(qt.key, quoteId);
-          quoteRows.push({
-            id: quoteId,
-            workspaceId,
-            submissionId: id,
-            quotedPremium: qt.premium,
-            occurrenceLimit: qt.occurrenceLimit,
-            aggregateLimit: qt.aggregateLimit,
-            deductible: qt.deductible,
-            endorsements: qt.endorsements,
-            commissionRate: qt.commissionRate,
-            exposureAmount: qt.exposureAmount,
-            subjectivities: qt.subjectivities,
-            validUntil: addDays(asOf, qt.validUntilOffset).value,
-            isIncumbentRenewal: qt.incumbent,
-            isBound: qt.bound,
-          });
-        }
-      }
-    }
-  }
-  if (submissionRows.length > 0) await db.insert(schema.submissions).values(submissionRows);
-  if (quoteRows.length > 0) await db.insert(schema.quotes).values(quoteRows);
-
   const optionRows = book.flatMap((a) =>
-    a.policies.flatMap((p) =>
-      p.retentionOptions.map((o) => {
-        const sourceQuoteId = o.sourceQuoteKey ? quoteIds.get(o.sourceQuoteKey) : null;
-        if (o.sourceQuoteKey && !sourceQuoteId) throw new Error("Demo book: unknown quote key " + o.sourceQuoteKey);
-        return { workspaceId, policyId: pid(p.key), label: o.label, carrier: o.carrier, deductible: o.deductible, aggregateCap: o.aggregateCap, premium: o.premium, sourceQuoteId: sourceQuoteId ?? null };
-      }),
-    ),
+    a.policies.flatMap((p) => p.retentionOptions.map((o) => ({ workspaceId, policyId: pid(p.key), label: o.label, carrier: o.carrier, deductible: o.deductible, aggregateCap: o.aggregateCap, premium: o.premium }))),
   );
   if (optionRows.length > 0) await db.insert(schema.quoteOptions).values(optionRows);
+
+  // v1.4: documents point at the shared seed blobs; nothing is uploaded here.
+  const documentRows = blobs
+    ? book.flatMap((a) =>
+        a.documents.flatMap((d) => {
+          const blob = blobs.get(d.key);
+          if (!blob) return [];
+          return [
+            {
+              workspaceId,
+              accountId: accountIds.get(a.name)!,
+              policyId: d.policyKey ? pid(d.policyKey) : null,
+              docType: d.docType,
+              title: d.title,
+              policyYear: seedPolicyYear(d, a),
+              status: d.docType === "proposal" ? d.status : null,
+              markets: d.docType === "submission" ? d.markets : [],
+              fileUrl: blob.url,
+              filePathname: blob.pathname,
+              fileName: blob.fileName,
+              mimeType: "application/pdf",
+              sizeBytes: blob.sizeBytes,
+              notes: d.notes,
+              uploadedAt: new Date(`${asOf}T12:00:00Z`),
+              isSeed: true,
+            },
+          ];
+        }),
+      )
+    : [];
+  if (documentRows.length > 0) await db.insert(schema.documents).values(documentRows);
 
   const activityRows = book.flatMap((a) =>
     a.activities.map((x) => ({
@@ -293,5 +264,5 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
   );
   if (activityRows.length > 0) await db.insert(schema.activities).values(activityRows);
 
-  return { accounts: book.length, contacts: contactRows.length, policies: policyRows.length };
+  return { accounts: book.length, contacts: contactRows.length, policies: policyRows.length, documents: documentRows.length };
 }

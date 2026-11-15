@@ -70,3 +70,37 @@ export const tcorFeesFormSchema = z.object({
 });
 export type TcorFeesFormInput = z.input<typeof tcorFeesFormSchema>;
 export type TcorFeesFormValues = z.output<typeof tcorFeesFormSchema>;
+
+/** v1.4: the account's risk-tolerance inputs; blank tolerances fall back to the defaults (0.5% and 1% of revenue). */
+const optionalMoney = z
+  .string()
+  .transform((raw) => (raw.trim() === "" ? "" : raw))
+  .pipe(optionalCurrencySchema);
+const lossRatio = z
+  .string()
+  .trim()
+  .transform((raw, ctx) => {
+    if (!/^0?\.\d{1,3}$|^1(\.0{1,3})?$/.test(raw)) {
+      ctx.addIssue({ code: "custom", message: "Enter a ratio such as 0.65" });
+      return z.NEVER;
+    }
+    const n = Number(raw);
+    if (n < 0.1 || n > 1) {
+      ctx.addIssue({ code: "custom", message: "Use a ratio between 0.10 and 1.00" });
+      return z.NEVER;
+    }
+    return n;
+  });
+export const toleranceFormSchema = z
+  .object({
+    toleranceOccurrence: optionalMoney,
+    toleranceYear: optionalMoney,
+    permissibleLossRatio: lossRatio,
+  })
+  .superRefine((v, ctx) => {
+    if (v.toleranceOccurrence !== null && v.toleranceYear !== null && v.toleranceYear < v.toleranceOccurrence) {
+      ctx.addIssue({ code: "custom", path: ["toleranceYear"], message: "The annual tolerance is normally at least the per-occurrence tolerance" });
+    }
+  });
+export type ToleranceFormInput = z.input<typeof toleranceFormSchema>;
+export type ToleranceFormValues = z.output<typeof toleranceFormSchema>;

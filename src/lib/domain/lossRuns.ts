@@ -591,8 +591,6 @@ const LINE_ALIASES: Record<string, LineOfBusiness> = {
   auto: "Commercial Auto",
   umbrella: "Umbrella/Excess",
   excess: "Umbrella/Excess",
-  wc: "Workers Compensation",
-  "workers comp": "Workers Compensation",
   "e&o": "Professional Liability",
   eb: "Equipment Breakdown",
 };

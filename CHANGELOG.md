@@ -1,5 +1,90 @@
 # Changelog
 
+## v1.4 — Documents tab with Vercel Blob; Policy page with certificate generation; automatic strategy findings and estimated retention options; removed Marketing, contract requirements, layer basis, coverage strip and Workers Compensation; ten-account demo book (2026-11-14)
+
+- **Removals.** The Marketing tab, `submissions` and `quotes` tables, the
+  Dashboard market-log card and the report's market-results section are gone.
+  Retention options that were imported from quotes keep their premium in
+  `quote_options.premium` and become manual options; only the quote link is
+  dropped (`0011_removals`). Contract
+  requirements (table, checker, report section, tests), the `basis` column on
+  program layers (per-occurrence is assumed and stated once on the Program tab),
+  the coverage strip (the segment table stays; Placed % is red when it is not
+  100% and the unplaced dollars are shown) and Workers Compensation (line of
+  business, the payroll-by-class checklist item and every demo policy or claim
+  using it; `0010_remove_workers_compensation` deletes existing rows) were
+  removed. Payroll stays as an exposure basis. Tests for removed features were
+  deleted, not skipped. Harbourline and Cedar Ridge replay figures and the
+  Pacific Northwest Terminals coverage figures are unchanged with their existing
+  expected values.
+- **Documents tab** (`documents` table, `0012_documents`). Four folders per
+  account: Proposals (Draft/Final, policy year), Submissions (policy year,
+  markets picked from the workspace's insurers or typed in), Certificates and
+  Policy documents (optionally linked to a policy). Uploads go through a server
+  action to Vercel Blob (private, random pathname, 10 MB, pdf/docx/xlsx/csv/png/
+  jpg); downloads stream through `/w/<slug>/documents/<id>`, which checks the
+  workspace cookie; deleting a document deletes its blob. Lists filter by policy
+  year and status, sort newest first, rename inline, download and delete with a
+  confirm. A missing title, bad type, oversize file or a submission without a
+  market is a field error and stores nothing. Deleting an account, resetting a
+  workspace or replacing it with the demo book deletes the uploaded files too
+  (`deleteUserBlobs`); seed files are shared and stay. Demo banner, empty-folder
+  upload prompt, keyboard and 375 px. `src/lib/domain/documents.ts` holds the file
+  rules, the policy-year label and the certificate reissue rule.
+- **Policy page** (`/w/<slug>/accounts/<id>/policies/<policyId>`) now also
+  shows the claims whose loss date falls in the term with the line's policy-year
+  summary, the program layers of its line group with the tower analysis, a
+  Certificates panel and the documents linked to the policy. **Certificate
+  generation:** holder name and address, description of operations and a
+  checkbox list of other in-force policies; a live preview; the PDF is rendered
+  server-side with `@react-pdf/renderer` (`src/server/certificates/pdf.tsx`)
+  from `certificateContent` in `src/lib/domain/certificates.ts` and filed as a
+  `certificate` document. A certificate is flagged **Reissue needed** when the
+  policy has a successor or has expired. The v0.5 `certificates` table and the
+  Renewals-page panel were removed.
+- **Strategy findings** (`src/lib/domain/strategy.ts`): tolerance settings per
+  account (per occurrence 0.5% of revenue, per policy year 1%, permissible loss
+  ratio 0.65 by default) saved from the tab; `bandAnalysis` (working versus
+  catastrophe bands, self-insure and raise-deductible candidates),
+  `priceFindings` (inverted pricing, participation ≥25% above the other lines'
+  premium-weighted rate on line, renewal rate change ≥10 points above exposure
+  change), `limitAdequacy` (underinsured, excess limit above TIV by >10%),
+  `automaticOptions` (current deductible, per-occurrence tolerance, p50/p75/p90
+  severities; estimated premium = current − increase in retained ÷ PLR, floored
+  at 25% and flagged), `modifiers` and `strategyFindings`. The tab lists the
+  findings by impact with Show the math and an Accept-into-report toggle
+  (`accounts.accepted_findings`); the report gains "Findings and candidates for
+  discussion" and states the tolerances and PLR in Assumptions. Manual and
+  estimated premiums are two columns; the replay runs on the chosen source. Hand-
+  verified in `src/lib/domain/__tests__/findings.test.ts` (Harbourline $125,000
+  option: average 61,000, worst 135,000 in PY2023, increase 42,400, credit
+  65,231, estimated premium 76,769, expected total cost 137,769; inverted pricing
+  and Maplewood participation thresholds; catastrophe bands never produce a
+  retention candidate).
+- **Ten-account demo book.** Harbourline, Cedar Ridge, Pacific Northwest
+  Terminals and Kootenay are fully populated (five policy years of claims on at
+  least two lines, advanced programs for Terminals and Kootenay, deductible
+  schedules on every Property policy, documents in all four folders including a
+  generated certificate, tolerance settings and manual options). Fraser Valley,
+  Summit Ridge, Coastline Dental, Harbourview Inns & Taverns (hospitality),
+  Bramblewood Garden Centres (retail) and Northwind Engineering Partners
+  (professional services) each carry at least three policy years of claims, a
+  simple program, one proposal and one submission. The trailing-12-month
+  resolved set is still exactly 10 renewals, 8 renewed, 1 lost, 1 non-renewed,
+  $1,240,000 expiring and $1,085,000 renewed (87.5% / 80.0%), and the
+  120/121/90/60/30/0-day boundary policies remain. Seed PDFs are generated by the
+  seed (`demoDocuments.tsx`), uploaded to Blob exactly once under `seed/` and
+  shared by every demo workspace (`documents.is_seed`); New workspace from demo
+  and the nightly reset reference the same blobs, and deleting a seed document
+  removes only the row.
+- **Operations.** Environment variables are now `DATABASE_URL`,
+  `BLOB_READ_WRITE_TOKEN` and `CRON_SECRET` (`.env.example`, Settings About).
+  `vercel.json` schedules `/api/cron/reset-demo` daily; it re-loads the demo
+  book into workspaces with `reset_nightly` (set with `SEED_NIGHTLY_RESET=1`).
+  Account tabs are Overview, Loss Runs, Program, Documents, Strategy. Browser
+  suites updated; `scripts/e2e-documents.cjs` covers the Documents tab, the
+  Policy page certificate flow and the findings UI.
+
 ## v1.3 — Account tabs, subscription placements, deductible schedules (2026-11-14)
 
 Account tabs replace Placement; subscription placements with signed lines and multiple towers; deductible schedules with per-peril replay; five more demo accounts.

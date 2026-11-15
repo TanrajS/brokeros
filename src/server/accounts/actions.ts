@@ -6,6 +6,7 @@ import { getDb } from "@/server/db/client";
 import { accounts } from "@/server/db/schema";
 import { describeFailure, fail, fieldErrorsFromZod, ok, type ActionResult } from "@/server/actionResult";
 import { getWorkspaceBySlug } from "@/server/workspace/queries";
+import { deleteUserBlobs } from "@/server/documents/cleanup";
 import { accountFormSchema, type AccountFormInput } from "@/lib/schemas/account";
 
 export async function createAccount(slug: string, input: AccountFormInput): Promise<ActionResult<{ id: string }>> {
@@ -52,6 +53,8 @@ export async function deleteAccount(slug: string, accountId: string): Promise<Ac
     const ws = await getWorkspaceBySlug(slug);
     if (!ws) return fail("That workspace no longer exists.");
     const db = getDb();
+    // Document rows cascade with the account; their uploaded files do not, so remove those first.
+    await deleteUserBlobs(db, ws.id, accountId);
     await db.delete(accounts).where(and(eq(accounts.id, accountId), eq(accounts.workspaceId, ws.id)));
     revalidatePath(`/w/${slug}`, "layout");
     return ok(undefined);
