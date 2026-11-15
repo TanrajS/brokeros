@@ -77,6 +77,14 @@
   shared by every demo workspace (`documents.is_seed`); New workspace from demo
   and the nightly reset reference the same blobs, and deleting a seed document
   removes only the row.
+- **Program diagram:** insurer-only layer blocks and a per-segment Placement
+  column; hatched unplaced blocks removed. Each layer block shows only its
+  insurer segments proportional to their signed shares inside the outline; the
+  Placement column to the right sits on the same dollar scale with one block per
+  coverage segment (green at 100%, red below or above, "over" noted), lists the
+  contributors on hover and scrolls to the matching segment-table row on click.
+  A legend names every insurer and the two placement states; at 375 px the
+  towers stack and the Placement column runs horizontally beneath them.
 - **Operations.** Environment variables are now `DATABASE_URL`,
   `BLOB_READ_WRITE_TOKEN` and `CRON_SECRET` (`.env.example`, Settings About).
   `vercel.json` schedules `/api/cron/reset-demo` daily; it re-loads the demo

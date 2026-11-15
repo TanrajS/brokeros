@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -68,7 +68,12 @@ type Dialogs = { kind: "layer"; layer: ProgramLayerInput | null } | { kind: "par
 
 // Dataviz palette: fully placed aqua; anything below or above 100% red-orange.
 const STATUS_COLOR: Record<CoverageStatus, string> = { fully_placed: "#1baf7a", under_placed: "#d6473c", over_placed: "#d6473c", not_covered: "#d6473c" };
-const INSURER_COLORS = ["#2a78d6", "#1baf7a", "#eda100", "#e87ba4", "#7c6fd6", "#eb6834", "#52514e"];
+/** Twelve distinct insurer swatches, assigned in order of first appearance and stable across towers. */
+const INSURER_COLORS = ["#2a78d6", "#1baf7a", "#eda100", "#e87ba4", "#7c6fd6", "#eb6834", "#52514e", "#0e7490", "#a16207", "#be185d", "#4d7c0f", "#6d28d9"];
+/** Placement column fills: dark enough for white text at 4.5:1 or better (green 6.6:1, red 7.3:1). */
+const PLACEMENT_FILL = { full: "#0b6b4a", off: "#9b1c1c" } as const;
+/** The placed % rounded to whole points for the big label; 100.00% ± 0.01 reads "100%". */
+const bigPct = (share: number) => `${Math.round(share * 100)}%`;
 const pct = (ratio: number, d = 2) => `${(ratio * 100).toFixed(d)}%`;
 const pctPts = (n: number) => `${(+n.toFixed(3)).toString()}%`;
 const str = (n: number | null) => (n === null ? "" : String(n));
@@ -115,6 +120,19 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
     return new Map(names.map((n, i) => [n, INSURER_COLORS[i % INSURER_COLORS.length]]));
   }, [live]);
   const towerFindings = towers.map((t) => ({ tower: t, findings: analyzeTower(towerInputsFrom(live.filter((l) => l.towerLabel === t))).value.findings }));
+  const segments = profile.value.segments;
+  const contributorsOf = (seg: (typeof segments)[number]) => seg.contributions.map((c) => `${c.towerLabel} ${c.label} ${pct(c.share, 0)}`).join(" + ") || "none";
+  // Clicking a Placement block scrolls to its row in the segment table and highlights it for a moment.
+  const [highlighted, setHighlighted] = useState<number | null>(null);
+  useEffect(() => {
+    if (highlighted === null) return;
+    const t = window.setTimeout(() => setHighlighted(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [highlighted]);
+  function focusSegment(i: number) {
+    setHighlighted(i);
+    document.getElementById(`coverage-segment-${i}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
 
   function startEdit(p: ParticipationInput) {
     setDrafts((d) => ({ ...d, [p.id]: { insurer: p.insurer, written: str(p.writtenLinePct), signed: String(p.signedLinePct), premium: String(p.premium) } }));
@@ -208,47 +226,90 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
 
           {/* Diagram */}
           <figure className="flex flex-col gap-2 rounded-lg border p-3">
-            <div className="flex gap-3 overflow-x-auto" role="img" aria-label={`${towers.length} tower${towers.length === 1 ? "" : "s"} drawn to ${formatCurrency(top)}; coverage ${profile.value.fullyPlaced ? "fully placed" : "not fully placed"}`}>
-              <div className="relative h-80 w-16 shrink-0 text-right text-[10px] text-muted-foreground" aria-hidden="true">
+            <ul className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" aria-label="Legend">
+              {[...insurerColor.entries()].map(([name, color]) => (
+                <li key={name} className="flex items-center gap-1">
+                  <span className="inline-block size-3 rounded-sm" style={{ background: color }} aria-hidden="true" />
+                  {name.replace(" (fictional)", "")}
+                </li>
+              ))}
+              <li className="flex items-center gap-1">
+                <span className="inline-block size-3 rounded-sm" style={{ background: PLACEMENT_FILL.full }} aria-hidden="true" />
+                100% placed
+              </li>
+              <li className="flex items-center gap-1">
+                <span className="inline-block size-3 rounded-sm" style={{ background: PLACEMENT_FILL.off }} aria-hidden="true" />
+                Below or above 100%
+              </li>
+            </ul>
+            <div className="flex flex-col gap-3 md:flex-row">
+              <div className="relative hidden h-80 w-16 shrink-0 text-right text-[10px] text-muted-foreground md:block" aria-hidden="true">
                 {[0, 0.25, 0.5, 0.75, 1].map((f) => (
                   <span key={f} className={cn("absolute right-1 whitespace-nowrap", f === 1 ? "top-0" : f === 0 ? "bottom-0" : "-translate-y-1/2")} style={f === 1 || f === 0 ? undefined : { bottom: `${f * 100}%` }}>
                     {formatCompactDollars(Math.round(top * f)).value}
                   </span>
                 ))}
               </div>
-              {towers.map((t) => (
-                <div key={t} className="flex min-w-44 flex-1 flex-col gap-1">
-                  <div className="relative h-80 rounded border bg-muted/30">
-                    {summaries
-                      .filter((s) => s.layer.towerLabel === t)
-                      .map((s) => {
-                        const bottom = (s.layer.attachment / top) * 100;
-                        const height = Math.max(2, ((s.exhaustion - s.layer.attachment) / top) * 100);
-                        return (
-                          <div key={s.layer.id} className="absolute inset-x-1 flex overflow-hidden rounded border border-primary/40 text-[10px] leading-tight" style={{ bottom: `${bottom}%`, height: `${Math.min(height, 100 - bottom)}%` }} title={`${s.label}: ${pct(s.placedShare, 1)} placed, ${formatCurrency(s.layerPremium)}`}>
-                            {s.participations.map((p) => (
-                              <div key={p.id} className="flex items-center justify-center overflow-hidden px-0.5 text-white" style={{ width: `${p.signedLinePct}%`, background: insurerColor.get(p.insurer) }}>
-                                <span className="truncate">
-                                  {p.insurer.replace(" (fictional)", "")} {pctPts(p.signedLinePct)}
-                                </span>
-                              </div>
-                            ))}
-                            {s.placedShare < 1 ? (
-                              <div className="flex flex-1 items-center justify-center bg-[repeating-linear-gradient(45deg,#fde68a_0_6px,#fff7d6_6px_12px)] text-amber-900">
-                                <span className="truncate">unplaced {pctPts(s.underPlacedPct)}</span>
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })}
+              <div className="flex flex-col gap-3 md:flex-1 md:flex-row" role="img" aria-label={`${towers.length} tower${towers.length === 1 ? "" : "s"} drawn to ${formatCurrency(top)}; coverage ${profile.value.fullyPlaced ? "fully placed" : "not fully placed"}`}>
+                {towers.map((t) => (
+                  <div key={t} className="flex flex-col gap-1 md:min-w-44 md:flex-1">
+                    <div className="relative h-80 rounded border bg-background">
+                      {summaries
+                        .filter((s) => s.layer.towerLabel === t)
+                        .map((s) => {
+                          const bottom = (s.layer.attachment / top) * 100;
+                          const height = Math.max(2, ((s.exhaustion - s.layer.attachment) / top) * 100);
+                          return (
+                            <div key={s.layer.id} className="absolute inset-x-1 flex overflow-hidden rounded border border-primary/40 bg-background text-[10px] leading-tight" style={{ bottom: `${bottom}%`, height: `${Math.min(height, 100 - bottom)}%` }} title={`${s.label}: ${pct(s.placedShare, 1)} placed, ${formatCurrency(s.layerPremium)}`}>
+                              {s.participations.map((p) => (
+                                <div key={p.id} className="flex items-center justify-center overflow-hidden px-0.5 text-white" style={{ width: `${p.signedLinePct}%`, background: insurerColor.get(p.insurer) }}>
+                                  <span className="truncate">
+                                    {p.insurer.replace(" (fictional)", "")} {pctPts(p.signedLinePct)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })}
+                    </div>
+                    <p className="text-center text-xs font-medium">{t}</p>
                   </div>
-                  <p className="text-center text-xs font-medium">{t}</p>
+                ))}
+              </div>
+              {/* Placement column: one block per coverage segment on the same dollar scale (vertical on md+, horizontal on a phone). */}
+              <div className="flex flex-col gap-1 md:w-[40%] md:max-w-48 md:min-w-28 md:shrink-0">
+                <div
+                  role="group"
+                  aria-label={`Placement by segment: ${segments.map((seg) => `${formatCurrency(seg.from)} to ${formatCurrency(seg.to)}: ${bigPct(seg.placedShare)} placed${seg.status === "over_placed" ? " (over)" : ""}`).join("; ")}`}
+                  className="relative h-24 rounded border bg-background md:h-80"
+                >
+                  {segments.map((seg, i) => {
+                    const from = (seg.from / top) * 100;
+                    const size = Math.max(2, (seg.width / top) * 100);
+                    const full = seg.status === "fully_placed";
+                    return (
+                      <button
+                        key={`${seg.from}-${seg.to}`}
+                        type="button"
+                        onClick={() => focusSegment(i)}
+                        title={contributorsOf(seg)}
+                        aria-label={`${formatCurrency(seg.from)} to ${formatCurrency(seg.to)}: ${bigPct(seg.placedShare)} placed${seg.status === "over_placed" ? ", over-placed" : ""}. ${contributorsOf(seg)}. Show in the segment table`}
+                        className="absolute flex flex-col items-center justify-center overflow-hidden rounded border border-white/70 text-white outline-none focus-visible:ring-3 focus-visible:ring-ring/50 max-md:inset-y-1 max-md:left-[var(--from)] max-md:w-[var(--size)] md:inset-x-1 md:bottom-[var(--from)] md:h-[var(--size)]"
+                        style={{ "--from": `${from}%`, "--size": `${Math.min(size, 100 - from)}%`, background: full ? PLACEMENT_FILL.full : PLACEMENT_FILL.off } as React.CSSProperties}
+                      >
+                        <span className="text-base font-semibold leading-none">{bigPct(seg.placedShare)}</span>
+                        {seg.status === "over_placed" ? <span className="text-[10px] leading-tight">over</span> : null}
+                        <span className="max-w-full truncate px-0.5 text-[10px] leading-tight opacity-90">
+                          {formatCompactDollars(seg.from).value} to {formatCompactDollars(seg.to).value}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
-              ))}
+                <p className="text-center text-xs font-medium">Placement</p>
+              </div>
             </div>
-            <figcaption className="text-xs text-muted-foreground">
-              Each block is a layer, split by insurer share; hatched = unplaced. The segment table below adds every tower&apos;s share per segment; a placed % in red is below or above 100%.
-            </figcaption>
+            <figcaption className="text-xs text-muted-foreground">Each block is a layer split by insurer share; the Placement column adds every tower&apos;s share per segment. Red means a segment is below or above 100%.</figcaption>
           </figure>
 
           {/* Coverage table */}
@@ -266,12 +327,12 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {profile.value.segments.map((seg, i) => (
-                  <tr key={`${seg.from}-${seg.to}`}>
+                {segments.map((seg, i) => (
+                  <tr key={`${seg.from}-${seg.to}`} id={`coverage-segment-${i}`} className={cn("transition-colors", highlighted === i && "bg-primary/10 ring-2 ring-inset ring-primary/50")}>
                     <td className={`${cell} whitespace-nowrap`}>
                       {formatCurrency(seg.from)} to {formatCurrency(seg.to)}
                     </td>
-                    <td className={`${cell} text-xs`}>{seg.contributions.map((c) => `${c.towerLabel} ${c.label} ${pct(c.share, 0)}`).join(" + ") || "none"}</td>
+                    <td className={`${cell} text-xs`}>{contributorsOf(seg)}</td>
                     <td className={cn(cell, "text-right font-medium", seg.status !== "fully_placed" && "text-red-800")}>{pct(seg.placedShare)}</td>
                     <td className={cell}>
                       <Badge variant="outline" style={{ borderColor: STATUS_COLOR[seg.status], color: seg.status === "fully_placed" ? "#0b6b4a" : "#9b1c1c" }}>
