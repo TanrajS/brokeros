@@ -1,5 +1,58 @@
 # Changelog
 
+## v1.3 — Account tabs, subscription placements, deductible schedules (2026-11-14)
+
+Account tabs replace Placement; subscription placements with signed lines and multiple towers; deductible schedules with per-peril replay; five more demo accounts.
+
+- **Account tabs.** Placement leaves the left navigation. The Account page is
+  the Overview tab and gains Loss Runs, Program, Marketing and Strategy under
+  the account name (`/w/<slug>/accounts/<id>/<tab>`). Tabs are a keyboard
+  tablist (arrow keys, Home/End, Enter), show count badges (claims, layers,
+  quotes, options) and scroll horizontally at 375 px. Old `/placement/…` URLs
+  redirect to the matching tab; the market log lives at `/w/<slug>/market-log`.
+  Marketing and Strategy default to the policy with the fewest days to expiry
+  that has no outcome yet, remembered in the URL.
+- **Subscription placements** (`program_layers` + `layer_participations`
+  replace `tower_layers`; existing layers are converted automatically into one
+  layer in "Tower 1" with one participation signed at 100%). New domain
+  functions `layerSummary`, `coverageProfile`, `programTotals`, `signDown`,
+  `towerInputsFrom`, `validatePlacementRows`. Layer types gain `quota_share`;
+  layers carry a basis (per occurrence, per location, aggregate) and a tower
+  label; a Property line group joins GL and Auto.
+- **Program tab:** Simple / Advanced toggle (Advanced switches on by itself
+  when a layer has several insurers or there is more than one tower). The
+  advanced view draws the towers side by side on one dollar scale with each
+  layer segmented by insurer share and a coverage strip (green 100%, amber
+  under, red over or not covered), then a participation table editable inline
+  with layer and program totals that recompute as you type. Import a placement
+  schedule CSV (preview and validate: percentages 0–100, signed ≤ written,
+  non-negative amounts, duplicate insurer in a layer rejected) and export the
+  same schedule as a slip-style CSV. The strategy report shows the coverage
+  profile and participations when a program is advanced.
+- **Deductible schedules** (`policy_deductibles`): per-peril rules of kind
+  flat, percent of loss, percent of value or waiting period, with minimum,
+  maximum, hours and notes. The policy's deductible field is the default (all
+  other perils) row and the two stay in sync. `deductibleForClaim` and
+  `matchRule` in `src/lib/domain/deductibles.ts`. Claims gain a peril (default
+  All other perils) and an optional value at risk; the claims CSV import accepts
+  both as optional columns. The retention replay uses the matching rule per
+  claim and lets an option replace only the default deductible, so the
+  Harbourline and Cedar Ridge figures are unchanged (tested). Policy pages get a
+  Deductible schedule section with add, edit, delete and Import schedule CSV;
+  policy tables show an "N deductibles" chip; the strategy report lists the
+  schedule in force.
+- **Demo book:** five more fictional accounts (Pacific Northwest Terminals with
+  the two-tower $300M placement and a 12-line schedule; Kootenay Alpine Resorts;
+  Fraser Valley Logistics; Summit Ridge Builders; Coastline Dental Group), each
+  with five policy years of claims, a program, a contract requirement, a
+  certificate, three to five submissions with quotes and retention options.
+  Their current terms run from 2025-11-12 to a longer term, so nothing of theirs
+  enters the trailing-12-month resolved set and the Dashboard still shows 80.0%
+  count and 87.5% premium retention. The 14-account base book every earlier test
+  pins is unchanged; `buildFullDemoBook` adds the five.
+- **Migrations** `0006_advanced_placement`, `0007_convert_tower_layers`
+  (custom data copy), `0008_drop_tower_layers`, `0009_property_line_group`.
+
 ## v1.2 — Strategy (2026-11-14)
 
 Strategy: retention optimizer, total cost of risk, renewal strategy report.

@@ -50,6 +50,8 @@ export async function loadLossRunInputs(ws: Workspace, accountId: string): Promi
       reserved: c.reserved,
       status: c.status,
       policyId: c.policyId,
+      peril: c.peril,
+      valueAtRisk: c.valueAtRisk,
     })),
   };
 }

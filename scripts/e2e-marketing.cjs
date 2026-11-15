@@ -24,11 +24,11 @@ const section = (p, id) => main(p).locator(`section[aria-labelledby='${id}']`);
 const flat = (s) => s.replace(/\s+/g, " ");
 
 async function openMarketing(p, slug, account) {
-  await p.goto(`${BASE}/w/${slug}/placement`);
+  await p.goto(`${BASE}/w/${slug}`);
   await settle(p);
   await main(p).getByRole("link", { name: account, exact: true }).click();
-  await p.waitForURL(/loss-runs$/);
-  await p.goto(p.url().replace(/loss-runs$/, "marketing"));
+  await p.waitForURL(/\/accounts\/[0-9a-f-]{36}$/);
+  await p.goto(`${p.url()}/marketing`);
   await settle(p);
 }
 
@@ -99,7 +99,7 @@ async function openMarketing(p, slug, account) {
   await page.emulateMedia({ media: "screen" });
 
   // Market log
-  await page.goto(`${BASE}/w/${SEED}/placement/marketing`);
+  await page.goto(`${BASE}/w/${SEED}/market-log`);
   await settle(page);
   const maplewood = flat(await main(page).locator("tr", { hasText: "Maplewood" }).innerText());
   check("market log flags Maplewood: 4 sent, no quotes", /4 sent, no quotes/.test(maplewood) && /Class of business 1/.test(maplewood), maplewood);
@@ -119,7 +119,7 @@ async function openMarketing(p, slug, account) {
   await main(w).getByRole("button", { name: "Load demo book" }).click();
   await main(w).getByRole("link", { name: "Harbourline Foods Inc." }).waitFor({ timeout: 30000 });
   await openMarketing(w, slug, "Harbourline Foods Inc.");
-  const wUrl = w.url();
+  const wPolicyHref = `${BASE}${await main(w).getByRole("navigation", { name: "Policy being marketed" }).locator('a[aria-current="page"]').getAttribute("href")}`;
   const carriersSec = () => section(w, "carriers-heading");
 
   // Planned carrier: no quote button until submitted
@@ -160,7 +160,7 @@ async function openMarketing(p, slug, account) {
   await main(w).getByText("This term vs its renewal").waitFor();
   check("renewal recorded with the new carrier", (await main(w).getByText(/renewed with Pacific Crest Insurance \(fictional\) at \$142,000|General Liability · Pacific Crest Insurance \(fictional\)/).count()) >= 1);
 
-  await w.goto(wUrl);
+  await w.goto(wPolicyHref);
   await settle(w);
   const pacific2 = section(w, "carriers-heading").locator(":scope > ul > li", { hasText: "Pacific Crest" });
   check("Pacific Crest shows Bound; Unbind blocked once the outcome exists", (await pacific2.getByText("Bound", { exact: true }).count()) >= 1 && (await pacific2.getByRole("button", { name: "Unbind" }).isDisabled()));
@@ -168,7 +168,7 @@ async function openMarketing(p, slug, account) {
 
   // Mobile
   await w.setViewportSize({ width: 375, height: 760 });
-  for (const url of [`${BASE}/w/${SEED}/placement/marketing`, marketingUrl.replace(BASE, BASE)]) {
+  for (const url of [`${BASE}/w/${SEED}/market-log`, marketingUrl.replace(BASE, BASE)]) {
     await w.goto(url);
     await settle(w);
     const sw = await w.evaluate(() => document.documentElement.scrollWidth);

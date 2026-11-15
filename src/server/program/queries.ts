@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, eq, inArray } from "drizzle-orm";
-import type { CertificateInput, ProgramPolicy, RequirementInput, TowerLayerInput } from "@/lib/domain/program";
+import type { CertificateInput, ProgramLayerInput, ProgramPolicy, RequirementInput } from "@/lib/domain/program";
 import { certificateStatus } from "@/lib/domain/program";
 import { getDb } from "@/server/db/client";
 import {
@@ -8,17 +8,19 @@ import {
   certificates,
   renewalOutcomes,
   contractRequirements,
+  layerParticipations,
   policies,
   policyParticipants,
   policySublimits,
-  towerLayers,
+  programLayers,
   type Account,
   type Certificate,
   type ContractRequirement,
+  type LayerParticipation,
   type Policy,
   type PolicyParticipant,
   type PolicySublimit,
-  type TowerLayer,
+  type ProgramLayer,
   type Workspace,
 } from "@/server/db/schema";
 
@@ -38,8 +40,30 @@ export function toProgramPolicy(p: Policy, renewedOn: string | null = null): Pro
   };
 }
 
-export function toTowerInput(l: TowerLayer): TowerLayerInput {
-  return { id: l.id, layerType: l.layerType, attachment: l.attachment, limit: l.limit, premium: l.premium, carrier: l.carrier };
+/** A program layer with its participations, as the domain expects it (v1.3). */
+export function toProgramLayerInput(l: ProgramLayer, parts: LayerParticipation[]): ProgramLayerInput {
+  return {
+    id: l.id,
+    towerLabel: l.towerLabel,
+    layerType: l.layerType,
+    attachment: l.attachment,
+    limit: l.limit,
+    basis: l.basis,
+    policyId: l.policyId,
+    notes: l.notes,
+    participations: parts.map((p) => ({ id: p.id, insurer: p.insurer, writtenLinePct: p.writtenLinePct, signedLinePct: p.signedLinePct, premium: p.premium, policyNumber: p.policyNumber, isLead: p.isLead })),
+  };
+}
+
+/** Layers and participations for one account, joined, oldest participation first within a layer. */
+export async function loadProgramLayers(workspaceId: string, accountId: string): Promise<{ layerRows: ProgramLayer[]; participationRows: LayerParticipation[]; layers: ProgramLayerInput[] }> {
+  const db = getDb();
+  const layerRows = await db.select().from(programLayers).where(and(eq(programLayers.workspaceId, workspaceId), eq(programLayers.accountId, accountId))).orderBy(asc(programLayers.towerLabel), asc(programLayers.attachment), asc(programLayers.limit));
+  const participationRows = layerRows.length
+    ? await db.select().from(layerParticipations).where(inArray(layerParticipations.layerId, layerRows.map((l) => l.id))).orderBy(asc(layerParticipations.createdAt), asc(layerParticipations.insurer))
+    : [];
+  const layers = layerRows.map((l) => toProgramLayerInput(l, participationRows.filter((p) => p.layerId === l.id)));
+  return { layerRows, participationRows, layers };
 }
 
 export function toRequirementInput(r: ContractRequirement): RequirementInput {
@@ -72,7 +96,10 @@ export interface ProgramInputs {
   account: Account;
   policies: Policy[];
   renewedOn: Map<string, string>;
-  layers: TowerLayer[];
+  /** Raw layer rows (line group lives here). */
+  layerRows: ProgramLayer[];
+  /** Layers with participations; filter by `layerRows` line group through `layersFor`. */
+  layers: ProgramLayerInput[];
   requirements: ContractRequirement[];
   certificates: Certificate[];
   participantsByPolicy: Map<string, PolicyParticipant[]>;
@@ -83,9 +110,9 @@ export async function loadProgramInputs(ws: Workspace, accountId: string): Promi
   const db = getDb();
   const account = await db.query.accounts.findFirst({ where: and(eq(accounts.id, accountId), eq(accounts.workspaceId, ws.id)) });
   if (!account) return null;
-  const [policyRows, layerRows, requirementRows, certificateRows] = await Promise.all([
+  const [policyRows, program, requirementRows, certificateRows] = await Promise.all([
     db.select().from(policies).where(and(eq(policies.workspaceId, ws.id), eq(policies.accountId, accountId))).orderBy(asc(policies.effectiveDate)),
-    db.select().from(towerLayers).where(and(eq(towerLayers.workspaceId, ws.id), eq(towerLayers.accountId, accountId))).orderBy(asc(towerLayers.attachment)),
+    loadProgramLayers(ws.id, accountId),
     db.select().from(contractRequirements).where(and(eq(contractRequirements.workspaceId, ws.id), eq(contractRequirements.accountId, accountId))).orderBy(asc(contractRequirements.contractName), asc(contractRequirements.coverage)),
     db.select().from(certificates).where(and(eq(certificates.workspaceId, ws.id), eq(certificates.accountId, accountId))).orderBy(asc(certificates.holder)),
   ]);
@@ -97,7 +124,13 @@ export async function loadProgramInputs(ws: Workspace, accountId: string): Promi
   ]);
   const participantsByPolicy = new Map<string, PolicyParticipant[]>();
   for (const r of participantRows) participantsByPolicy.set(r.policyId, [...(participantsByPolicy.get(r.policyId) ?? []), r]);
-  return { account, policies: policyRows, renewedOn, layers: layerRows, requirements: requirementRows, certificates: certificateRows, participantsByPolicy };
+  return { account, policies: policyRows, renewedOn, layerRows: program.layerRows, layers: program.layers, requirements: requirementRows, certificates: certificateRows, participantsByPolicy };
+}
+
+/** The layers of one line group. */
+export function layersFor(inputs: Pick<ProgramInputs, "layerRows" | "layers">, lineGroup: ProgramLayer["lineGroup"]): ProgramLayerInput[] {
+  const ids = new Set(inputs.layerRows.filter((l) => l.lineGroup === lineGroup).map((l) => l.id));
+  return inputs.layers.filter((l) => ids.has(l.id));
 }
 
 /** A policy's co-insurers and sub-limits, for the policy page. */

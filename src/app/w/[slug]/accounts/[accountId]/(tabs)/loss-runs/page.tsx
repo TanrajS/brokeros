@@ -28,7 +28,7 @@ import {
 } from "@/lib/domain/lossRuns";
 import { formatCurrency, formatDate, formatRatioPercent } from "@/lib/format";
 import { loadLossRunInputs } from "@/server/lossRuns/queries";
-import { requireWorkspace } from "../../../lib";
+import { requireWorkspace } from "../../../../lib";
 
 export const metadata: Metadata = { title: "Loss runs" };
 

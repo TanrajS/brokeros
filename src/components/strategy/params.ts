@@ -21,7 +21,7 @@ export function strategyHref(slug: string, accountId: string, q: StrategyQuery, 
   const params = new URLSearchParams();
   for (const key of ["policy", "years", "current", "trend", "ldf"] as const) if (next[key]) params.set(key, next[key]);
   const qs = params.toString();
-  return `/w/${slug}/placement/${accountId}/strategy${page}${qs ? `?${qs}` : ""}`;
+  return `/w/${slug}/accounts/${accountId}/strategy${page}${qs ? `?${qs}` : ""}`;
 }
 
 type SP = Record<string, string | string[] | undefined>;

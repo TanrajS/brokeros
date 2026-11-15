@@ -14,18 +14,19 @@ import { parseStrategyQuery, strategyHref } from "@/components/strategy/params";
 import { EXPOSURE_BASIS_LABELS, SUBMISSION_STATUS_LABELS } from "@/lib/constants";
 import { policyYearSummary } from "@/lib/domain/lossRuns";
 import { formatLimit } from "@/lib/domain/money";
-import { LINE_GROUP_LABELS, REQUIREMENT_STATUS_LABELS, analyzeTower, checkRequirements, type LineGroup } from "@/lib/domain/program";
+import { COVERAGE_STATUS_LABELS, LAYER_BASIS_LABELS, LINE_GROUP_LABELS, REQUIREMENT_STATUS_LABELS, analyzeTower, checkRequirements, coverageProfile, isAdvancedProgram, programTotals, towerInputsFrom, type LineGroup } from "@/lib/domain/program";
+import { describeRule } from "@/lib/domain/deductibles";
 import { formatCurrency, formatDate, formatInteger, formatRatioPercent, formatSignedPercent, titleCase } from "@/lib/format";
 import { buildMarketingView } from "@/server/marketing/view";
-import { loadProgramInputs, toProgramPolicy, toRequirementInput, toTowerInput } from "@/server/program/queries";
+import { layersFor, loadProgramInputs, toProgramPolicy, toRequirementInput } from "@/server/program/queries";
 import { buildStrategyView } from "@/server/strategy/view";
-import { requireWorkspace } from "../../../../lib";
+import { requireWorkspace } from "../../../../../lib";
 
 export const metadata: Metadata = { title: "Renewal strategy report" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
 const money = (n: number | null | undefined) => formatCurrency(n) ?? "—";
-const groupFor = (line: string): LineGroup | null => (line === "General Liability" ? "gl" : line === "Commercial Auto" ? "auto" : null);
+const groupFor = (line: string): LineGroup | null => (line === "General Liability" ? "gl" : line === "Commercial Auto" ? "auto" : line === "Property" ? "property" : null);
 
 /**
  * The client-facing document: profile and exposures, program, loss history,
@@ -39,7 +40,7 @@ export default async function StrategyReportPage({ params, searchParams }: { par
   const q = parseStrategyQuery(sp);
   const view = await buildStrategyView(ws, accountId, q);
   if (!view || !view.policy) notFound();
-  const { policy, line, data, analysis, replay, inForce, otherLines, tcorByOption, tcorValues, considerations, assumptions } = view;
+  const { policy, line, data, analysis, replay, schedule, inForce, otherLines, tcorByOption, tcorValues, considerations, assumptions } = view;
   const query = { ...q, policy: policy.id };
   const [program, marketing] = await Promise.all([loadProgramInputs(ws, accountId), buildMarketingView(ws, accountId, { policy: policy.id, target: "", normalise: false, sort: "premium" })]);
   if (!program) notFound();
@@ -48,13 +49,20 @@ export default async function StrategyReportPage({ params, searchParams }: { par
 
   // Program summary: the tower for this line's group (GL or Auto), when one exists.
   const group = groupFor(line);
-  const groupLayers = group ? program.layers.filter((l) => l.lineGroup === group) : [];
-  const tower = groupLayers.length ? analyzeTower(groupLayers.map(toTowerInput)) : null;
+  const groupLayers = group ? layersFor(program, group) : [];
+  const towerInputs = towerInputsFrom(groupLayers);
+  const tower = groupLayers.length ? analyzeTower(towerInputs) : null;
+  // v1.3: a subscription placement shows its coverage profile and participations instead of the single-insurer tower.
+  const advanced = isAdvancedProgram(groupLayers);
+  const tiv = policy.insurableValue ?? data.policies.find((p) => groupLayers.some((l) => l.policyId === p.id) && p.insurableValue !== null)?.insurableValue ?? null;
+  const profile = advanced ? coverageProfile(groupLayers, tiv).value : null;
+  const totals = advanced ? programTotals(groupLayers, tiv).value : null;
+  const scheduleRules = schedule.filter((r) => !r.isDefault);
 
   // Contract requirements against current terms, with the line group's tower (umbrella not counted, the checker's default view).
   const superseded = new Set(program.policies.map((p) => p.previousPolicyId).filter((x): x is string => x !== null));
   const currentPolicies = program.policies.filter((p) => !superseded.has(p.id) && p.expiryDate > ws.asOfDate).map((p) => toProgramPolicy(p, program.renewedOn.get(p.id) ?? null));
-  const requirements = checkRequirements(program.requirements.map(toRequirementInput), currentPolicies, groupLayers.map(toTowerInput), { countUmbrella: false }).value;
+  const requirements = checkRequirements(program.requirements.map(toRequirementInput), currentPolicies, towerInputs, { countUmbrella: false }).value;
 
   // Five-year loss history on the same basis as the replay.
   const losses = policyYearSummary({ claims: data.claims, policies: data.lrPolicies, line, asOf: ws.asOfDate, adjustments: replay.adjustments }).value;
@@ -155,12 +163,108 @@ export default async function StrategyReportPage({ params, searchParams }: { par
         </div>
       </section>
 
+      {scheduleRules.length > 0 ? (
+        <section aria-labelledby="rp-schedule" className={sec}>
+          <h3 id="rp-schedule" className={h3}>
+            Deductible schedule in force ({line})
+          </h3>
+          <ul className="list-disc pl-6 text-sm print:text-xs">
+            <li>All other perils (default): {policy.deductible === null ? "not entered" : money(policy.deductible)}</li>
+            {scheduleRules.map((r) => (
+              <li key={r.id ?? r.appliesTo}>{describeRule(r)}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {/* 2. Program summary */}
       <section aria-labelledby="rp-program" className={sec}>
         <h2 id="rp-program" className={h2}>
           2. Program summary
         </h2>
-        {tower && group ? (
+        {advanced && profile && totals && group ? (
+          <>
+            <p className="text-sm text-muted-foreground print:text-xs">
+              {LINE_GROUP_LABELS[group]} placed on a subscription basis across {new Set(groupLayers.map((l) => l.towerLabel)).size} tower{new Set(groupLayers.map((l) => l.towerLabel)).size === 1 ? "" : "s"}: program premium {money(totals.totalPremium)}, placed limit{" "}
+              {money(totals.totalPlacedLimit)}
+              {totals.ratePer100Tiv !== null ? `, $${totals.ratePer100Tiv.toFixed(4)} per $100 of the ${money(tiv)} TIV` : ""}. Coverage is {profile.fullyPlaced ? "100% at every point" : `not fully placed (${money(profile.totalUnplacedDollars)} unplaced)`}.
+              {profile.bases.length > 1 ? ` Layers mix bases (${profile.bases.map((b) => LAYER_BASIS_LABELS[b].toLowerCase()).join(", ")}); the profile adds shares across bases.` : ""}
+            </p>
+            <div className="relative overflow-x-auto rounded-lg border">
+              <table className="w-full min-w-[30rem] text-sm print:text-xs">
+                <caption className="sr-only">Coverage profile</caption>
+                <thead className="border-b bg-muted/40">
+                  <tr>
+                    <th className={th}>Segment ($)</th>
+                    <th className={th}>Layers</th>
+                    <th className={`${th} text-right`}>Placed (%)</th>
+                    <th className={th}>Status</th>
+                    <th className={`${th} text-right`}>Unplaced ($)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {profile.segments.map((seg) => (
+                    <tr key={`${seg.from}-${seg.to}`}>
+                      <td className={`${td} whitespace-nowrap`}>
+                        {money(seg.from)} to {money(seg.to)}
+                      </td>
+                      <td className={td}>{seg.contributions.map((c) => `${c.towerLabel} ${c.label} ${(c.share * 100).toFixed(0)}%`).join(" + ") || "none"}</td>
+                      <td className={`${td} text-right`}>{(seg.placedShare * 100).toFixed(2)}%</td>
+                      <td className={td}>{COVERAGE_STATUS_LABELS[seg.status]}</td>
+                      <td className={`${td} text-right`}>{seg.unplacedDollars > 0 ? money(seg.unplacedDollars) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="relative overflow-x-auto rounded-lg border">
+              <table className="w-full min-w-[40rem] text-sm print:text-xs">
+                <caption className="sr-only">Participations</caption>
+                <thead className="border-b bg-muted/40">
+                  <tr>
+                    <th className={th}>Tower</th>
+                    <th className={th}>Layer</th>
+                    <th className={th}>Insurer</th>
+                    <th className={`${th} text-right`}>Written (%)</th>
+                    <th className={`${th} text-right`}>Signed (%)</th>
+                    <th className={`${th} text-right`}>Premium ($)</th>
+                    <th className={`${th} text-right`}>Exposed limit ($)</th>
+                    <th className={`${th} text-right`}>Rate on line (%)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {totals.layers.flatMap((s) => [
+                    ...s.participations.map((p) => (
+                      <tr key={p.id}>
+                        <td className={td}>{s.layer.towerLabel}</td>
+                        <td className={td}>{s.label}</td>
+                        <td className={td}>
+                          {p.insurer}
+                          {p.isLead ? " (lead)" : ""}
+                        </td>
+                        <td className={`${td} text-right`}>{p.writtenLinePct === null ? "—" : `${p.writtenLinePct}%`}</td>
+                        <td className={`${td} text-right`}>{p.signedLinePct}%</td>
+                        <td className={`${td} text-right`}>{money(p.premium)}</td>
+                        <td className={`${td} text-right`}>{money(p.exposedLimit)}</td>
+                        <td className={`${td} text-right`}>{p.rateOnLine === null ? "—" : `${(p.rateOnLine * 100).toFixed(4)}%`}</td>
+                      </tr>
+                    )),
+                    <tr key={`${s.layer.id}-total`} className="bg-muted/20 font-medium">
+                      <td className={td} colSpan={3}>
+                        {s.layer.towerLabel} {s.label}: layer total
+                      </td>
+                      <td className={td} />
+                      <td className={`${td} text-right`}>{(s.placedShare * 100).toFixed(1)}%</td>
+                      <td className={`${td} text-right`}>{money(s.layerPremium)}</td>
+                      <td className={`${td} text-right`}>{money(s.placedLimit)}</td>
+                      <td className={`${td} text-right`}>{s.rateOnLine === null ? "—" : `${(s.rateOnLine * 100).toFixed(4)}%`}</td>
+                    </tr>,
+                  ])}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : tower && group ? (
           <>
             <p className="text-sm text-muted-foreground print:text-xs">
               {LINE_GROUP_LABELS[group]} tower: {tower.value.layers.length} layer{tower.value.layers.length === 1 ? "" : "s"}

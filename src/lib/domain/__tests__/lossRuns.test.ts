@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  IMPORT_COLUMNS,
   adjustIncurred,
   assignPolicyYear,
   checkImportColumns,
@@ -353,5 +354,23 @@ describe("CSV import validation", () => {
     const [r] = validateImportRows([{ ...good, reserved: "500" }], { asOf, existingClaimNumbers: [] }).value;
     expect(r.valid).toBe(true);
     expect(r.warnings).toEqual(["closed with a reserve"]);
+  });
+});
+
+describe("claims import: optional peril and value at risk (v1.3)", () => {
+  it("accepts the optional columns and rejects a negative value at risk", () => {
+    const base = { claim_number: "X-1", line: "Property", date_of_loss: "2026-01-05", date_reported: "2026-01-06", description: "", paid: "1000", reserved: "0", status: "closed" };
+    const rs = validateImportRows(
+      [
+        { ...base, peril: "Flood", value_at_risk: "2,500,000" },
+        { ...base, claim_number: "X-2" },
+        { ...base, claim_number: "X-3", value_at_risk: "-5" },
+      ],
+      { asOf: "2026-11-12", existingClaimNumbers: [] },
+    ).value;
+    expect(rs[0].parsed).toMatchObject({ peril: "Flood", valueAtRisk: 2_500_000 });
+    expect(rs[1].parsed).toMatchObject({ peril: null, valueAtRisk: null });
+    expect([rs[2].valid, rs[2].reasons]).toEqual([false, ["negative value at risk"]]);
+    expect(checkImportColumns([...IMPORT_COLUMNS, "peril", "value_at_risk", "colour"]).value.extra).toEqual(["colour"]);
   });
 });

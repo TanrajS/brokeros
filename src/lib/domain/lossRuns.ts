@@ -34,6 +34,9 @@ export interface LRClaim {
   reserved: number;
   status: ClaimStatus;
   policyId: string | null;
+  /** v1.3: peril or coverage part ("All other perils" when absent) and the value at risk for percent-of-value deductibles. */
+  peril?: string | null;
+  valueAtRisk?: number | null;
 }
 
 export interface PolicyPeriod {
@@ -567,15 +570,18 @@ export function openClaims(claims: LRClaim[]): Calc<OpenClaims> {
 
 export const IMPORT_COLUMNS = ["claim_number", "line", "date_of_loss", "date_reported", "description", "paid", "reserved", "status"] as const;
 export type ImportColumn = (typeof IMPORT_COLUMNS)[number];
+/** v1.3: optional columns the import also understands. */
+export const IMPORT_OPTIONAL_COLUMNS = ["peril", "value_at_risk"] as const;
 
 /** Which required columns are missing and which extra ones were found (headers compared case-insensitively). */
 export function checkImportColumns(headers: string[]): Calc<{ missing: ImportColumn[]; extra: string[] }> {
   const seen = new Set(headers.map((h) => h.trim().toLowerCase()));
   const missing = IMPORT_COLUMNS.filter((c) => !seen.has(c));
-  const extra = headers.filter((h) => !(IMPORT_COLUMNS as readonly string[]).includes(h.trim().toLowerCase()));
+  const known = [...IMPORT_COLUMNS, ...IMPORT_OPTIONAL_COLUMNS] as readonly string[];
+  const extra = headers.filter((h) => !known.includes(h.trim().toLowerCase()));
   return {
     value: { missing, extra },
-    math: { inputs: { headers }, formula: "every template column must be present, in any order", steps: { lines: [missing.length ? `Missing: ${missing.join(", ")}` : "All columns present"] } },
+    math: { inputs: { headers }, formula: "every template column must be present, in any order; peril and value_at_risk are optional", steps: { lines: [missing.length ? `Missing: ${missing.join(", ")}` : "All columns present"] } },
   };
 }
 
@@ -605,6 +611,8 @@ export interface ParsedImportClaim {
   paid: number;
   reserved: number;
   status: ClaimStatus;
+  peril: string | null;
+  valueAtRisk: number | null;
 }
 
 export interface ImportRowResult {
@@ -681,6 +689,12 @@ export function validateImportRows(rows: Record<string, string>[], ctx: { asOf: 
       else seen.add(normalizeNumber(claimNumber));
     }
     if (status === "closed" && reserved !== null && reserved > 0) warnings.push("closed with a reserve");
+    let valueAtRisk: number | null = null;
+    if (raw.value_at_risk) {
+      const v = parseCurrencyInput(raw.value_at_risk);
+      if (v.value === null) reasons.push(v.error === "Amount cannot be negative" ? "negative value at risk" : `non-numeric value at risk "${raw.value_at_risk}"`);
+      else valueAtRisk = v.value;
+    }
 
     const valid = reasons.length === 0;
     return {
@@ -699,6 +713,8 @@ export function validateImportRows(rows: Record<string, string>[], ctx: { asOf: 
             paid: paid!,
             reserved: reserved!,
             status: status!,
+            peril: raw.peril ? raw.peril : null,
+            valueAtRisk,
           }
         : null,
     };

@@ -3,7 +3,7 @@
  * the program functions without a database. Pure.
  */
 import { addDays } from "@/lib/domain/dates";
-import type { CertificateInput, ProgramPolicy, RequirementInput, TowerLayerInput } from "@/lib/domain/program";
+import type { CertificateInput, LineGroup, ProgramLayerInput, ProgramPolicy, RequirementInput, TowerLayerInput } from "@/lib/domain/program";
 import type { ISODate } from "@/lib/domain/types";
 import type { DemoAccount } from "./demoBookData";
 
@@ -39,4 +39,28 @@ export function demoAccountToProgram(account: DemoAccount, asOf: ISODate): { pol
       issuedOn: c.issuedOnOffset === null ? null : addDays(asOf, c.issuedOnOffset).value,
     })),
   };
+}
+
+/** v1.3: one line group's layers with their participations, as the placement functions expect them. */
+export function demoProgramLayers(account: DemoAccount, lineGroup: LineGroup): ProgramLayerInput[] {
+  return account.towerLayers
+    .filter((t) => t.lineGroup === lineGroup)
+    .map((t, i) => ({
+      id: `${lineGroup}-l${i}`,
+      towerLabel: t.towerLabel ?? "Tower 1",
+      layerType: t.layerType,
+      attachment: t.attachment,
+      limit: t.limit,
+      basis: t.basis ?? "per_occurrence",
+      policyId: t.policyKey,
+      participations: (t.participations ?? [{ insurer: t.carrier, writtenLinePct: null, signedLinePct: 100, premium: t.premium, isLead: true }]).map((x, j) => ({
+        id: `${lineGroup}-l${i}-p${j}`,
+        insurer: x.insurer,
+        writtenLinePct: x.writtenLinePct,
+        signedLinePct: x.signedLinePct,
+        premium: x.premium,
+        policyNumber: x.policyNumber ?? null,
+        isLead: x.isLead ?? false,
+      })),
+    }));
 }

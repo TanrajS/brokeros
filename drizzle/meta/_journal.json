@@ -43,6 +43,34 @@
       "when": 1794697462792,
       "tag": "0005_strategy",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794702229648,
+      "tag": "0006_advanced_placement",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794702230053,
+      "tag": "0007_convert_tower_layers",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794702250088,
+      "tag": "0008_drop_tower_layers",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794702560837,
+      "tag": "0009_property_line_group",
+      "breakpoints": true
     }
   ]
 }

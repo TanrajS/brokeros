@@ -32,14 +32,15 @@ const summaryRow = (p, label) => main(p).locator("section[aria-labelledby='summa
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 
   /* ---------- Read-only: seeded Harbourline ---------- */
-  await page.goto(`${BASE}/w/${SEED}/placement`);
+  await page.goto(`${BASE}/w/${SEED}`);
   await settle(page);
   await main(page).getByRole("link", { name: "Harbourline Foods Inc." }).click();
-  await page.waitForURL(/\/placement\/[0-9a-f-]{36}\/loss-runs$/);
+  await page.waitForURL(/\/accounts\/[0-9a-f-]{36}$/);
+  await page.goto(`${page.url()}/loss-runs`);
   await settle(page);
   const harbourUrl = page.url();
-  check("picker opens the Loss Runs tab", (await main(page).getByRole("link", { name: "Loss Runs", exact: true }).getAttribute("aria-current")) === "page");
-  check("tabs show Program, Marketing, Strategy", /Program Marketing Strategy$/.test((await main(page).getByRole("navigation", { name: "Placement sections" }).innerText()).replace(/\s+/g, " ").trim()));
+  check("Loss Runs tab is selected", (await main(page).getByRole("tab", { name: /^Loss Runs/ }).getAttribute("aria-selected")) === "true");
+  check("tabs show Overview, Loss Runs, Program, Marketing, Strategy", /Overview Loss Runs.*Program.*Marketing.*Strategy/.test((await main(page).getByRole("navigation", { name: "Account sections" }).innerText()).replace(/\s+/g, " ").trim()));
 
   const py23 = (await summaryRow(page, "PY2023").innerText()).replace(/\s+/g, " ");
   check("PY2023 incurred $135,000", py23.includes("$135,000"), py23);
@@ -75,7 +76,7 @@ const summaryRow = (p, label) => main(p).locator("section[aria-labelledby='summa
   await page.screenshot({ path: `${SHOTS}/lossruns-adjusted.png`, fullPage: true });
 
   // Placeholders
-  await main(page).getByRole("link", { name: /Program/ }).click();
+  await main(page).getByRole("tab", { name: /^Program/ }).click();
   await page.waitForURL(/\/program$/);
   await settle(page);
   check("Program tab opens the tower", (await main(page).getByRole("heading", { name: /^Tower:/ }).count()) === 1);
@@ -90,10 +91,11 @@ const summaryRow = (p, label) => main(p).locator("section[aria-labelledby='summa
   const slug = w.url().split("/w/")[1];
   await main(w).getByRole("button", { name: "Load demo book" }).click();
   await main(w).getByRole("link", { name: "Cedar Ridge Mechanical Ltd." }).waitFor({ timeout: 30000 });
-  await w.goto(`${BASE}/w/${slug}/placement`);
+  await w.goto(`${BASE}/w/${slug}`);
   await settle(w);
   await main(w).getByRole("link", { name: "Cedar Ridge Mechanical Ltd." }).click();
-  await w.waitForURL(/loss-runs$/);
+  await w.waitForURL(/\/accounts\/[0-9a-f-]{36}$/);
+  await w.goto(`${w.url()}/loss-runs`);
   await settle(w);
   const cedarUrl = w.url();
   check("Cedar Ridge: 3 claims over five years", (await main(w).locator("section[aria-labelledby='summary-heading'] tfoot tr").first().innerText()).replace(/\s+/g, " ").includes(" 3 1 "));

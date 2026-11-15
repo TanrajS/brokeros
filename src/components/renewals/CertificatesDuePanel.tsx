@@ -31,7 +31,7 @@ export function CertificatesDuePanel({ slug, rows }: { slug: string; rows: Certi
               {rows.map((r) => (
                 <TableRow key={r.certificate.id}>
                   <TableCell className="font-medium">
-                    <Link href={`/w/${slug}/placement/${r.accountId}/program`} className="hover:underline">
+                    <Link href={`/w/${slug}/accounts/${r.accountId}/program`} className="hover:underline">
                       {r.accountName}
                     </Link>
                   </TableCell>

@@ -22,7 +22,8 @@ import type {
   SubmissionStatus,
   DeclineReason,
 } from "@/lib/constants";
-import type { LayerType, LineGroup, RequirementCoverage } from "@/lib/domain/program";
+import type { DeductibleKind } from "@/lib/domain/deductibles";
+import type { LayerBasis, LayerType, LineGroup, RequirementCoverage } from "@/lib/domain/program";
 import { LOST_REASON_LABELS } from "@/lib/constants";
 
 export interface DemoContact {
@@ -102,15 +103,43 @@ export interface DemoSublimit {
   deductible: number | null;
 }
 
+/** v1.3: one insurer's line on a layer. */
+export interface DemoLayerParticipation {
+  insurer: string;
+  writtenLinePct: number | null;
+  signedLinePct: number;
+  premium: number;
+  isLead?: boolean;
+  policyNumber?: string | null;
+}
+
 export interface DemoTowerLayer {
   lineGroup: LineGroup;
   layerType: LayerType;
   attachment: number;
   limit: number;
+  /** Layer premium: the single insurer's premium, or the sum of the participations'. */
   premium: number;
+  /** Lead insurer (the only one on a v0.5 layer). */
   carrier: string;
   /** Key of the linked policy, if any. */
   policyKey: string | null;
+  /** v1.3: tower label (default "Tower 1"), basis and the signed lines; absent = one insurer at 100%. */
+  towerLabel?: string;
+  basis?: LayerBasis;
+  participations?: DemoLayerParticipation[];
+}
+
+/** v1.3: a non-default deductible rule on a policy. */
+export interface DemoDeductible {
+  appliesTo: string;
+  kind: DeductibleKind;
+  amount?: number;
+  percent?: number;
+  minimum?: number;
+  maximum?: number;
+  hours?: number;
+  notes?: string;
 }
 
 export interface DemoRequirement {
@@ -143,6 +172,9 @@ export interface DemoClaim {
   paid: number;
   reserved: number;
   status: ClaimStatus;
+  /** v1.3: peril or coverage part, and the value at risk for percent-of-value deductibles. */
+  peril: string;
+  valueAtRisk: number | null;
 }
 
 export interface DemoActivity {
@@ -168,6 +200,8 @@ export interface DemoPolicy {
   submissions: DemoSubmission[];
   /** v1.2: retention options for the Strategy tab. */
   retentionOptions: DemoRetentionOption[];
+  /** v1.3: deductible schedule rows other than the default (which mirrors `deductible`). */
+  deductibles: DemoDeductible[];
   insurableValue: number | null;
   coinsurancePercent: number | null;
   tasks: DemoTask[];
@@ -228,6 +262,16 @@ const C = {
   lakeshore: "Lakeshore Specialty",
   boreal: "Boreal Casualty Company",
   tamarack: "Tamarack Insurance Company",
+  // v1.3 subscription markets
+  westcoast: "Westcoast Re (fictional)",
+  summit: "Summit Indemnity (fictional)",
+  granville: "Granville Specialty (fictional)",
+  kitsilano: "Kitsilano Mutual (fictional)",
+  cascadia: "Cascadia Mutual (fictional)",
+  thames: "Thames Syndicate 2140 (fictional)",
+  pacific: "Pacific Crest Insurance (fictional)",
+  ironwood: "Ironwood Specialty (fictional)",
+  maplewood: "Maplewood Underwriters (fictional)",
 } as const;
 
 const PRODUCERS = ["Dana Whitfield", "Marcus Oyelaran", "Priya Raghunathan"] as const;
@@ -284,6 +328,7 @@ interface PolicySpec {
   sublimits?: DemoSublimit[];
   submissions?: DemoSubmission[];
   retentionOptions?: DemoRetentionOption[];
+  deductibles?: DemoDeductible[];
   insurableValue?: number;
   coinsurancePercent?: number;
 }
@@ -317,11 +362,12 @@ function policy(asOf: ISODate, owner: string | null, spec: PolicySpec): DemoPoli
     sublimits: spec.sublimits ?? [],
     submissions: spec.submissions ?? [],
     retentionOptions: spec.retentionOptions ?? [],
+    deductibles: spec.deductibles ?? [],
     insurableValue: spec.insurableValue ?? null,
     coinsurancePercent: spec.coinsurancePercent ?? null,
     carrier: spec.carrier,
     lineOfBusiness: spec.line,
-    policyNumber: `${CARRIER_CODE[spec.carrier]}-${LINE_CODE[spec.line]}-${seq}`,
+    policyNumber: `${CARRIER_CODE[spec.carrier] ?? "INS"}-${LINE_CODE[spec.line]}-${seq}`,
     effectiveDate,
     expiryDate,
     expiryOffsetDays: daysBetween(asOf, expiryDate).value,
@@ -366,6 +412,8 @@ interface ClaimSpec {
   paid: number;
   reserved: number;
   status: ClaimStatus;
+  peril?: string;
+  valueAtRisk?: number;
 }
 
 /** Builds claims dated relative to each policy year, so they always fall inside the right term. */
@@ -382,11 +430,18 @@ function claimsFor(line: LineOfBusiness, yearKeys: string[], effectiveDates: ISO
       paid: c.paid,
       reserved: c.reserved,
       status: c.status,
+      peril: c.peril ?? "All other perils",
+      valueAtRisk: c.valueAtRisk ?? null,
     };
   });
 }
 
-export function buildDemoBook(asOf: ISODate): DemoAccount[] {
+/**
+ * The demo book. The base book (14 accounts) is the hand-verified fixture every
+ * earlier test pins; `extended` adds the five v1.3 scenario accounts the seed
+ * loads on top of it. Neither set changes the other's figures.
+ */
+export function buildDemoBook(asOf: ISODate, options: { extended?: boolean } = {}): DemoAccount[] {
   policySeq = 0;
   const d = (days: number) => addDays(asOf, days).value;
   const p = (spec: PolicySpec) => spec;
@@ -490,6 +545,414 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
     { label: "$5,000 deductible", carrier: C.northgate, deductible: 5_000, aggregateCap: null, premium: 108_000, sourceQuoteKey: null },
     { label: "$10,000 deductible", carrier: C.northgate, deductible: 10_000, aggregateCap: null, premium: 103_500, sourceQuoteKey: null },
     { label: "$25,000 deductible", carrier: C.northgate, deductible: 25_000, aggregateCap: null, premium: 97_000, sourceQuoteKey: null },
+  ];
+
+  // ---- v1.3: five more accounts. Their current terms were written to a longer
+  // term from 2025-11-12 (as-of − 12 months), so the prior terms expired just
+  // outside the trailing-12-month window and the dashboard retention figures hold.
+  const longEff = [4, 3, 2, 1, 0].map((k) => addMonths(d(-365), -12 * k).value);
+  interface HistSpec {
+    line: LineOfBusiness;
+    carrier: string;
+    premium: number;
+    commission: number;
+    basis: ExposureBasis;
+    exposure: number | null;
+    ded: number | null;
+    occ?: number | null;
+    agg?: number | null;
+    endorsements?: Endorsement[];
+    insurableValue?: number;
+    coinsurancePercent?: number;
+  }
+  /** A prior-year term i (0–3) in a five-year chain whose current term is keys[4]. */
+  const hist = (keys: string[], i: number, h: HistSpec): PolicySpec => ({
+    key: keys[i],
+    previousKey: i > 0 ? keys[i - 1] : undefined,
+    priorTerm: true,
+    line: h.line,
+    carrier: h.carrier,
+    expires: daysBetween(asOf, longEff[i + 1]).value,
+    term: termOf(longEff, i),
+    premium: h.premium,
+    commission: h.commission,
+    occ: h.occ ?? null,
+    agg: h.agg ?? null,
+    ded: h.ded,
+    basis: h.basis,
+    exposure: h.exposure,
+    endorsements: h.endorsements ?? [],
+    insurableValue: h.insurableValue,
+    coinsurancePercent: h.coinsurancePercent,
+    status: "renewed",
+    outcome: { type: "renewed", successorKey: keys[i + 1], recordedAsOf: addDays(longEff[i + 1], -14).value },
+  });
+  /** The current term of such a chain: effective 2025-11-12, expiring `expires` days after the as-of date. */
+  const currentOf = (keys: string[], expires: number, h: HistSpec, over: Partial<PolicySpec> = {}): PolicySpec => ({
+    key: keys[4],
+    previousKey: keys[3],
+    line: h.line,
+    carrier: h.carrier,
+    expires,
+    term: { effectiveDate: longEff[4], expiryDate: d(expires) },
+    premium: h.premium,
+    commission: h.commission,
+    occ: h.occ ?? null,
+    agg: h.agg ?? null,
+    ded: h.ded,
+    basis: h.basis,
+    exposure: h.exposure,
+    endorsements: h.endorsements ?? [],
+    insurableValue: h.insurableValue,
+    coinsurancePercent: h.coinsurancePercent,
+    ...over,
+  });
+  const chain = (prefix: string) => [0, 1, 2, 3].map((i) => `${prefix}-${2021 + i}`).concat(prefix);
+
+  const pntKeys = chain("pnt-pr");
+  const kootKeys = chain("koot-pr");
+  const fvlKeys = chain("fvl-ca");
+  const srbKeys = chain("srb-gl");
+  const cdgKeys = chain("cdg-pl");
+  const pr = (over: Partial<HistSpec> & Pick<HistSpec, "carrier" | "premium" | "exposure" | "ded">): HistSpec => ({ line: "Property", commission: 10, basis: "square_feet", occ: null, agg: null, ...over });
+
+  const pntSubmissions: DemoSubmission[] = [
+    sub({ carrier: C.westcoast, status: "quoted", sentOffset: -40, respondedOffset: -18, notes: "Incumbent lead on Tower 1.", quotes: [q({ key: "pnt-westcoast", premium: 755_000, occurrenceLimit: 300 * M, aggregateLimit: null, deductible: 100_000, endorsements: [], commissionRate: 10, exposureAmount: 1_450_000, validUntilOffset: 35, subjectivities: "Updated statement of values; flood zone survey for Warehouse B." })] }),
+    sub({ carrier: C.summit, status: "quoted", sentOffset: -40, respondedOffset: -15, quotes: [q({ premium: 790_000, occurrenceLimit: 300 * M, aggregateLimit: null, deductible: 100_000, endorsements: [], commissionRate: 10, exposureAmount: 1_450_000, validUntilOffset: 30 })] }),
+    sub({ carrier: C.cascadia, status: "quoted", sentOffset: -40, respondedOffset: -12, quotes: [q({ premium: 740_000, occurrenceLimit: 300 * M, aggregateLimit: null, deductible: 250_000, endorsements: [], commissionRate: 10, exposureAmount: 1_450_000, validUntilOffset: 30, subjectivities: "Flood sub-limit of $25,000,000." })] }),
+    sub({ carrier: C.thames, status: "submitted", sentOffset: -20, notes: "Awaiting the syndicate's modelling run." }),
+  ];
+  const kootSubmissions: DemoSubmission[] = [
+    sub({ carrier: C.dominion, status: "quoted", sentOffset: -35, respondedOffset: -14, notes: "Incumbent lead, 50% line.", quotes: [q({ key: "koot-dominion", premium: 445_000, occurrenceLimit: 120 * M, aggregateLimit: null, deductible: 50_000, endorsements: [], commissionRate: 12.5, exposureAmount: 410_000, validUntilOffset: 30 })] }),
+    sub({ carrier: C.aurora, status: "quoted", sentOffset: -35, respondedOffset: -11, quotes: [q({ premium: 430_000, occurrenceLimit: 120 * M, aggregateLimit: null, deductible: 50_000, endorsements: [], commissionRate: 12.5, exposureAmount: 410_000, validUntilOffset: 30 })] }),
+    sub({ carrier: C.plains, status: "declined", sentOffset: -35, respondedOffset: -25, declineReason: "capacity", notes: "No capacity for mountain resort property this year." }),
+  ];
+  const fvlSubmissions: DemoSubmission[] = [
+    sub({ carrier: C.dominion, status: "quoted", sentOffset: -30, respondedOffset: -10, notes: "Incumbent renewal.", quotes: [q({ key: "fvl-dominion", premium: 312_000, occurrenceLimit: 2 * M, aggregateLimit: null, deductible: 5_000, endorsements: ["additional_insured"], commissionRate: 10, exposureAmount: 85, validUntilOffset: 25 })] }),
+    sub({ carrier: C.northgate, status: "quoted", sentOffset: -30, respondedOffset: -9, quotes: [q({ premium: 296_000, occurrenceLimit: 2 * M, aggregateLimit: null, deductible: 10_000, endorsements: ["additional_insured"], commissionRate: 10, exposureAmount: 85, validUntilOffset: 25 })] }),
+    sub({ carrier: C.plains, status: "quoted", sentOffset: -30, respondedOffset: -7, quotes: [q({ premium: 305_000, occurrenceLimit: 2 * M, aggregateLimit: null, deductible: 5_000, endorsements: ["additional_insured"], commissionRate: 10, exposureAmount: 85, validUntilOffset: 25 })] }),
+    sub({ carrier: C.lakeshore, status: "no_response", sentOffset: -35 }),
+  ];
+  const srbSubmissions: DemoSubmission[] = [
+    sub({ carrier: C.northgate, status: "quoted", sentOffset: -45, respondedOffset: -20, notes: "Incumbent renewal.", quotes: [q({ key: "srb-northgate", premium: 126_000, occurrenceLimit: 2 * M, aggregateLimit: 4 * M, deductible: 10_000, commissionRate: 15, exposureAmount: 40 * M, validUntilOffset: 40 })] }),
+    sub({ carrier: C.dominion, status: "quoted", sentOffset: -45, respondedOffset: -16, quotes: [q({ premium: 121_000, occurrenceLimit: 2 * M, aggregateLimit: 4 * M, deductible: 10_000, commissionRate: 15, exposureAmount: 40 * M, validUntilOffset: 40 })] }),
+    sub({ carrier: C.boreal, status: "declined", sentOffset: -45, respondedOffset: -30, declineReason: "loss_history", notes: "Open completed-operations claim." }),
+  ];
+  const cdgSubmissions: DemoSubmission[] = [
+    sub({ carrier: C.lakeshore, status: "quoted", sentOffset: -25, respondedOffset: -8, notes: "Incumbent renewal.", quotes: [q({ key: "cdg-lakeshore", premium: 23_000, occurrenceLimit: 1 * M, aggregateLimit: 1 * M, deductible: 10_000, endorsements: [], commissionRate: 17.5, exposureAmount: 9_400_000, validUntilOffset: 30 })] }),
+    sub({ carrier: C.tamarack, status: "quoted", sentOffset: -25, respondedOffset: -6, quotes: [q({ premium: 17_800, occurrenceLimit: 1 * M, aggregateLimit: 500_000, deductible: 10_000, endorsements: [], commissionRate: 15, exposureAmount: 9_400_000, validUntilOffset: 30, subjectivities: "Multi-factor authentication attestation." })] }),
+    sub({ carrier: C.maritime, status: "quoted", sentOffset: -25, respondedOffset: -5, quotes: [q({ premium: 22_100, occurrenceLimit: 1 * M, aggregateLimit: 1 * M, deductible: 10_000, endorsements: [], commissionRate: 15, exposureAmount: 9_400_000, validUntilOffset: 30 })] }),
+  ];
+
+  const moreSpecs: AccountSpec[] = [
+    // ---------- Pacific Northwest Terminals: two-tower property placement, 12-line deductible schedule ----------
+    {
+      name: "Pacific Northwest Terminals Ltd.",
+      industry: "transportation",
+      annualRevenue: 95 * M,
+      employeeCount: 420,
+      province: "BC",
+      producer: PRODUCERS[2],
+      accountManager: MANAGERS[0],
+      status: "active",
+      notes: "Marine container terminal and bonded warehousing on the Fraser River: three berths, 1.45 million square feet of warehouse, reefer plugs and a rail spur.",
+      noteLog: ["Tower 2 was added last renewal to cover the capacity Tower 1 lost; both towers now add to 100% at every point of the $300M TIV."],
+      brokerFees: 45_000,
+      riskControlSpend: 60_000,
+      claimsAdminCost: 25_000,
+      towerLayers: [
+        { lineGroup: "property", towerLabel: "Tower 1", layerType: "primary", attachment: 0, limit: 300 * M, premium: 310_000, carrier: C.westcoast, policyKey: "pnt-pr", participations: [{ insurer: C.westcoast, writtenLinePct: null, signedLinePct: 15, premium: 120_000, isLead: true }, { insurer: C.summit, writtenLinePct: null, signedLinePct: 10, premium: 72_000 }, { insurer: C.granville, writtenLinePct: null, signedLinePct: 10, premium: 78_000 }, { insurer: C.kitsilano, writtenLinePct: null, signedLinePct: 5, premium: 40_000 }] },
+        { lineGroup: "property", towerLabel: "Tower 2", layerType: "primary", attachment: 0, limit: 100 * M, premium: 264_000, carrier: C.cascadia, policyKey: null, participations: [{ insurer: C.cascadia, writtenLinePct: null, signedLinePct: 20, premium: 90_000, isLead: true }, { insurer: C.northgate, writtenLinePct: null, signedLinePct: 10, premium: 48_000 }, { insurer: C.thames, writtenLinePct: null, signedLinePct: 30, premium: 126_000 }] },
+        { lineGroup: "property", towerLabel: "Tower 2", layerType: "excess", attachment: 100 * M, limit: 200 * M, premium: 181_000, carrier: C.pacific, policyKey: null, participations: [{ insurer: C.pacific, writtenLinePct: 30, signedLinePct: 25, premium: 75_000, isLead: true }, { insurer: C.ironwood, writtenLinePct: 25, signedLinePct: 20, premium: 64_000 }, { insurer: C.maplewood, writtenLinePct: 20, signedLinePct: 15, premium: 42_000 }] },
+      ],
+      requirements: [
+        { contractName: "Terminal operating lease — Fraser Port Authority (fictional)", counterparty: "Fraser Port Authority (fictional)", coverage: "General Liability", requiredOccurrence: 5 * M, requiredAggregate: 10 * M, requiredEndorsements: ["additional_insured", "waiver_of_subrogation"], notes: "Marine terminal lease; the authority is named as additional insured." },
+      ],
+      certificates: [{ holder: "Fraser Port Authority (fictional)", operationsDescription: "Container terminal and warehousing operations under the terminal operating lease.", coverages: ["General Liability"], requiredByOffset: -60, issuedOnOffset: -58 }],
+      claims: claimsFor("Property", pntKeys, longEff, [
+        { year: 0, number: "PNT-PR-21-0042", lossDay: 71, lag: 3, description: "Reefer plug outage spoiled a customer's frozen seafood consignment.", paid: 48_000, reserved: 0, status: "closed", peril: "Stock" },
+        { year: 0, number: "PNT-PR-21-0117", lossDay: 240, lag: 2, description: "Yard tractor struck a dock door and frame at Warehouse A.", paid: 22_000, reserved: 0, status: "closed", peril: "Vehicle impact" },
+        { year: 1, number: "PNT-PR-22-0205", lossDay: 33, lag: 1, description: "King-tide storm surge flooded the ground floor of Warehouse B.", paid: 1_850_000, reserved: 0, status: "closed", peril: "Flood", valueAtRisk: 42 * M },
+        { year: 1, number: "PNT-PR-22-0318", lossDay: 190, lag: 6, description: "Copper cable stolen from the rail spur substation.", paid: 14_000, reserved: 0, status: "closed", peril: "Theft" },
+        { year: 2, number: "PNT-PR-23-0088", lossDay: 118, lag: 1, description: "Fire in the maintenance shop paint booth.", paid: 310_000, reserved: 0, status: "closed" },
+        { year: 2, number: "PNT-PR-23-0276", lossDay: 301, lag: 4, description: "Gatehouse glazing broken by a wind-blown sign.", paid: 3_200, reserved: 0, status: "closed", peril: "Glass" },
+        { year: 3, number: "PNT-PR-24-0151", lossDay: 96, lag: 2, description: "Ship-to-shore crane drive motor failed.", paid: 96_000, reserved: 0, status: "closed", peril: "Equipment breakdown" },
+        { year: 3, number: "PNT-PR-24-0233", lossDay: 212, lag: 9, description: "Ammonia leak contaminated stored product in the cold store.", paid: 27_500, reserved: 0, status: "closed", peril: "Stock" },
+        { year: 4, number: "PNT-PR-25-0061", lossDay: 84, lag: 2, description: "Sewer backup into the Warehouse C loading pit.", paid: 41_000, reserved: 20_000, status: "open", peril: "Sewer backup" },
+        { year: 4, number: "PNT-PR-25-0177", lossDay: 233, lag: 5, description: "Transit damage to a customer's crated turbine on the terminal shuttle.", paid: 8_900, reserved: 0, status: "closed", peril: "Transit" },
+      ]),
+      contacts: [
+        { name: "Imogen Tsai", role: "VP Risk & Insurance", email: "itsai@pnterminals.example", phone: "604-555-0120" },
+        { name: "Bartholomew Nkemelu", role: "Terminal Operations Manager", email: "bnkemelu@pnterminals.example", phone: "604-555-0131" },
+      ],
+      policies: [
+        p(hist(pntKeys, 0, pr({ carrier: C.westcoast, premium: 610_000, exposure: 1_380_000, ded: 100_000, insurableValue: 270 * M, coinsurancePercent: 90 }))),
+        p(hist(pntKeys, 1, pr({ carrier: C.westcoast, premium: 640_000, exposure: 1_380_000, ded: 100_000, insurableValue: 275 * M, coinsurancePercent: 90 }))),
+        p(hist(pntKeys, 2, pr({ carrier: C.westcoast, premium: 690_000, exposure: 1_450_000, ded: 100_000, insurableValue: 290 * M, coinsurancePercent: 90 }))),
+        p(hist(pntKeys, 3, pr({ carrier: C.westcoast, premium: 720_000, exposure: 1_450_000, ded: 100_000, insurableValue: 295 * M, coinsurancePercent: 90 }))),
+        p(
+          currentOf(pntKeys, 75, pr({ carrier: C.westcoast, premium: 755_000, exposure: 1_450_000, ded: 100_000, insurableValue: 300 * M, coinsurancePercent: 90 }), {
+            submissions: pntSubmissions,
+            standardTasksDone: ["Strategy meeting", "Submit to market"],
+            notes: "Written to a 14.5-month term so both towers renew together. TIV $300,000,000 placed across two towers.",
+            retentionOptions: [
+              { label: "$100,000 deductible", carrier: C.westcoast, deductible: 100_000, aggregateCap: null, premium: 755_000, sourceQuoteKey: "pnt-westcoast" },
+              { label: "$250,000 deductible", carrier: C.westcoast, deductible: 250_000, aggregateCap: null, premium: 705_000, sourceQuoteKey: null },
+              { label: "$500,000 deductible", carrier: C.westcoast, deductible: 500_000, aggregateCap: null, premium: 655_000, sourceQuoteKey: null },
+            ],
+            deductibles: [
+              { appliesTo: "Earthquake", kind: "percent_of_loss", percent: 10, minimum: 100_000 },
+              { appliesTo: "Flood", kind: "flat", amount: 250_000 },
+              { appliesTo: "Named windstorm", kind: "percent_of_loss", percent: 5, minimum: 100_000 },
+              { appliesTo: "Stock", kind: "flat", amount: 10_000 },
+              { appliesTo: "Equipment breakdown", kind: "flat", amount: 25_000 },
+              { appliesTo: "Business interruption", kind: "waiting_period", hours: 72 },
+              { appliesTo: "Sewer backup", kind: "flat", amount: 50_000 },
+              { appliesTo: "Theft", kind: "flat", amount: 10_000 },
+              { appliesTo: "Glass", kind: "flat", amount: 1_000 },
+              { appliesTo: "Transit", kind: "flat", amount: 5_000 },
+              { appliesTo: "Vehicle impact", kind: "flat", amount: 10_000 },
+            ],
+          }),
+        ),
+        p({ key: "pnt-gl", line: "General Liability", carrier: C.dominion, expires: 75, term: { effectiveDate: longEff[4], expiryDate: d(75) }, premium: 112_000, commission: 12.5, occ: 2 * M, agg: 4 * M, ded: 25_000, basis: "revenue", exposure: 95 * M, endorsements: ["additional_insured", "waiver_of_subrogation"], notes: "Terminal operator's liability; the port lease asks for $5M / $10M." }),
+      ],
+    },
+    // ---------- Kootenay Alpine Resorts: 50/50 primary plus a single-insurer excess ----------
+    {
+      name: "Kootenay Alpine Resorts Inc.",
+      industry: "hospitality",
+      annualRevenue: 62 * M,
+      employeeCount: 540,
+      province: "BC",
+      producer: PRODUCERS[1],
+      accountManager: MANAGERS[1],
+      status: "active",
+      notes: "Ski resort with two lodges, nine lifts, staff housing and a summer bike park near Nelson; TIV $120,000,000.",
+      brokerFees: 20_000,
+      riskControlSpend: 35_000,
+      towerLayers: [
+        { lineGroup: "property", towerLabel: "Tower 1", layerType: "primary", attachment: 0, limit: 50 * M, premium: 330_000, carrier: C.dominion, policyKey: "koot-pr", participations: [{ insurer: C.dominion, writtenLinePct: 60, signedLinePct: 50, premium: 165_000, isLead: true }, { insurer: C.aurora, writtenLinePct: 60, signedLinePct: 50, premium: 165_000 }] },
+        { lineGroup: "property", towerLabel: "Tower 1", layerType: "excess", attachment: 50 * M, limit: 70 * M, premium: 90_000, carrier: C.boreal, policyKey: null },
+      ],
+      requirements: [
+        { contractName: "Crown land tenure — Province of BC Recreation Sites (fictional)", counterparty: "Province of BC, Mountain Resorts Branch (fictional)", coverage: "General Liability", requiredOccurrence: 5 * M, requiredAggregate: 10 * M, requiredEndorsements: ["additional_insured"], notes: "Controlled recreation area tenure." },
+      ],
+      certificates: [{ holder: "Province of BC, Mountain Resorts Branch (fictional)", operationsDescription: "Lift and trail operations within the controlled recreation area.", coverages: ["General Liability"], requiredByOffset: -90, issuedOnOffset: -88 }],
+      claims: claimsFor("Property", kootKeys, longEff, [
+        { year: 0, number: "KAR-PR-21-0019", lossDay: 100, lag: 1, description: "Roof of the lift maintenance shed collapsed under snow load.", paid: 420_000, reserved: 0, status: "closed", peril: "Snow load" },
+        { year: 1, number: "KAR-PR-22-0144", lossDay: 62, lag: 2, description: "Burst sprinkler pipe flooded the day lodge kitchen.", paid: 85_000, reserved: 0, status: "closed", peril: "Water damage" },
+        { year: 2, number: "KAR-PR-23-0027", lossDay: 118, lag: 1, description: "Snow load buckled the bike-park storage canopy.", paid: 38_000, reserved: 0, status: "closed", peril: "Snow load" },
+        { year: 2, number: "KAR-PR-23-0203", lossDay: 251, lag: 3, description: "Hot-water tank failure in staff housing block C.", paid: 22_000, reserved: 0, status: "closed", peril: "Water damage" },
+        { year: 3, number: "KAR-PR-24-0075", lossDay: 140, lag: 1, description: "Electrical fire in the staff housing laundry.", paid: 265_000, reserved: 0, status: "closed" },
+        { year: 4, number: "KAR-PR-25-0112", lossDay: 190, lag: 2, description: "Ice dam leak damaged the summit lodge dining room ceiling.", paid: 34_000, reserved: 20_000, status: "open", peril: "Water damage" },
+      ]),
+      contacts: [{ name: "Søren Halvorsen", role: "Director of Finance", email: "shalvorsen@kootenayalpine.example", phone: "250-555-0147" }],
+      policies: [
+        p(hist(kootKeys, 0, pr({ carrier: C.dominion, premium: 335_000, commission: 12.5, exposure: 390_000, ded: 50_000, insurableValue: 104 * M, coinsurancePercent: 90 }))),
+        p(hist(kootKeys, 1, pr({ carrier: C.dominion, premium: 352_000, commission: 12.5, exposure: 395_000, ded: 50_000, insurableValue: 108 * M, coinsurancePercent: 90 }))),
+        p(hist(kootKeys, 2, pr({ carrier: C.dominion, premium: 378_000, commission: 12.5, exposure: 405_000, ded: 50_000, insurableValue: 112 * M, coinsurancePercent: 90 }))),
+        p(hist(kootKeys, 3, pr({ carrier: C.dominion, premium: 398_000, commission: 12.5, exposure: 410_000, ded: 50_000, insurableValue: 116 * M, coinsurancePercent: 90 }))),
+        p(
+          currentOf(kootKeys, 100, pr({ carrier: C.dominion, premium: 420_000, commission: 12.5, exposure: 410_000, ded: 50_000, insurableValue: 120 * M, coinsurancePercent: 90 }), {
+            submissions: kootSubmissions,
+            standardTasksDone: ["Strategy meeting"],
+            notes: "Primary $50M shared 50/50; $70M excess with Boreal. 15.3-month term to a common renewal date.",
+            retentionOptions: [
+              { label: "$50,000 deductible", carrier: C.dominion, deductible: 50_000, aggregateCap: null, premium: 445_000, sourceQuoteKey: "koot-dominion" },
+              { label: "$100,000 deductible", carrier: C.dominion, deductible: 100_000, aggregateCap: null, premium: 420_000, sourceQuoteKey: null },
+              { label: "$250,000 deductible", carrier: C.dominion, deductible: 250_000, aggregateCap: null, premium: 395_000, sourceQuoteKey: null },
+            ],
+            deductibles: [
+              { appliesTo: "Earthquake", kind: "percent_of_value", percent: 10, minimum: 250_000, notes: "Percent of the value at risk at the damaged location." },
+              { appliesTo: "Snow load", kind: "flat", amount: 100_000 },
+              { appliesTo: "Water damage", kind: "flat", amount: 25_000 },
+              { appliesTo: "Business interruption", kind: "waiting_period", hours: 48 },
+            ],
+          }),
+        ),
+        p({ key: "koot-gl", line: "General Liability", carrier: C.dominion, expires: 100, term: { effectiveDate: longEff[4], expiryDate: d(100) }, premium: 95_000, commission: 12.5, occ: 5 * M, agg: 10 * M, ded: 10_000, basis: "revenue", exposure: 62 * M, endorsements: ["additional_insured"] }),
+      ],
+    },
+    // ---------- Fraser Valley Logistics: high-frequency auto, cargo schedule, an umbrella lost on price ----------
+    {
+      name: "Fraser Valley Logistics Ltd.",
+      industry: "transportation",
+      annualRevenue: 31 * M,
+      employeeCount: 160,
+      province: "BC",
+      producer: PRODUCERS[0],
+      accountManager: MANAGERS[0],
+      status: "active",
+      notes: "Regional LTL carrier running 85 units (tractors, reefers and straight trucks) between the Lower Mainland and the Okanagan.",
+      noteLog: ["Umbrella moved to another broker on price two renewals ago; we still hold the auto."],
+      brokerFees: 7_500,
+      riskControlSpend: 18_000,
+      claimsAdminCost: 12_000,
+      towerLayers: [{ lineGroup: "auto", layerType: "primary", attachment: 0, limit: 2 * M, premium: 298_000, carrier: C.dominion, policyKey: "fvl-ca" }],
+      requirements: [
+        { contractName: "Dedicated freight agreement — Westbay Grocers (fictional)", counterparty: "Westbay Grocers Ltd. (fictional)", coverage: "Commercial Auto", requiredOccurrence: 2 * M, requiredAggregate: null, requiredEndorsements: ["additional_insured"], notes: "Store deliveries, $2M combined single limit." },
+      ],
+      certificates: [{ holder: "Westbay Grocers Ltd. (fictional)", operationsDescription: "Dedicated store deliveries under the freight agreement.", coverages: ["Commercial Auto"], requiredByOffset: -30, issuedOnOffset: -29 }],
+      claims: claimsFor("Commercial Auto", fvlKeys, longEff, [
+        { year: 0, number: "FVL-CA-21-0007", lossDay: 20, lag: 1, description: "Backing collision with a loading-dock bollard.", paid: 4_200, reserved: 0, status: "closed" },
+        { year: 0, number: "FVL-CA-21-0051", lossDay: 95, lag: 2, description: "Rear-ended a car on Highway 1 in stop-and-go traffic.", paid: 7_800, reserved: 0, status: "closed" },
+        { year: 0, number: "FVL-CA-21-0092", lossDay: 150, lag: 1, description: "Mirror strike with an oncoming truck on Highway 3.", paid: 3_100, reserved: 0, status: "closed" },
+        { year: 0, number: "FVL-CA-21-0138", lossDay: 221, lag: 3, description: "Jackknife on black ice near Hope; trailer damage.", paid: 12_500, reserved: 0, status: "closed" },
+        { year: 0, number: "FVL-CA-21-0177", lossDay: 300, lag: 1, description: "Reefer unit side-swiped a parked van in a customer yard.", paid: 6_400, reserved: 0, status: "closed" },
+        { year: 1, number: "FVL-CA-22-0031", lossDay: 48, lag: 2, description: "Low-clearance strike at a Kelowna receiving dock.", paid: 5_600, reserved: 0, status: "closed" },
+        { year: 1, number: "FVL-CA-22-0074", lossDay: 130, lag: 1, description: "Lane-change collision on the Port Mann bridge.", paid: 9_900, reserved: 0, status: "closed" },
+        { year: 1, number: "FVL-CA-22-0119", lossDay: 205, lag: 1, description: "Windshield shattered by road debris.", paid: 2_800, reserved: 0, status: "closed", peril: "Glass" },
+        { year: 1, number: "FVL-CA-22-0160", lossDay: 288, lag: 4, description: "Trailer broken into overnight; electronics pallets taken.", paid: 15_200, reserved: 0, status: "closed", peril: "Cargo theft" },
+        { year: 2, number: "FVL-CA-23-0018", lossDay: 30, lag: 1, description: "Parking-lot collision at the Abbotsford terminal.", paid: 3_900, reserved: 0, status: "closed" },
+        { year: 2, number: "FVL-CA-23-0066", lossDay: 101, lag: 2, description: "Rollover of a straight truck on the Coquihalla; cab damage.", paid: 8_100, reserved: 0, status: "closed" },
+        { year: 2, number: "FVL-CA-23-0113", lossDay: 176, lag: 1, description: "Struck a deer near Merritt.", paid: 6_700, reserved: 0, status: "closed" },
+        { year: 2, number: "FVL-CA-23-0151", lossDay: 240, lag: 1, description: "Trailer door torn off by a dock leveller.", paid: 4_400, reserved: 0, status: "closed" },
+        { year: 2, number: "FVL-CA-23-0199", lossDay: 320, lag: 6, description: "Reefer failure spoiled a produce load in transit.", paid: 11_300, reserved: 0, status: "closed", peril: "Cargo refrigeration breakdown" },
+        { year: 3, number: "FVL-CA-24-0022", lossDay: 41, lag: 1, description: "Intersection collision in Chilliwack.", paid: 7_200, reserved: 0, status: "closed" },
+        { year: 3, number: "FVL-CA-24-0080", lossDay: 128, lag: 1, description: "Scraped a guardrail on the Hope–Princeton.", paid: 3_500, reserved: 0, status: "closed" },
+        { year: 3, number: "FVL-CA-24-0127", lossDay: 203, lag: 2, description: "Multi-vehicle collision in fog on Highway 1; third-party injury claim.", paid: 12_000, reserved: 6_000, status: "open" },
+        { year: 3, number: "FVL-CA-24-0169", lossDay: 275, lag: 1, description: "Backed into a customer's fence.", paid: 5_900, reserved: 0, status: "closed" },
+        { year: 4, number: "FVL-CA-25-0014", lossDay: 25, lag: 1, description: "Tire blowout damaged a trailer fender and a following car's hood.", paid: 4_800, reserved: 0, status: "closed" },
+        { year: 4, number: "FVL-CA-25-0059", lossDay: 94, lag: 2, description: "Pedestrian knocked over in a loading bay; soft-tissue injury.", paid: 3_400, reserved: 6_000, status: "open" },
+        { year: 4, number: "FVL-CA-25-0101", lossDay: 161, lag: 1, description: "Stone chip cracked a windshield.", paid: 2_600, reserved: 0, status: "closed", peril: "Glass" },
+        { year: 4, number: "FVL-CA-25-0143", lossDay: 229, lag: 1, description: "Reversing collision with a yard shunt truck.", paid: 6_100, reserved: 0, status: "closed" },
+      ]),
+      contacts: [{ name: "Gurpreet Sandhu", role: "Controller", email: "gsandhu@fvlogistics.example", phone: "604-555-0162" }],
+      policies: [
+        p(hist(fvlKeys, 0, { line: "Commercial Auto", carrier: C.dominion, premium: 221_000, commission: 10, basis: "vehicles", exposure: 68, ded: 5_000, occ: 2 * M, agg: null, endorsements: ["additional_insured"] })),
+        p(hist(fvlKeys, 1, { line: "Commercial Auto", carrier: C.dominion, premium: 240_000, commission: 10, basis: "vehicles", exposure: 72, ded: 5_000, occ: 2 * M, agg: null, endorsements: ["additional_insured"] })),
+        p(hist(fvlKeys, 2, { line: "Commercial Auto", carrier: C.dominion, premium: 262_000, commission: 10, basis: "vehicles", exposure: 78, ded: 5_000, occ: 2 * M, agg: null, endorsements: ["additional_insured"] })),
+        p(hist(fvlKeys, 3, { line: "Commercial Auto", carrier: C.dominion, premium: 281_000, commission: 10, basis: "vehicles", exposure: 82, ded: 5_000, occ: 2 * M, agg: null, endorsements: ["additional_insured"] })),
+        p(
+          currentOf(fvlKeys, 45, { line: "Commercial Auto", carrier: C.dominion, premium: 298_000, commission: 10, basis: "vehicles", exposure: 85, ded: 5_000, occ: 2 * M, agg: null, endorsements: ["additional_insured"] }, {
+            submissions: fvlSubmissions,
+            standardTasksDone: ["Strategy meeting", "Submit to market", "Compare quotes"],
+            status: "in_progress",
+            notes: "85 units. Written to a 13.5-month term last year to move the renewal off the year end.",
+            retentionOptions: [
+              { label: "$5,000 deductible", carrier: C.dominion, deductible: 5_000, aggregateCap: null, premium: 312_000, sourceQuoteKey: "fvl-dominion" },
+              { label: "$10,000 deductible", carrier: C.dominion, deductible: 10_000, aggregateCap: null, premium: 296_000, sourceQuoteKey: null },
+              { label: "$25,000 deductible", carrier: C.dominion, deductible: 25_000, aggregateCap: null, premium: 278_000, sourceQuoteKey: null },
+            ],
+            deductibles: [
+              { appliesTo: "Cargo theft", kind: "flat", amount: 10_000 },
+              { appliesTo: "Cargo refrigeration breakdown", kind: "flat", amount: 15_000 },
+              { appliesTo: "Glass", kind: "flat", amount: 500 },
+              { appliesTo: "Hired auto", kind: "flat", amount: 2_500 },
+            ],
+          }),
+        ),
+        p({ key: "fvl-um-lost", priorTerm: true, line: "Umbrella/Excess", carrier: C.boreal, expires: -400, premium: 24_000, commission: 12, occ: 5 * M, agg: 5 * M, ded: null, basis: "vehicles", exposure: 80, status: "lost", outcome: { type: "lost", lostReason: "price", competingPremium: 19_500, recordedAsOf: d(-410) }, notes: "Umbrella lost to another broker on price." }),
+      ],
+    },
+    // ---------- Summit Ridge Builders: GL + umbrella short of a $10M contract, wrap-up certificate requested ----------
+    {
+      name: "Summit Ridge Builders Inc.",
+      industry: "construction",
+      annualRevenue: 38 * M,
+      employeeCount: 95,
+      province: "AB",
+      producer: PRODUCERS[1],
+      accountManager: MANAGERS[1],
+      status: "active",
+      notes: "General contractor for mid-rise institutional and commercial work in Calgary; self-performs concrete and framing.",
+      brokerFees: 5_000,
+      towerLayers: [
+        { lineGroup: "gl", layerType: "primary", attachment: 0, limit: 2 * M, premium: 118_000, carrier: C.northgate, policyKey: "srb-gl" },
+        { lineGroup: "gl", layerType: "umbrella", attachment: 2 * M, limit: 5 * M, premium: 31_000, carrier: C.boreal, policyKey: "srb-um" },
+      ],
+      requirements: [
+        { contractName: "Hospital tower project — Harrow & Finch Construction (fictional)", counterparty: "Harrow & Finch Construction Ltd. (fictional)", coverage: "Umbrella/Excess", requiredOccurrence: 10 * M, requiredAggregate: null, requiredEndorsements: [], notes: "The construction manager requires a $10M umbrella above primary liability." },
+        { contractName: "Hospital tower project — Harrow & Finch Construction (fictional)", counterparty: "Harrow & Finch Construction Ltd. (fictional)", coverage: "General Liability", requiredOccurrence: 2 * M, requiredAggregate: 4 * M, requiredEndorsements: ["additional_insured", "primary_noncontributory"], notes: null },
+      ],
+      certificates: [{ holder: "Harrow & Finch Construction Ltd. (fictional)", operationsDescription: "Wrap-up enrolment: concrete and framing on the hospital tower project.", coverages: ["General Liability", "Umbrella/Excess"], requiredByOffset: 10, issuedOnOffset: null }],
+      claims: claimsFor("General Liability", srbKeys, longEff, [
+        { year: 0, number: "SRB-GL-21-0033", lossDay: 77, lag: 4, description: "Falling formwork damaged an adjacent building's canopy.", paid: 18_000, reserved: 0, status: "closed" },
+        { year: 0, number: "SRB-GL-21-0141", lossDay: 260, lag: 12, description: "Water intrusion through unfinished curtain wall; tenant fit-out damage.", paid: 42_000, reserved: 0, status: "closed" },
+        { year: 1, number: "SRB-GL-22-0059", lossDay: 150, lag: 5, description: "Passer-by struck by debris from a hoarding.", paid: 9_500, reserved: 0, status: "closed" },
+        { year: 2, number: "SRB-GL-23-0017", lossDay: 36, lag: 3, description: "Crane counterweight dropped on a parked vehicle.", paid: 27_000, reserved: 0, status: "closed" },
+        { year: 2, number: "SRB-GL-23-0122", lossDay: 214, lag: 60, description: "Completed operations: slab settlement at a school addition delivered the prior year.", paid: 26_000, reserved: 35_000, status: "open", peril: "Completed operations" },
+        { year: 3, number: "SRB-GL-24-0088", lossDay: 171, lag: 2, description: "Temporary fence blown onto a neighbour's car.", paid: 12_400, reserved: 0, status: "closed" },
+        { year: 4, number: "SRB-GL-25-0045", lossDay: 123, lag: 1, description: "Delivery driver tripped on an unmarked step at the site office.", paid: 7_800, reserved: 0, status: "closed" },
+      ]),
+      contacts: [{ name: "Anneliese Okafor-Brandt", role: "Chief Financial Officer", email: "aokafor@summitridgebuilders.example", phone: "403-555-0135" }],
+      policies: [
+        p(hist(srbKeys, 0, { line: "General Liability", carrier: C.northgate, premium: 84_000, commission: 15, basis: "revenue", exposure: 26 * M, ded: 10_000, occ: 2 * M, agg: 4 * M, endorsements: stdGl })),
+        p(hist(srbKeys, 1, { line: "General Liability", carrier: C.northgate, premium: 92_000, commission: 15, basis: "revenue", exposure: 29 * M, ded: 10_000, occ: 2 * M, agg: 4 * M, endorsements: stdGl })),
+        p(hist(srbKeys, 2, { line: "General Liability", carrier: C.northgate, premium: 101_000, commission: 15, basis: "revenue", exposure: 33 * M, ded: 10_000, occ: 2 * M, agg: 4 * M, endorsements: stdGl })),
+        p(hist(srbKeys, 3, { line: "General Liability", carrier: C.northgate, premium: 110_000, commission: 15, basis: "revenue", exposure: 36 * M, ded: 10_000, occ: 2 * M, agg: 4 * M, endorsements: stdGl })),
+        p(
+          currentOf(srbKeys, 150, { line: "General Liability", carrier: C.northgate, premium: 118_000, commission: 15, basis: "revenue", exposure: 38 * M, ded: 10_000, occ: 2 * M, agg: 4 * M, endorsements: stdGl }, {
+            submissions: srbSubmissions,
+            standardTasksDone: ["Strategy meeting"],
+            retentionOptions: [
+              { label: "$10,000 deductible", carrier: C.northgate, deductible: 10_000, aggregateCap: null, premium: 126_000, sourceQuoteKey: "srb-northgate" },
+              { label: "$25,000 deductible", carrier: C.northgate, deductible: 25_000, aggregateCap: null, premium: 117_000, sourceQuoteKey: null },
+              { label: "$50,000 deductible", carrier: C.northgate, deductible: 50_000, aggregateCap: null, premium: 109_000, sourceQuoteKey: null },
+            ],
+            deductibles: [{ appliesTo: "Completed operations", kind: "flat", amount: 25_000 }],
+          }),
+        ),
+        p({ key: "srb-um", line: "Umbrella/Excess", carrier: C.boreal, expires: 150, term: { effectiveDate: longEff[4], expiryDate: d(150) }, premium: 31_000, commission: 12, occ: 5 * M, agg: 5 * M, ded: null, basis: "revenue", exposure: 38 * M, endorsements: ["additional_insured"], notes: "$5M umbrella; the hospital contract asks for $10M." }),
+      ],
+    },
+    // ---------- Coastline Dental Group: PL + cyber, one large open cyber claim, a cheaper quote with a lower aggregate ----------
+    {
+      name: "Coastline Dental Group",
+      industry: "professional services",
+      annualRevenue: 9_400_000,
+      employeeCount: 60,
+      province: "NS",
+      producer: PRODUCERS[2],
+      accountManager: null,
+      status: "active",
+      notes: "Four dental clinics around Halifax with a central patient-records system.",
+      brokerFees: 2_500,
+      requirements: [
+        { contractName: "Clinic lease — Bedford Commons Medical (fictional)", counterparty: "Bedford Commons Medical Properties (fictional)", coverage: "General Liability", requiredOccurrence: 2 * M, requiredAggregate: 4 * M, requiredEndorsements: ["additional_insured"], notes: "Premises liability under the clinic lease; the group has no stand-alone GL policy on file." },
+      ],
+      certificates: [{ holder: "Bedford Commons Medical Properties (fictional)", operationsDescription: "Dental clinic tenancy, unit 210.", coverages: ["General Liability"], requiredByOffset: 5, issuedOnOffset: null }],
+      claims: [
+        ...claimsFor("Professional Liability", cdgKeys, longEff, [
+          { year: 1, number: "CDG-PL-22-0004", lossDay: 140, lag: 45, description: "Alleged nerve damage after a wisdom-tooth extraction.", paid: 15_000, reserved: 0, status: "closed" },
+          { year: 3, number: "CDG-PL-24-0009", lossDay: 222, lag: 30, description: "Failed implant; patient sought the cost of corrective work.", paid: 28_000, reserved: 0, status: "closed" },
+        ]),
+        ...claimsFor("Cyber", ["cdg-cy"], [longEff[4]], [
+          { year: 0, number: "CDG-CY-25-0001", lossDay: 200, lag: 1, description: "Ransomware on the records server: forensics, notification of 18,000 patients and credit monitoring.", paid: 40_000, reserved: 210_000, status: "open" },
+        ]),
+      ],
+      contacts: [{ name: "Dr. Priyanka Venkataraman", role: "Managing Partner", email: "pvenkataraman@coastlinedental.example", phone: "902-555-0174" }],
+      policies: [
+        p(hist(cdgKeys, 0, { line: "Professional Liability", carrier: C.maritime, premium: 36_000, commission: 15, basis: "revenue", exposure: 7_100_000, ded: 10_000, occ: 2 * M, agg: 4 * M })),
+        p(hist(cdgKeys, 1, { line: "Professional Liability", carrier: C.maritime, premium: 38_500, commission: 15, basis: "revenue", exposure: 7_600_000, ded: 10_000, occ: 2 * M, agg: 4 * M })),
+        p(hist(cdgKeys, 2, { line: "Professional Liability", carrier: C.maritime, premium: 41_000, commission: 15, basis: "revenue", exposure: 8_300_000, ded: 10_000, occ: 2 * M, agg: 4 * M })),
+        p(hist(cdgKeys, 3, { line: "Professional Liability", carrier: C.maritime, premium: 43_500, commission: 15, basis: "revenue", exposure: 8_900_000, ded: 10_000, occ: 2 * M, agg: 4 * M })),
+        p(currentOf(cdgKeys, 200, { line: "Professional Liability", carrier: C.maritime, premium: 46_000, commission: 15, basis: "revenue", exposure: 9_400_000, ded: 10_000, occ: 2 * M, agg: 4 * M })),
+        p({
+          key: "cdg-cy",
+          line: "Cyber",
+          carrier: C.lakeshore,
+          expires: 200,
+          term: { effectiveDate: longEff[4], expiryDate: d(200) },
+          premium: 21_500,
+          commission: 17.5,
+          occ: 1 * M,
+          agg: 1 * M,
+          ded: 10_000,
+          basis: "revenue",
+          exposure: 9_400_000,
+          submissions: cdgSubmissions,
+          standardTasksDone: ["Strategy meeting"],
+          notes: "One open ransomware claim this term.",
+          retentionOptions: [
+            { label: "$10,000 deductible", carrier: C.lakeshore, deductible: 10_000, aggregateCap: null, premium: 23_000, sourceQuoteKey: "cdg-lakeshore" },
+            { label: "$25,000 deductible", carrier: C.lakeshore, deductible: 25_000, aggregateCap: null, premium: 20_500, sourceQuoteKey: null },
+            { label: "$50,000 deductible", carrier: C.lakeshore, deductible: 50_000, aggregateCap: null, premium: 18_900, sourceQuoteKey: null },
+          ],
+        }),
+      ],
+    },
   ];
 
   const specs: AccountSpec[] = [
@@ -822,7 +1285,12 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
     },
   ];
 
-  return finalizeBook(asOf, specs);
+  return finalizeBook(asOf, options.extended ? [...specs, ...moreSpecs] : specs);
+}
+
+/** The full demo book the seed writes: the base 14 accounts plus the five v1.3 accounts. */
+export function buildFullDemoBook(asOf: ISODate): DemoAccount[] {
+  return buildDemoBook(asOf, { extended: true });
 }
 
 function isClosed(status: RenewalStatus): boolean {

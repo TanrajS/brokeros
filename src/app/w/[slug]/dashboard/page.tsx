@@ -402,7 +402,7 @@ export default async function DashboardPage({ params, searchParams }: { params: 
           <h2 id="market-heading" className="text-lg font-semibold">
             Market log, {formatDate(lookback.start)} to {formatDate(lookback.end)}
           </h2>
-          <Link href={`/w/${slug}/placement/marketing?lookback=${query.lookback}`} className="text-sm underline-offset-4 hover:underline">
+          <Link href={`/w/${slug}/market-log?lookback=${query.lookback}`} className="text-sm underline-offset-4 hover:underline">
             Open the market log
           </Link>
         </div>

@@ -16,7 +16,7 @@ import { parseStrategyQuery, strategyHref } from "@/components/strategy/params";
 import { ShowMath } from "@/components/dashboard/ShowMath";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { buildStrategyView } from "@/server/strategy/view";
-import { requireWorkspace } from "../../../lib";
+import { requireWorkspace } from "../../../../lib";
 
 export const metadata: Metadata = { title: "Strategy" };
 

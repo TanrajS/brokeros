@@ -49,13 +49,13 @@ const tile = (p, label) => main(p).locator("div.rounded-lg.border", { has: p.loc
   check("lost business table has the loss and the non-renewal", lost.length === 2 && lost.some((t) => /Prairie Loop/.test(t) && /Lost: Price/.test(t) && /\$49,500/.test(t)) && lost.some((t) => /Non-renewed by carrier/.test(t)));
 
   // Book tiles
-  check("in-force premium tile", /\$3,091,800/.test(await tile(page, "In-force premium").innerText()));
+  check("in-force premium tile", /\$4,988,300/.test(await tile(page, "In-force premium").innerText()));
   check("average rate labelled premium-weighted", /Premium-weighted/.test(await tile(page, "Average commission rate").innerText()));
   await tile(page, "Booked commission").getByText("Show the math").click();
   check("show the math lists per-policy commission", (await tile(page, "Booked commission").getByText(/^Commission 1: /).count()) === 1);
 
   // Concentration flag
-  check("carrier concentration flag shown neutrally", (await main(page).getByText(/Dominion Shield Insurance holds 39\.7% of in-force premium/).count()) === 1 && (await main(page).getByText(/not a verdict/).count()) === 1);
+  check("carrier concentration flag shown neutrally", (await main(page).getByText(/Dominion Shield Insurance holds 43\.1% of in-force premium/).count()) === 1 && (await main(page).getByText(/not a verdict/).count()) === 1);
 
   // Forecast defaults + disclaimer
   check("projection disclaimer printed", (await main(page).getByText("A projection from the assumptions above, not a prediction.").count()) === 1);
@@ -81,7 +81,7 @@ const tile = (p, label) => main(p).locator("div.rounded-lg.border", { has: p.loc
   await page.waitForURL(/producer=Dana/);
   await settle(page);
   const url = page.url();
-  check("producer line shown", (await main(page).getByText(/^Showing \d+ of 14 accounts \(producer: Dana Whitfield\)\.$/).count()) === 1);
+  check("producer line shown", (await main(page).getByText(/^Showing \d+ of 19 accounts \(producer: Dana Whitfield\)\.$/).count()) === 1);
   check("filters keep assumptions and stay clean", url.includes("retention=90") && !url.includes("lookback="), url.replace(BASE, ""));
 
   // Lookback switch reprints the window

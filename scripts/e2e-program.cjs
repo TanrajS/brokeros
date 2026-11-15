@@ -20,7 +20,7 @@ async function settle(p) {
   await main(p).locator("h1").first().waitFor();
   await p.waitForLoadState("networkidle");
 }
-const section = (p, id) => main(p).locator(`section[aria-labelledby='${id}']`);
+const section = (p, id) => main(p).locator(`section[aria-labelledby='${id}']`).filter({ visible: true });
 
 (async () => {
   if (!SEED) throw new Error("Set SEED_SLUG");
@@ -32,11 +32,11 @@ const section = (p, id) => main(p).locator(`section[aria-labelledby='${id}']`);
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 
   /* ---------- Harbourline (read-only) ---------- */
-  await page.goto(`${BASE}/w/${SEED}/placement`);
+  await page.goto(`${BASE}/w/${SEED}`);
   await settle(page);
   await main(page).getByRole("link", { name: "Harbourline Foods Inc." }).click();
-  await page.waitForURL(/loss-runs$/);
-  await main(page).getByRole("link", { name: /^Program/ }).click();
+  await page.waitForURL(/\/accounts\/[0-9a-f-]{36}$/);
+  await main(page).getByRole("tab", { name: /^Program/ }).click();
   await page.waitForURL(/\/program$/);
   await settle(page);
   const harbourUrl = page.url();
@@ -62,10 +62,11 @@ const section = (p, id) => main(p).locator(`section[aria-labelledby='${id}']`);
   await page.screenshot({ path: `${SHOTS}/program-harbourline.png`, fullPage: true });
 
   /* ---------- Cedar Ridge (read-only): gap, adequacy ---------- */
-  await page.goto(`${BASE}/w/${SEED}/placement`);
+  await page.goto(`${BASE}/w/${SEED}`);
   await settle(page);
   await main(page).getByRole("link", { name: "Cedar Ridge Mechanical Ltd." }).click();
-  await page.waitForURL(/loss-runs$/);
+  await page.waitForURL(/\/accounts\/[0-9a-f-]{36}$/);
+  await page.goto(`${page.url()}/loss-runs`);
   await page.goto(page.url().replace(/loss-runs$/, "program"));
   await settle(page);
   const ctower = section(page, "tower-heading");
@@ -75,7 +76,7 @@ const section = (p, id) => main(p).locator(`section[aria-labelledby='${id}']`);
   await page.screenshot({ path: `${SHOTS}/program-cedar.png`, fullPage: true });
 
   // Property policy adequacy
-  await page.goto(page.url().replace(/\/placement\/.*$/, ""));
+  await page.goto(page.url().replace(/\/accounts\/.*$/, ""));
   await settle(page);
   await main(page).getByRole("link", { name: "Cedar Ridge Mechanical Ltd." }).click();
   await settle(page);
@@ -120,10 +121,11 @@ const section = (p, id) => main(p).locator(`section[aria-labelledby='${id}']`);
   const slug = w.url().split("/w/")[1];
   await main(w).getByRole("button", { name: "Load demo book" }).click();
   await main(w).getByRole("link", { name: "Harbourline Foods Inc." }).waitFor({ timeout: 30000 });
-  await w.goto(`${BASE}/w/${slug}/placement`);
+  await w.goto(`${BASE}/w/${slug}`);
   await settle(w);
   await main(w).getByRole("link", { name: "Harbourline Foods Inc." }).click();
-  await w.waitForURL(/loss-runs$/);
+  await w.waitForURL(/\/accounts\/[0-9a-f-]{36}$/);
+  await w.goto(`${w.url()}/loss-runs`);
   await w.goto(w.url().replace(/loss-runs$/, "program"));
   await settle(w);
   const programUrl = w.url();
@@ -156,7 +158,7 @@ const section = (p, id) => main(p).locator(`section[aria-labelledby='${id}']`);
   check("new requirement checked: $4,000,000 occurrence shortfall, waiver present", /\$4,000,000 occurrence/.test(lease) && /✓ Waiver of subrogation/.test(lease), lease.replace(/\s+/g, " "));
 
   // Record the GL renewal → certificate flips to Reissue needed and appears on Renewals
-  await w.goto(programUrl.replace(/\/placement\/.*$/, ""));
+  await w.goto(programUrl.replace(/\/accounts\/.*$/, ""));
   await settle(w);
   await main(w).getByRole("link", { name: "Harbourline Foods Inc." }).click();
   await settle(w);
@@ -183,11 +185,13 @@ const section = (p, id) => main(p).locator(`section[aria-labelledby='${id}']`);
   await settle(w);
   await section(w, "certificates-heading").locator("tr", { hasText: "Port of Halverston" }).getByRole("button", { name: "Reissue" }).click();
   await section(w, "certificates-heading").locator("tr", { hasText: "Port of Halverston" }).getByText("Issued", { exact: true }).waitFor();
-  // The fresh workspace's as-of date is the day it was created, so only check that the issue date moved on from the seeded 26 Oct 2026.
-  check("reissue stamps the as-of date and returns to Issued", !/26 Oct 2026/.test(await section(w, "certificates-heading").locator("tr", { hasText: "Port of Halverston" }).innerText()));
+  // The fresh workspace's as-of date is the day it was created: the header shows it, and the reissued row must carry it.
+  const asOfLabel = (await w.locator("header").innerText()).match(/As of (\d+ \w+ \d{4})/)?.[1] ?? "";
+  const reissued = await section(w, "certificates-heading").locator("tr", { hasText: "Port of Halverston" }).innerText();
+  check("reissue stamps the as-of date and returns to Issued", asOfLabel !== "" && reissued.includes(asOfLabel), `${asOfLabel} | ${reissued.replace(/\s+/g, " ")}`);
 
   // Add a co-insurer with a short line → finding
-  await w.goto(programUrl.replace(/\/placement\/.*$/, ""));
+  await w.goto(programUrl.replace(/\/accounts\/.*$/, ""));
   await settle(w);
   await main(w).getByRole("link", { name: "Harbourline Foods Inc." }).click();
   await settle(w);

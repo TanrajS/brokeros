@@ -10,7 +10,7 @@ import { formatLimit } from "@/lib/domain/money";
 import { formatCurrency, formatDate, formatInteger, formatRatioPercent, titleCase } from "@/lib/format";
 import { loadLossRunInputs } from "@/server/lossRuns/queries";
 import { buildMarketingView } from "@/server/marketing/view";
-import { requireWorkspace } from "../../../../lib";
+import { requireWorkspace } from "../../../../../lib";
 
 export const metadata: Metadata = { title: "Submission summary" };
 

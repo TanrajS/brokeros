@@ -8,6 +8,7 @@ import { getExecutor } from "@/server/db/tx";
 import { syncStages } from "@/server/renewals/stages";
 import { isClosedRenewalStatus } from "@/lib/constants";
 import { describeFailure, fail, fieldErrorsFromZod, ok, type ActionResult, type FieldErrors } from "@/server/actionResult";
+import { syncDefaultDeductible } from "@/server/deductibles/sync";
 import { getWorkspaceBySlug } from "@/server/workspace/queries";
 import { policyFormSchema, type PolicyFormInput, type PolicyFormValues } from "@/lib/schemas/policy";
 
@@ -46,6 +47,7 @@ export async function createPolicy(slug: string, accountId: string, input: Polic
       .insert(policies)
       .values({ workspaceId: ws.id, accountId, ...parsed.data })
       .returning({ id: policies.id });
+    await syncDefaultDeductible(getExecutor(), ws.id, row.id, parsed.data.deductible);
     await syncStages(getExecutor(), ws.id, ws.asOfDate, [row.id]);
     revalidatePath(`/w/${slug}`, "layout");
     return ok({ id: row.id });
@@ -74,6 +76,7 @@ export async function updatePolicy(slug: string, policyId: string, input: Policy
       .update(policies)
       .set({ ...parsed.data, renewalStatus, updatedAt: new Date() })
       .where(eq(policies.id, policyId));
+    await syncDefaultDeductible(getExecutor(), ws.id, policyId, parsed.data.deductible);
     await syncStages(getExecutor(), ws.id, ws.asOfDate, [policyId]);
     revalidatePath(`/w/${slug}`, "layout");
     return ok(undefined);

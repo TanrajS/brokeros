@@ -1,25 +1,20 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Pencil } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { ValueOrMissing } from "@/components/Missing";
 import { ContactsSection } from "@/components/account/ContactsSection";
-import { DeleteAccountButton } from "@/components/account/DeleteAccountButton";
 import { PoliciesTable } from "@/components/account/PoliciesTable";
 import { ActivitySection } from "@/components/activity/ActivitySection";
 import { TasksSection } from "@/components/tasks/TasksSection";
 import { formatDate } from "@/lib/format";
 import { listAccountActivities, listAccountTasks } from "@/server/renewals/queries";
-import { countAccountClaims } from "@/server/lossRuns/queries";
+import { countDeductibles } from "@/server/deductibles/queries";
 import { countParticipants, listAccountCertificates } from "@/server/program/queries";
 import { CertificatesSection } from "@/components/program/CertificatesSection";
-import { ACCOUNT_STATUS_LABELS } from "@/lib/constants";
-import { formatCurrency, formatInteger, titleCase } from "@/lib/format";
+import { formatCurrency, formatInteger } from "@/lib/format";
 import { getAccountDetail } from "@/server/accounts/queries";
-import { requireWorkspace } from "../../lib";
+import { requireWorkspace } from "../../../lib";
 
 type Params = Promise<{ slug: string; accountId: string }>;
 
@@ -36,42 +31,16 @@ export default async function AccountPage({ params }: { params: Params }) {
   const detail = await getAccountDetail(ws.id, accountId);
   if (!detail) notFound();
   const { account, contacts, policies } = detail;
-  const [tasks, activities, claimCount] = await Promise.all([
-    listAccountTasks(ws.id, account.id),
-    listAccountActivities(ws.id, account.id),
-    countAccountClaims(ws.id, account.id),
+  const [tasks, activities] = await Promise.all([listAccountTasks(ws.id, account.id), listAccountActivities(ws.id, account.id)]);
+  const [certificateRows, coinsurerCounts, deductibleCounts] = await Promise.all([
+    listAccountCertificates(ws, account.id, policies),
+    countParticipants(ws.id, policies.map((p) => p.id)),
+    countDeductibles(ws.id, policies.map((p) => p.id)),
   ]);
-  const [certificateRows, coinsurerCounts] = await Promise.all([listAccountCertificates(ws, account.id, policies), countParticipants(ws.id, policies.map((p) => p.id))]);
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-3">
-        <Link href={`/w/${slug}`} className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="size-4" aria-hidden="true" />
-          Back to book
-        </Link>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{account.name}</h1>
-            <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <span>{titleCase(account.industry)}</span>
-              <span aria-hidden="true">·</span>
-              <span>{account.province}</span>
-              <Badge variant={account.status === "active" ? "default" : "secondary"}>{ACCOUNT_STATUS_LABELS[account.status]}</Badge>
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button asChild variant="outline">
-              <Link href={`/w/${slug}/accounts/${account.id}/edit`}>
-                <Pencil aria-hidden="true" />
-                Edit
-              </Link>
-            </Button>
-            <DeleteAccountButton slug={slug} accountId={account.id} accountName={account.name} contactCount={contacts.length} policyCount={policies.length} claimCount={claimCount} />
-          </div>
-        </div>
-      </div>
-
+      <h2 className="sr-only">Overview</h2>
       <Card>
         <CardContent>
           <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
@@ -97,7 +66,7 @@ export default async function AccountPage({ params }: { params: Params }) {
       </Card>
 
       <ContactsSection slug={slug} accountId={account.id} contacts={contacts} />
-      <PoliciesTable slug={slug} accountId={account.id} asOf={ws.asOfDate} policies={policies} coinsurerCounts={Object.fromEntries(coinsurerCounts)} />
+      <PoliciesTable slug={slug} accountId={account.id} asOf={ws.asOfDate} policies={policies} coinsurerCounts={Object.fromEntries(coinsurerCounts)} deductibleCounts={Object.fromEntries(deductibleCounts)} />
       <div className="flex flex-col gap-2">
         <CertificatesSection
           slug={slug}
@@ -116,8 +85,8 @@ export default async function AccountPage({ params }: { params: Params }) {
             reasons: r.reasons,
           }))}
         />
-        <Link href={`/w/${slug}/placement/${account.id}/program`} className="w-fit text-sm underline-offset-4 hover:underline">
-          Manage certificates, tower and contract requirements in Placement
+        <Link href={`/w/${slug}/accounts/${account.id}/program`} className="w-fit text-sm underline-offset-4 hover:underline">
+          Manage certificates, the program and contract requirements on the Program tab
         </Link>
       </div>
       <TasksSection

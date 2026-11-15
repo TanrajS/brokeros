@@ -17,7 +17,7 @@ export function lossRunsHref(slug: string, accountId: string, q: LossRunQuery, p
   const params = new URLSearchParams();
   for (const key of ["line", "trend", "ldf", "threshold", "cap"] as const) if (next[key]) params.set(key, next[key]);
   const qs = params.toString();
-  return `/w/${slug}/placement/${accountId}/loss-runs${qs ? `?${qs}` : ""}`;
+  return `/w/${slug}/accounts/${accountId}/loss-runs${qs ? `?${qs}` : ""}`;
 }
 
 /** URL → form input → validated settings. Invalid URL values fall back to defaults and say so. */

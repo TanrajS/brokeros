@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { PolicyForm } from "@/components/account/PolicyForm";
+import { DeductibleScheduleSection } from "@/components/policy/DeductibleScheduleSection";
+import { listPolicyDeductibles } from "@/server/deductibles/queries";
 import { formatDate } from "@/lib/format";
 import type { PolicyFormInput } from "@/lib/schemas/policy";
 import { getAccountDetail } from "@/server/accounts/queries";
@@ -15,6 +17,7 @@ export default async function EditPolicyPage({ params }: { params: Promise<{ slu
   if (!detail) notFound();
   const p = detail.policies.find((x) => x.id === policyId);
   if (!p) notFound();
+  const deductibleRows = await listPolicyDeductibles(ws.id, p.id);
 
   const str = (n: number | null) => (n === null ? "" : String(n));
   const defaults: PolicyFormInput = {
@@ -57,6 +60,9 @@ export default async function EditPolicyPage({ params }: { params: Promise<{ slu
         previousOptions={previousOptions}
         cancelHref={`/w/${slug}/accounts/${accountId}/policies/${p.id}`}
       />
+      <div className="max-w-3xl">
+        <DeductibleScheduleSection slug={slug} policyId={p.id} policyDeductible={p.deductible} rows={deductibleRows} />
+      </div>
     </div>
   );
 }

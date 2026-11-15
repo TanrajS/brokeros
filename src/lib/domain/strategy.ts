@@ -9,6 +9,7 @@
  * expectation; the Assumptions section says so.
  */
 import type { ClaimStatus, LineOfBusiness } from "@/lib/constants";
+import { DEFAULT_PERIL, deductibleForClaim, describeRule, flatRule, matchRule, type DeductibleRule } from "./deductibles";
 import {
   assignPolicyYear,
   developmentAge,
@@ -49,6 +50,9 @@ export interface YearClaim {
   reserved: number;
   /** paid + reserved, unadjusted. */
   incurred: number;
+  /** Peril or coverage part; "All other perils" unless the claim says otherwise (v1.3). */
+  peril: string;
+  valueAtRisk: number | null;
 }
 
 export interface ClaimsYear {
@@ -90,7 +94,7 @@ export function groupClaimsByPolicyYear(claims: LRClaim[], policies: LRPolicy[],
   const years: ClaimsYear[] = periods.map((period) => {
     const rows = assigned
       .filter((a) => a.period?.policyId === period.policyId)
-      .map(({ claim }) => ({ id: claim.id, claimNumber: claim.claimNumber, status: claim.status, paid: claim.paid, reserved: claim.reserved, incurred: incurred(claim.paid, claim.reserved).value }));
+      .map(({ claim }) => ({ id: claim.id, claimNumber: claim.claimNumber, status: claim.status, paid: claim.paid, reserved: claim.reserved, incurred: incurred(claim.paid, claim.reserved).value, peril: claim.peril?.trim() || DEFAULT_PERIL, valueAtRisk: claim.valueAtRisk ?? null }));
     const age = developmentAge(period.effectiveDate, asOf).value;
     const open = rows.filter((r) => r.status === "open");
     const total = sumMoney(rows.map((r) => r.incurred));
@@ -141,9 +145,21 @@ export interface ReplaySettings {
   includeCurrentYear: boolean;
   /** Trend and development from the Loss Runs tab (default both off). */
   adjustments: Adjustments;
+  /**
+   * The policy's deductible schedule (v1.3). A claim whose peril matches a rule
+   * uses that rule; every other claim uses the option's deductible, which stands
+   * in for the default (all other perils) rule. Empty or absent = flat replay.
+   */
+  schedule?: DeductibleRule[];
 }
 
 export const DEFAULT_REPLAY_SETTINGS: ReplaySettings = { yearsToUse: 5, includeCurrentYear: true, adjustments: { trendRate: null, factors: null } };
+
+/** A deductible set for the replay: the option's amount for the default rule plus the schedule's other rules. */
+export interface ReplayDeductible {
+  defaultAmount: number;
+  rules: DeductibleRule[];
+}
 
 export interface ReplayClaim extends YearClaim {
   trendFactor: number;
@@ -178,6 +194,10 @@ export interface YearReplay {
   retained: number;
   capApplied: boolean;
   transferred: number;
+  /** Claims left out of the dollar replay (waiting-period rules, or a percent-of-value rule with no value at risk and no minimum). */
+  excludedClaims: { claimNumber: string; reason: string }[];
+  /** Claims whose deductible came from a schedule rule rather than the option's deductible. */
+  scheduledClaims: number;
 }
 
 export interface WorstYearTest {
@@ -272,21 +292,51 @@ export function selectReplayYears(grouped: ClaimsByPolicyYear, settings: ReplayS
   };
 }
 
-/** One option against one year: Σ min(incurred, deductible), then min(·, cap). */
-export function replayYear(year: ReplayYear, deductible: number, aggregateCap: number | null): Calc<YearReplay> {
-  if (!Number.isFinite(deductible) || deductible < 0) throw new Error(`Expected a non-negative deductible, received ${deductible}`);
-  const parts = year.claims.map((c) => Math.min(c.adjustedIncurred, deductible));
+/**
+ * One option against one year: Σ min(incurred, deductible), then min(·, cap).
+ * With a deductible schedule, each claim's deductible comes from the rule for
+ * its peril; claims with no dollar deductible are excluded and flagged.
+ */
+export function replayYear(year: ReplayYear, deductible: number | ReplayDeductible, aggregateCap: number | null): Calc<YearReplay> {
+  const defaultAmount = typeof deductible === "number" ? deductible : deductible.defaultAmount;
+  if (!Number.isFinite(defaultAmount) || defaultAmount < 0) throw new Error(`Expected a non-negative deductible, received ${defaultAmount}`);
+  const rules = typeof deductible === "number" ? [] : deductible.rules.filter((r) => !r.isDefault);
+  const terms: string[] = [];
+  const parts: number[] = [];
+  const included: number[] = [];
+  const excludedClaims: { claimNumber: string; reason: string }[] = [];
+  let scheduledClaims = 0;
+  for (const c of year.claims) {
+    const matched = rules.length ? matchRule(rules, c.peril).value : null;
+    const rule = matched && !matched.isDefault ? matched : flatRule(defaultAmount);
+    const d = rule.kind === "flat" && rule.amount !== null ? { amount: rule.amount, flags: [] as string[] } : deductibleForClaim(rule, c.adjustedIncurred, c.valueAtRisk).value;
+    if (d.amount === null) {
+      excludedClaims.push({ claimNumber: c.claimNumber, reason: `${c.peril}: ${d.flags.join("; ") || "no dollar deductible"}` });
+      continue;
+    }
+    if (matched && !matched.isDefault) scheduledClaims += 1;
+    const part = Math.min(c.adjustedIncurred, d.amount);
+    parts.push(part);
+    included.push(c.adjustedIncurred);
+    terms.push(`min(${usd(c.adjustedIncurred)}, ${usd(d.amount)}${matched && !matched.isDefault ? ` ${c.peril}` : ""})`);
+  }
+  const incurredReplayed = sumMoney(included);
   const retainedBeforeCap = sumMoney(parts);
   const capApplied = aggregateCap !== null && retainedBeforeCap > aggregateCap;
   const retained = capApplied ? aggregateCap : retainedBeforeCap;
-  const transferred = round2(year.incurred - retained);
+  const transferred = round2(incurredReplayed - retained);
   const line =
-    `${year.label}: retained = ${parts.length ? parts.map((p, i) => `min(${usd(year.claims[i].adjustedIncurred)}, ${usd(deductible)})`).join(" + ") : "no claims"} = ${usd(retainedBeforeCap)}` +
+    `${year.label}: retained = ${terms.length ? terms.join(" + ") : "no claims"} = ${usd(retainedBeforeCap)}` +
     (aggregateCap !== null ? `; min(${usd(retainedBeforeCap)}, cap ${usd(aggregateCap)}) = ${usd(retained)}` : "") +
-    `; transferred = ${usd(year.incurred)} − ${usd(retained)} = ${usd(transferred)}`;
+    `; transferred = ${usd(incurredReplayed)} − ${usd(retained)} = ${usd(transferred)}` +
+    (excludedClaims.length ? `; excluded ${excludedClaims.map((e) => `${e.claimNumber} (${e.reason})`).join(", ")}` : "");
   return {
-    value: { label: year.label, year: year.year, current: year.current, claimCount: year.claims.length, incurred: year.incurred, retainedBeforeCap, retained, capApplied, transferred },
-    math: { inputs: { year: year.label, deductible, aggregateCap }, formula: "retained = Σ min(incurred, deductible), then min(retained, aggregate cap); transferred = incurred − retained", steps: { lines: [line] } },
+    value: { label: year.label, year: year.year, current: year.current, claimCount: year.claims.length - excludedClaims.length, incurred: incurredReplayed, retainedBeforeCap, retained, capApplied, transferred, excludedClaims, scheduledClaims },
+    math: {
+      inputs: { year: year.label, deductible: defaultAmount, aggregateCap, scheduleRules: rules.map(describeRule) },
+      formula: "retained = Σ min(incurred, deductible for the claim's peril), then min(retained, aggregate cap); transferred = incurred − retained",
+      steps: { lines: [line] },
+    },
   };
 }
 
@@ -308,7 +358,7 @@ export function analyzeRetentionOptions(grouped: ClaimsByPolicyYear, options: Re
   const base = sorted[0] ?? null;
 
   const replays = sorted.map((o) => {
-    const rows = years.map((y) => replayYear(y, o.deductible, o.aggregateCap));
+    const rows = years.map((y) => replayYear(y, settings.schedule?.length ? { defaultAmount: o.deductible, rules: settings.schedule } : o.deductible, o.aggregateCap));
     for (const r of rows) lines.push(`${o.label}, ${(r.math.steps.lines as string[])[0]}`);
     return { option: o, rows: rows.map((r) => r.value) };
   });
@@ -389,7 +439,7 @@ export function analyzeRetentionOptions(grouped: ClaimsByPolicyYear, options: Re
       basisLabel: basisLabel(settings.adjustments),
     },
     math: {
-      inputs: { line: grouped.line, asOf: grouped.asOf, options: sorted.map((o) => ({ label: o.label, deductible: o.deductible, cap: o.aggregateCap, premium: o.premium })), settings },
+      inputs: { line: grouped.line, asOf: grouped.asOf, options: sorted.map((o) => ({ label: o.label, deductible: o.deductible, cap: o.aggregateCap, premium: o.premium })), settings: { ...settings, schedule: (settings.schedule ?? []).map(describeRule) } },
       formula:
         "per year: retained = Σ min(incurred, deductible), then min(·, cap); average and worst over the years used; vs the lowest-deductible base: premium saving, additional retained, expected total cost = premium + average retained, net = saving − additional, break-even = saving, worst-year test, max exposure = deductible × most claims in a year (or the cap)",
       steps: { lines },
@@ -597,6 +647,8 @@ export interface AssumptionInputs {
   missing: string[];
   /** Lines counted at zero retained in TCOR because they have no loss runs. */
   linesWithoutLossRuns: string[];
+  /** The policy's non-default deductible rules in force, described (v1.3). */
+  scheduleRules?: string[];
 }
 
 /** The report's Assumptions and limitations, generated from the settings actually used. */
@@ -624,6 +676,9 @@ export function assumptionsAndLimitations(i: AssumptionInputs): Calc<string[]> {
       ? `Aggregate caps: ${capped.map((o) => `${o.label} capped at ${usd(o.aggregateCap!)} a year`).join("; ")}; other options have no cap.`
       : "No option has an aggregate cap: retained losses are limited only by the deductible on each claim.",
   );
+  if (i.scheduleRules && i.scheduleRules.length) {
+    lines.push(`Deductible schedule in force: ${i.scheduleRules.join("; ")}. Each option replaces only the all-other-perils deductible; claims whose peril matches a schedule rule keep that rule's deductible.`);
+  }
   const unlinked = i.options.filter((o) => !o.linkedToQuote);
   if (unlinked.length) lines.push(`Premiums for ${unlinked.map((o) => o.label).join(", ")} were entered by hand and are not tied to a carrier quote.`);
   if (i.linesWithoutLossRuns.length) lines.push(`Total cost of risk counts expected retained losses as zero for ${i.linesWithoutLossRuns.join(", ")} because no claims are recorded for ${i.linesWithoutLossRuns.length === 1 ? "that line" : "those lines"}.`);

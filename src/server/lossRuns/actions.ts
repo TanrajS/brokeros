@@ -82,6 +82,8 @@ export async function createClaim(slug: string, accountId: string, input: ClaimF
       paid: v.paid,
       reserved: v.reserved,
       status: v.status,
+      peril: v.peril,
+      valueAtRisk: v.valueAtRisk,
     });
     revalidatePath(`/w/${slug}`, "layout");
     return ok({ duplicate });
@@ -114,6 +116,8 @@ export async function updateClaim(slug: string, claimId: string, input: ClaimFor
         paid: v.paid,
         reserved: v.reserved,
         status: v.status,
+        peril: v.peril,
+        valueAtRisk: v.valueAtRisk,
         updatedAt: new Date(),
       })
       .where(eq(claims.id, claimId));
@@ -185,6 +189,8 @@ export async function importClaims(
         paid: p.paid,
         reserved: p.reserved,
         status: p.status,
+        peril: p.peril ?? "All other perils",
+        valueAtRisk: p.valueAtRisk,
       });
     }
     if (toInsert.length > 0) {

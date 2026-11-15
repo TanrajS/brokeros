@@ -1,0 +1,1 @@
+DROP TABLE "tower_layers" CASCADE;

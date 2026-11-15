@@ -47,6 +47,9 @@ export interface ClaimRowView {
   status: ClaimStatus;
   policyYear: string | null;
   flags: ClaimFlag[];
+  /** v1.3: peril or coverage part (All other perils when absent) and value at risk. */
+  peril?: string | null;
+  valueAtRisk?: number | null;
 }
 
 export interface PolicyOptionView {
@@ -111,6 +114,7 @@ export function ClaimsSection({ slug, accountId, asOf, line, claims, policyOptio
                 <TableHead>Policy year</TableHead>
                 <TableHead>Loss / reported</TableHead>
                 <TableHead>Description</TableHead>
+                <TableHead>Peril</TableHead>
                 <TableHead className="text-right">Paid</TableHead>
                 <TableHead className="text-right">Reserved</TableHead>
                 <TableHead className="text-right">Incurred</TableHead>
@@ -143,6 +147,10 @@ export function ClaimsSection({ slug, accountId, asOf, line, claims, policyOptio
                   </TableCell>
                   <TableCell className="max-w-72 min-w-48 whitespace-normal">
                     <ValueOrMissing text={c.description} what="Description" />
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-xs">
+                    {c.peril || "All other perils"}
+                    {c.valueAtRisk !== null && c.valueAtRisk !== undefined ? <span className="block text-muted-foreground">VAR {formatCurrency(c.valueAtRisk)}</span> : null}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{formatCurrency(c.paid)}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatCurrency(c.reserved)}</TableCell>
@@ -231,6 +239,8 @@ function ClaimDialog({
         reserved: String(c.reserved),
         status: c.status,
         confirmClosedWithReserve: c.status === "closed" && c.reserved > 0,
+        peril: c.peril ?? "All other perils",
+        valueAtRisk: c.valueAtRisk === null || c.valueAtRisk === undefined ? "" : String(c.valueAtRisk),
       }
     : {
         lineOfBusiness: line,
@@ -243,6 +253,8 @@ function ClaimDialog({
         reserved: "0",
         status: "open",
         confirmClosedWithReserve: false,
+        peril: "All other perils",
+        valueAtRisk: "",
       };
   const { register, handleSubmit, formState, getValues, setError, control, trigger } = useForm<ClaimFormInput, unknown, ClaimFormValues>({
     resolver: zodResolver(claimFormSchema(asOf)),
@@ -330,6 +342,12 @@ function ClaimDialog({
                   </option>
                 ))}
               </NativeSelect>
+            </Field>
+            <Field id="claim-peril" label="Peril or coverage part" error={msg("peril")} hint="Matched to the policy's deductible schedule; blank means All other perils.">
+              <Input {...register("peril")} {...fieldA11y("claim-peril", msg("peril"), "hint")} autoComplete="off" />
+            </Field>
+            <Field id="claim-var" label="Value at risk (CAD)" error={msg("valueAtRisk")} hint="Only needed for percent-of-value deductibles.">
+              <Input {...register("valueAtRisk")} {...fieldA11y("claim-var", msg("valueAtRisk"), "hint")} inputMode="decimal" />
             </Field>
             <Field id="claim-description" label="Description" error={msg("description")} className="flex flex-col gap-1.5 sm:col-span-2">
               <Textarea {...register("description")} {...fieldA11y("claim-description", msg("description"))} rows={3} />

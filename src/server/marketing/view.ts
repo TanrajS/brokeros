@@ -17,12 +17,15 @@ export async function buildMarketingView(ws: Workspace, accountId: string, q: Ma
   const inRenewal = (p: Policy) => !superseded.has(p.id) && !data.outcomes.has(p.id) && (p.renewalStatus === "not_started" || p.renewalStatus === "in_progress");
   const choices = data.policies.filter((p) => inRenewal(p) || data.byPolicy.has(p.id));
   const requested = choices.find((p) => p.id === q.policy);
+  // Default (v1.3): the policy with the fewest days to expiry that has no outcome yet; among
+  // policies expiring the same day, the one being marketed comes first. Remembered in the URL.
+  const byExpiry = (a: Policy, b: Policy) => a.expiryDate.localeCompare(b.expiryDate) || Number(data.byPolicy.has(b.id)) - Number(data.byPolicy.has(a.id)) || a.lineOfBusiness.localeCompare(b.lineOfBusiness);
   const policy =
     requested ??
-    choices.filter((p) => inRenewal(p) && data.byPolicy.has(p.id)).sort((a, b) => a.expiryDate.localeCompare(b.expiryDate))[0] ??
-    // Marketing that just ended in a bind or outcome stays in view before an untouched renewal.
-    choices.filter((p) => data.byPolicy.has(p.id) && p.expiryDate > ws.asOfDate).sort((a, b) => a.expiryDate.localeCompare(b.expiryDate))[0] ??
-    choices.filter(inRenewal).sort((a, b) => a.expiryDate.localeCompare(b.expiryDate))[0] ??
+    choices.filter((p) => inRenewal(p) && p.expiryDate > ws.asOfDate).sort(byExpiry)[0] ??
+    // Marketing that just ended in a bind or outcome stays in view before an expired renewal.
+    choices.filter((p) => data.byPolicy.has(p.id) && p.expiryDate > ws.asOfDate).sort(byExpiry)[0] ??
+    choices.filter(inRenewal).sort(byExpiry)[0] ??
     null;
   if (!policy) return { data, choices, policy: null } as const;
 

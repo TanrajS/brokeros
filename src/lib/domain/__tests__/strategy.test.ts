@@ -367,3 +367,48 @@ describe("assumptionsAndLimitations", () => {
     expect(lines[lines.length - 1]).toBe("This report compares options; it does not state which the client should buy.");
   });
 });
+
+describe("deductible schedules in the replay (v1.3)", () => {
+  const schedule = [
+    { appliesTo: "Earthquake", kind: "percent_of_loss" as const, percent: 10, amount: null, minimum: 100_000, maximum: null, hours: null, isDefault: false },
+    { appliesTo: "Stock", kind: "flat" as const, amount: 10_000, percent: null, minimum: null, maximum: null, hours: null, isDefault: false },
+    { appliesTo: "Business interruption", kind: "waiting_period" as const, amount: null, percent: null, minimum: null, maximum: null, hours: 72, isDefault: false },
+  ];
+
+  it("leaves the Harbourline figures unchanged when every claim is All other perils", () => {
+    const plain = analyzeRetentionOptions(grouped, options).value;
+    const withSchedule = analyzeRetentionOptions(grouped, options, { ...DEFAULT_REPLAY_SETTINGS, schedule }).value;
+    expect(withSchedule.options.map((o) => o.years.map((y) => y.retained))).toEqual(plain.options.map((o) => o.years.map((y) => y.retained)));
+    expect(withSchedule.options.map((o) => o.averageRetained)).toEqual([18_600, 33_200, 45_000]);
+    expect(withSchedule.options.map((o) => o.expectedTotalCost)).toEqual([160_600, 157_200, 155_000]);
+    expect(withSchedule.options.every((o) => o.years.every((y) => y.scheduledClaims === 0 && y.excludedClaims.length === 0))).toBe(true);
+  });
+
+  it("a matching peril keeps its own rule while the option replaces only the default deductible", () => {
+    const tagged = [
+      { ...claim("2026-02-14", 9_000, 0, "py26"), peril: "Stock" },
+      { ...claim("2026-06-30", 18_000, 0, "py26"), peril: "All other perils" },
+      { ...claim("2026-09-09", 500_000, 0, "py26"), peril: "Earthquake" },
+      { ...claim("2026-10-01", 80_000, 0, "py26"), peril: "Business interruption" },
+    ];
+    const g = groupClaimsByPolicyYear(tagged, policies, "General Liability", asOf).value;
+    const a = analyzeRetentionOptions(g, [options[2]], { ...DEFAULT_REPLAY_SETTINGS, yearsToUse: 1, schedule }).value;
+    const y = a.options[0].years[0];
+    // Stock: min(9,000, 10,000) = 9,000 (the $50,000 option does not touch it); AOP: min(18,000, 50,000) = 18,000;
+    // Earthquake: 10% × 500,000 = 50,000 → minimum 100,000; min(500,000, 100,000) = 100,000; BI excluded (waiting period)
+    expect(y.retained).toBe(127_000);
+    expect(y.scheduledClaims).toBe(2);
+    expect(y.excludedClaims).toEqual([{ claimNumber: tagged[3].claimNumber, reason: "Business interruption: waiting period: not a dollar deductible" }]);
+    // replayed incurred leaves the excluded claim out: 9,000 + 18,000 + 500,000 = 527,000; transferred 527,000 − 127,000 = 400,000
+    expect([y.incurred, y.transferred, y.claimCount]).toEqual([527_000, 400_000, 3]);
+  });
+
+  it("a percent-of-value rule with no value at risk and no minimum excludes the claim with a flag", () => {
+    const tagged = [{ ...claim("2026-03-01", 40_000, 0, "py26"), peril: "Flood" }];
+    const g = groupClaimsByPolicyYear(tagged, policies, "General Liability", asOf).value;
+    const flood = { appliesTo: "Flood", kind: "percent_of_value" as const, percent: 2, amount: null, minimum: null, maximum: null, hours: null, isDefault: false };
+    const y = analyzeRetentionOptions(g, [options[0]], { ...DEFAULT_REPLAY_SETTINGS, yearsToUse: 1, schedule: [flood] }).value.options[0].years[0];
+    expect(y.excludedClaims[0].reason).toBe("Flood: no value at risk known for this claim");
+    expect(y.retained).toBe(0);
+  });
+});

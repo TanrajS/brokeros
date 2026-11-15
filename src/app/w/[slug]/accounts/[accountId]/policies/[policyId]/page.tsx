@@ -23,6 +23,8 @@ import { boundQuoteForPolicy } from "@/server/marketing/queries";
 import { AdequacyPanel } from "@/components/program/AdequacyPanel";
 import { ParticipantsSection } from "@/components/program/ParticipantsSection";
 import { SublimitsSection } from "@/components/program/SublimitsSection";
+import { DeductibleScheduleSection } from "@/components/policy/DeductibleScheduleSection";
+import { listPolicyDeductibles } from "@/server/deductibles/queries";
 import { requireWorkspace } from "../../../../lib";
 
 type Params = Promise<{ slug: string; accountId: string; policyId: string }>;
@@ -35,7 +37,7 @@ export default async function PolicyPage({ params, searchParams }: { params: Par
   const data = await getPolicyPageData(ws, accountId, policyId);
   if (!data) notFound();
   const { account, policy, checklist, tasks, outcome, predecessor, successor, successorHasOutcome, accountPolicies } = data;
-  const [extras, bound] = await Promise.all([loadPolicyExtras(ws.id, policy.id), boundQuoteForPolicy(ws.id, policy.id)]);
+  const [extras, bound, deductibleRows] = await Promise.all([loadPolicyExtras(ws.id, policy.id), boundQuoteForPolicy(ws.id, policy.id), listPolicyDeductibles(ws.id, policy.id)]);
   const prefill = bound
     ? {
         carrier: bound.carrier,
@@ -205,6 +207,7 @@ export default async function PolicyPage({ params, searchParams }: { params: Par
         rows={extras.participants.map((p) => ({ id: p.id, carrier: p.carrier, role: p.role, signedLine: p.signedLine, premium: p.premium, notes: p.notes }))}
       />
 
+      <DeductibleScheduleSection slug={slug} policyId={policy.id} policyDeductible={policy.deductible} rows={deductibleRows} />
       <SublimitsSection
         slug={slug}
         policyId={policy.id}

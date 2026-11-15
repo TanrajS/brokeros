@@ -10,7 +10,9 @@ import {
   totalCostOfRisk,
   type Tcor,
 } from "@/lib/domain/strategy";
+import { describeRule } from "@/lib/domain/deductibles";
 import { formatCurrency } from "@/lib/format";
+import { listPolicyDeductibles, toRule } from "@/server/deductibles/queries";
 import type { ContractRequirement, Policy, Workspace } from "@/server/db/schema";
 import { replaySettingsFrom, settingsFromQuery, type StrategyQuery } from "@/components/strategy/params";
 import { loadStrategyInputs, toRetentionOption } from "./queries";
@@ -52,11 +54,12 @@ export async function buildStrategyView(ws: Workspace, accountId: string, q: Str
   const superseded = new Set(data.policies.map((p) => p.previousPolicyId).filter((x): x is string => x !== null));
   const inRenewal = (p: Policy) => !superseded.has(p.id) && !data.outcomes.has(p.id) && (p.renewalStatus === "not_started" || p.renewalStatus === "in_progress");
   const hasOptions = (p: Policy) => data.options.some((o) => o.policyId === p.id);
-  const byExpiry = (a: Policy, b: Policy) => a.expiryDate.localeCompare(b.expiryDate);
+  // Default (v1.3): fewest days to expiry with no outcome yet; ties go to the policy that has options. Remembered in the URL.
+  const byExpiry = (a: Policy, b: Policy) => a.expiryDate.localeCompare(b.expiryDate) || Number(hasOptions(b)) - Number(hasOptions(a)) || a.lineOfBusiness.localeCompare(b.lineOfBusiness);
   const choices = data.policies.filter((p) => inRenewal(p) || hasOptions(p)).sort(byExpiry);
   const policy =
     choices.find((p) => p.id === q.policy) ??
-    choices.find((p) => inRenewal(p) && hasOptions(p)) ??
+    choices.find((p) => inRenewal(p) && p.expiryDate > asOf) ??
     choices.find((p) => hasOptions(p) && p.expiryDate > asOf) ??
     choices.find(inRenewal) ??
     null;
@@ -64,7 +67,10 @@ export async function buildStrategyView(ws: Workspace, accountId: string, q: Str
 
   const line = policy.lineOfBusiness;
   const settings = settingsFromQuery(q);
-  const replay = replaySettingsFrom(settings.values);
+  // v1.3: the policy's deductible schedule; the option stands in for the default rule.
+  const scheduleRows = await listPolicyDeductibles(ws.id, policy.id);
+  const schedule = scheduleRows.map(toRule);
+  const replay = { ...replaySettingsFrom(settings.values), schedule: schedule.filter((r) => !r.isDefault) };
   const grouped = groupClaimsByPolicyYear(data.claims, data.lrPolicies, line, asOf);
   const policyOptions = data.options.filter((o) => o.policyId === policy.id);
   const analysis = analyzeRetentionOptions(grouped.value, policyOptions.map(toRetentionOption), replay);
@@ -125,6 +131,7 @@ export async function buildStrategyView(ws: Workspace, accountId: string, q: Str
     options: policyOptions.map((o) => ({ label: o.label, aggregateCap: o.aggregateCap, linkedToQuote: o.sourceQuoteId !== null })),
     missing,
     linesWithoutLossRuns,
+    scheduleRules: schedule.filter((r) => !r.isDefault).map(describeRule),
   });
 
   return {
@@ -134,6 +141,7 @@ export async function buildStrategyView(ws: Workspace, accountId: string, q: Str
     line,
     settings,
     replay,
+    schedule,
     grouped,
     policyOptions,
     analysis,

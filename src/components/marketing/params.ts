@@ -16,7 +16,7 @@ export function marketingHref(slug: string, accountId: string, q: MarketingQuery
   if (next.normalise) params.set("normalise", "1");
   if (next.sort !== "premium") params.set("sort", next.sort);
   const qs = params.toString();
-  return `/w/${slug}/placement/${accountId}/marketing${page}${qs ? `?${qs}` : ""}`;
+  return `/w/${slug}/accounts/${accountId}/marketing${page}${qs ? `?${qs}` : ""}`;
 }
 
 type SP = Record<string, string | string[] | undefined>;

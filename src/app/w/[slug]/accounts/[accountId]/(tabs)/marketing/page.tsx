@@ -12,7 +12,7 @@ import { checklistReadiness, checklistTemplate } from "@/lib/domain/renewals";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { loadChecklist } from "@/server/marketing/queries";
 import { buildMarketingView } from "@/server/marketing/view";
-import { requireWorkspace } from "../../../lib";
+import { requireWorkspace } from "../../../../lib";
 
 export const metadata: Metadata = { title: "Marketing" };
 

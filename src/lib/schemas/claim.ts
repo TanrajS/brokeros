@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CLAIM_STATUSES, LINES_OF_BUSINESS } from "@/lib/constants";
-import { currencySchema, isoDateSchema, optionalText, requiredText, uuidSchema } from "./common";
+import { currencySchema, isoDateSchema, optionalCurrencySchema, optionalText, requiredText, uuidSchema } from "./common";
 
 /**
  * Claim form. Needs the workspace as-of date: the report date may not be after it.
@@ -23,6 +23,18 @@ export function claimFormSchema(asOf: string) {
       reserved: currencySchema,
       status: z.enum(CLAIM_STATUSES, { error: "Choose a status" }),
       confirmClosedWithReserve: z.boolean(),
+      /** v1.3: peril or coverage part; blank or absent means All other perils. */
+      peril: z
+        .string()
+        .optional()
+        .transform((s) => (s ?? "").trim())
+        .pipe(z.string().max(80, "Peril must be 80 characters or fewer"))
+        .transform((s) => (s === "" ? "All other perils" : s)),
+      valueAtRisk: z
+        .string()
+        .optional()
+        .transform((s) => s ?? "")
+        .pipe(optionalCurrencySchema),
     })
     .superRefine((v, ctx) => {
       if (v.dateReported < v.dateOfLoss) {

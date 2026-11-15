@@ -11,7 +11,7 @@ import { marketLog } from "@/lib/domain/marketing";
 import { formatDate } from "@/lib/format";
 import { parseLookback } from "@/lib/schemas/dashboard";
 import { listMarketSubmissions } from "@/server/marketing/queries";
-import { requireWorkspace } from "../../lib";
+import { requireWorkspace } from "../lib";
 
 export const metadata: Metadata = { title: "Market log" };
 
@@ -28,9 +28,9 @@ export default async function MarketOverviewPage({ params, searchParams }: { par
 
   return (
     <div className="flex flex-col gap-5">
-      <Link href={`/w/${slug}/placement`} className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+      <Link href={`/w/${slug}/dashboard`} className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="size-4" aria-hidden="true" />
-        Placement
+        Dashboard
       </Link>
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Market log</h1>

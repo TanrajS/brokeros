@@ -68,8 +68,8 @@ before changing anything, and keep it current when the rules change.
 | Zod schemas | `src/lib/schemas/*.ts` (`z.input` = form strings, `z.output` = parsed values) |
 | Display formatting | `src/lib/format/` (returns `null` for missing, never a fake value) |
 | Enumerations | `src/lib/constants.ts` (shared by schema, Zod and UI) |
-| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` / `demoBookProgram.ts` / `demoBookMarketing.ts` / `demoBookStrategy.ts` map it for tests |
-| Pages | `src/app/w/[slug]/…`; pages call `requireWorkspace(slug)` from `src/app/w/[slug]/lib.ts` |
+| Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of; `buildDemoBook` = the 14-account base every test pins, `buildFullDemoBook` adds the five v1.3 accounts the seed writes) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` / `demoBookProgram.ts` / `demoBookMarketing.ts` / `demoBookStrategy.ts` map it for tests |
+| Pages | `src/app/w/[slug]/…`; pages call `requireWorkspace(slug)` from `src/app/w/[slug]/lib.ts`. Account tabs live in the route group `accounts/[accountId]/(tabs)/` (layout = header + `AccountTabs`); edit and policy pages sit outside the group. `/placement/…` only redirects |
 | UI components | `src/components/<area>/`; shadcn primitives in `src/components/ui/` |
 
 ## Patterns to keep
@@ -104,9 +104,13 @@ before changing anything, and keep it current when the rules change.
 - Deleting an account cascades to contacts and policies at the database level;
   the confirm dialog says so.
 - v0.2 added `checklist_items`, `tasks`, `activities` and `renewal_outcomes`.
-  Later versions add `claims`, `tower_layers`, `contract_requirements`,
-  `certificates`, `submissions`, `quotes` and `quote_options` through new
-  migrations using the same column helpers (all present as of v1.2). When `claims` arrives, wire its
+  Later versions add `claims`, `contract_requirements`, `certificates`,
+  `submissions`, `quotes`, `quote_options`, `program_layers`,
+  `layer_participations` and `policy_deductibles` through new migrations using
+  the same column helpers. `tower_layers` (v1) was converted into
+  `program_layers` + `layer_participations` by `0007_convert_tower_layers` and
+  dropped in `0008`; a data-moving migration is written with
+  `drizzle-kit generate --custom`, never by editing a generated file. When `claims` arrives, wire its
   count into `checkUndoOutcome` in `src/server/outcomes/actions.ts` (it passes 0
   today).
 
@@ -252,6 +256,42 @@ before changing anything, and keep it current when the rules change.
 - The demo strategy cases (Harbourline, Cedar Ridge) are checked in
   `src/server/db/seed/__tests__/demoBookStrategy.test.ts`.
 
+## Placement rules (v1.3)
+
+- **Subscription placements live in `src/lib/domain/program.ts`**:
+  `layerSummary`, `coverageProfile`, `programTotals`, `signDown`,
+  `towerInputsFrom` (feeds a tower to `analyzeTower` for the v0.5 gap and
+  overlap checks), `isAdvancedProgram`, `validatePlacementRows`,
+  `placementScheduleRows`. `program_layers` hold tower label, type (incl.
+  `quota_share`), attachment, limit and basis; `layer_participations` hold each
+  insurer's written line, signed line, premium and lead flag. A simple layer is
+  one participation signed at 100%; `saveTowerLayer` keeps that invariant and
+  refuses to edit a multi-insurer layer.
+- **Line groups** are `gl`, `auto` and `property`; `layersFor(inputs, group)`
+  selects a group's layers. TIV comes from the linked policy's
+  `insurable_value`.
+- **Coverage across towers adds shares; within a tower gaps and overlaps are
+  findings.** Bases are added as if they responded to the same loss and the
+  profile says so when they differ; never silently.
+- **Deductible schedules** (`policy_deductibles`): the row with `is_default`
+  mirrors `policies.deductible`. Every policy write calls
+  `syncDefaultDeductible` (`src/server/deductibles/sync.ts`); editing the
+  default row writes the amount back to the policy; the default row cannot be
+  deleted (clear the policy's deductible instead) and must stay a flat amount.
+  Logic is in `src/lib/domain/deductibles.ts` (`deductibleForClaim`,
+  `matchRule`, `validateScheduleRows`).
+- **Claims carry `peril`** (default "All other perils") and an optional
+  `value_at_risk`. The strategy replay (`replayYear` with a `ReplayDeductible`)
+  uses the rule matching the claim's peril and lets the option replace only the
+  default amount; waiting-period and unknown-value claims are excluded with a
+  flag, never counted as zero.
+- **Marketing and Strategy default policy**: fewest days to expiry with no
+  outcome yet (ties: the policy with submissions / options), remembered in the
+  URL.
+- The v1.3 demo cases (Pacific Northwest Terminals two-tower placement and
+  schedule, the other four accounts, retention unchanged) are checked in
+  `src/server/db/seed/__tests__/demoBookAdvanced.test.ts`.
+
 ## Commands
 
 `npm run dev` · `npm run build` · `npm run typecheck` · `npm run lint` ·
@@ -259,5 +299,5 @@ before changing anything, and keep it current when the rules change.
 (`SEED_AS_OF=YYYY-MM-DD` fixes the as-of date; `SEED_WORKSPACE_SLUG=…` seeds an
 existing empty workspace). Browser smoke tests: `scripts/e2e-renewals.cjs`, `scripts/e2e-dashboard.cjs`,
 `scripts/e2e-lossruns.cjs`, `scripts/e2e-program.cjs`, `scripts/e2e-marketing.cjs`,
-`scripts/e2e-strategy.cjs`
+`scripts/e2e-strategy.cjs`, `scripts/e2e-advanced.cjs`
 (see its header; Playwright is not a dependency).

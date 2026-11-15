@@ -16,10 +16,13 @@ Program tab: tower analysis, a contract requirements checker, certificates of
 insurance and property adequacy, plus co-insurers and sub-limits on policies.
 Version 1.1 added the Marketing tab: a submission package, carriers approached,
 quotes, a like-for-like quote comparison and a workspace-wide market log.
-Version 1.2 adds the Strategy tab: retention options, a retention optimizer
+Version 1.2 added the Strategy tab: retention options, a retention optimizer
 that replays the account's own claims, total cost of risk per option and a
 printable renewal strategy report with its assumptions generated from the
-settings in use.
+settings in use. Version 1.3 folds Placement into the account as tabs, models
+subscription placements (several insurers per layer, several towers, a coverage
+profile and sign-down), adds per-peril deductible schedules to policies and
+claims, and seeds five more fictional accounts.
 
 ## Local setup
 
@@ -420,6 +423,54 @@ transparent and easy to audit, and it is not a forecast. In particular:
   capital** for funding the retained layer, and treats premium as fixed when a
   higher retention may also change terms or future renewal pricing.
 
+### Placement: subscription layers, several towers, deductible schedules
+
+- **Account tabs.** Each account has Overview, Loss Runs, Program, Marketing and
+  Strategy tabs under its name (`/w/<slug>/accounts/<id>/<tab>`). Marketing and
+  Strategy open on the policy with the fewest days to expiry that has no outcome
+  yet, and remember the chosen policy in the URL. Old `/placement/…` links
+  redirect to the matching tab.
+- **Layers and participations.** A program layer (tower, type, attachment,
+  limit, basis) carries one or more insurer participations, each with a written
+  line (optional), a signed line and its own premium. A v0.5 layer is one
+  participation signed at 100%.
+  - **Placed share** = Σ signed lines. **Layer premium** = Σ participation
+    premiums. **Placed limit** = limit × placed share. **Layer rate on line** =
+    layer premium ÷ placed limit.
+  - **Per participation:** exposed limit = limit × signed line; rate on line =
+    premium ÷ exposed limit; premium per $1M exposed; share of layer premium.
+- **Coverage profile.** 0 to the program top (the highest exhaustion, or the TIV
+  when set) is cut at every attachment and exhaustion point. A segment's placed %
+  is the sum of the signed shares of every layer in every tower that covers it:
+  **Fully placed** within 0.01 points of 100%, **Under-placed** (shortfall % and
+  unplaced $ = shortfall × segment width), **Over-placed** (excess %) or **Not
+  covered**. Within one tower the v0.5 gap and overlap checks still apply;
+  across towers overlapping ranges are expected.
+- **Program totals:** total premium, total placed limit, **rate per $100 of TIV**
+  = total premium ÷ TIV × 100, and a blended rate on line per segment =
+  Σ(layer premium ÷ limit) ÷ Σ placed shares of the layers covering it.
+- **Sign-down.** When written lines exceed the target share, signed = written ×
+  target ÷ Σ written; when they fall short, signed = written and the layer is
+  flagged under-subscribed by the difference. Written lines are optional; without
+  them, signed lines are entered directly.
+- **Bases.** Layers carry a per-occurrence, per-location or aggregate basis. The
+  coverage profile adds shares across bases as if they responded to the same
+  loss and says so when the bases differ; a placing broker should confirm how a
+  per-location layer sits against per-occurrence layers for the risk in question.
+- **Deductible schedules.** A policy's deductible field is its **default (all
+  other perils)** deductible and is mirrored by the schedule row marked default;
+  the two stay in sync. Other rows name a peril or coverage part with a kind:
+  **flat** (an amount), **percent of loss** (percent × incurred, clamped to a
+  minimum and maximum), **percent of value** (percent × the claim's value at
+  risk, clamped; flagged when no value at risk is known, and the minimum is used
+  if there is one) or **waiting period** (hours, not dollars; excluded from
+  dollar replays with a flag).
+- **Matching rule in the replay.** Each claim carries a peril (default All other
+  perils). The retention optimizer uses the schedule rule whose applies_to equals
+  the claim's peril (case-insensitive), otherwise the default rule. A retention
+  option replaces only the default deductible amount, so claims under a named
+  peril keep their own deductible whichever option is chosen.
+
 ## Changelog
 
 v0.1 — Foundation: workspaces, accounts, contacts, policies, demo book, settings.
@@ -435,5 +486,7 @@ v1 — Program: tower analysis, contract requirements checker, certificates, pro
 v1.1 — Marketing: submission package, carriers approached, quotes, like-for-like comparison, market log.
 
 v1.2 — Strategy: retention optimizer, total cost of risk, renewal strategy report.
+
+v1.3 — Account tabs replace Placement; subscription placements with signed lines and multiple towers; deductible schedules with per-peril replay; five more demo accounts.
 
 Full details in [CHANGELOG.md](CHANGELOG.md).

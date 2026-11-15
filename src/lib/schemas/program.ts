@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { COINSURANCE_PERCENTS, ENDORSEMENTS, LINES_OF_BUSINESS, PARTICIPANT_ROLES } from "@/lib/constants";
-import { LAYER_TYPES, LINE_GROUPS, REQUIREMENT_COVERAGES } from "@/lib/domain/program";
+import { LAYER_BASES, LAYER_TYPES, LINE_GROUPS, REQUIREMENT_COVERAGES } from "@/lib/domain/program";
 import { currencySchema, isoDateSchema, optionalCurrencySchema, optionalText, percentSchema, requiredText, uuidSchema } from "./common";
 
 const optionalUuid = z
@@ -17,6 +17,7 @@ const optionalDate = z
 
 /* ---------- Tower layers ---------- */
 
+/** The simple (v0.5) layer form: one insurer at 100%. Saved as a program layer with a single participation. */
 export const towerLayerFormSchema = z.object({
   lineGroup: z.enum(LINE_GROUPS, { error: "Choose a line group" }),
   layerType: z.enum(LAYER_TYPES, { error: "Choose a layer type" }),
@@ -28,6 +29,43 @@ export const towerLayerFormSchema = z.object({
 });
 export type TowerLayerFormInput = z.input<typeof towerLayerFormSchema>;
 export type TowerLayerFormValues = z.output<typeof towerLayerFormSchema>;
+
+/** v1.3: a layer in the advanced view (insurers are added as participations). */
+export const layerFormSchema = z.object({
+  lineGroup: z.enum(LINE_GROUPS, { error: "Choose a line group" }),
+  towerLabel: requiredText("Tower", 40),
+  layerType: z.enum(LAYER_TYPES, { error: "Choose a layer type" }),
+  attachment: currencySchema,
+  limit: currencySchema.refine((n) => n > 0, "Limit must be more than zero"),
+  basis: z.enum(LAYER_BASES, { error: "Choose a basis" }),
+  policyId: optionalUuid,
+  notes: optionalText(500),
+});
+export type LayerFormInput = z.input<typeof layerFormSchema>;
+export type LayerFormValues = z.output<typeof layerFormSchema>;
+
+const optionalPercent = z
+  .string()
+  .trim()
+  .transform((s) => (s === "" ? null : s))
+  .pipe(percentSchema.nullable());
+
+/** v1.3: one insurer's line on a layer. Signed may not exceed written when both are given. */
+export const participationFormSchema = z
+  .object({
+    insurer: requiredText("Insurer", 120),
+    writtenLinePct: optionalPercent,
+    signedLinePct: percentSchema,
+    premium: currencySchema,
+    policyNumber: optionalText(60),
+    isLead: z.boolean(),
+    notes: optionalText(500),
+  })
+  .superRefine((v, ctx) => {
+    if (v.writtenLinePct !== null && v.signedLinePct > v.writtenLinePct) ctx.addIssue({ code: "custom", path: ["signedLinePct"], message: "Signed line cannot be above the written line" });
+  });
+export type ParticipationFormInput = z.input<typeof participationFormSchema>;
+export type ParticipationFormValues = z.output<typeof participationFormSchema>;
 
 /* ---------- Contract requirements ---------- */
 

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."line_group" ADD VALUE 'property';

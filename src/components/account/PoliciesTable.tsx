@@ -22,9 +22,11 @@ interface Props {
   policies: Policy[];
   /** Co-insurer count per policy id, shown as "+N insurers" beside the carrier. */
   coinsurerCounts?: Record<string, number>;
+  /** v1.3: schedule row count per policy id, shown as an "N deductibles" chip. */
+  deductibleCounts?: Record<string, number>;
 }
 
-export function PoliciesTable({ slug, accountId, asOf, policies, coinsurerCounts = {} }: Props) {
+export function PoliciesTable({ slug, accountId, asOf, policies, coinsurerCounts = {}, deductibleCounts = {} }: Props) {
   const addHref = `/w/${slug}/accounts/${accountId}/policies/new`;
 
   return (
@@ -107,6 +109,11 @@ export function PoliciesTable({ slug, accountId, asOf, policies, coinsurerCounts
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {p.deductible === null ? <Missing what="Deductible" /> : formatCurrency(p.deductible)}
+                      {(deductibleCounts[p.id] ?? 0) > 1 ? (
+                        <Badge variant="outline" className="ml-1 font-normal">
+                          {deductibleCounts[p.id]} deductibles
+                        </Badge>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{formatCurrency(p.annualPremium)}</TableCell>
                     <TableCell className="text-right whitespace-nowrap tabular-nums">

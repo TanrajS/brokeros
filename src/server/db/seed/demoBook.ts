@@ -8,11 +8,11 @@ import { addDays, daysBetween } from "@/lib/domain/dates";
 import { getRenewalStage } from "@/lib/domain/renewals";
 import type { ISODate } from "@/lib/domain/types";
 import * as schema from "../schema";
-import { buildDemoBook, type DemoAccount } from "./demoBookData";
+import { buildFullDemoBook, type DemoAccount } from "./demoBookData";
 
 type AnyDb = NeonHttpDatabase<typeof schema>;
 
-export { buildDemoBook, DEMO_WORKSPACE_NAME } from "./demoBookData";
+export { buildDemoBook, buildFullDemoBook, DEMO_WORKSPACE_NAME } from "./demoBookData";
 
 export interface SeedSummary {
   accounts: number;
@@ -22,7 +22,7 @@ export interface SeedSummary {
 
 /** Inserts the demo book into an (assumed empty) workspace. Returns row counts. */
 export async function loadDemoBook(db: AnyDb, workspaceId: string, asOf: ISODate): Promise<SeedSummary> {
-  return insertBook(db, workspaceId, asOf, buildDemoBook(asOf));
+  return insertBook(db, workspaceId, asOf, buildFullDemoBook(asOf));
 }
 
 async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: DemoAccount[]): Promise<SeedSummary> {
@@ -147,29 +147,64 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
       paid: c.paid,
       reserved: c.reserved,
       status: c.status,
+      peril: c.peril,
+      valueAtRisk: c.valueAtRisk,
     })),
   );
   if (claimRows.length > 0) await db.insert(schema.claims).values(claimRows);
+
+  // v1.3: every policy with a deductible gets its default schedule row, plus any named-peril rules.
+  const deductibleRows = book.flatMap((a) =>
+    a.policies.flatMap((p) => [
+      ...(p.deductible !== null ? [{ workspaceId, policyId: pid(p.key), appliesTo: "All other perils", kind: "flat" as const, amount: p.deductible, isDefault: true }] : []),
+      ...p.deductibles.map((r) => ({
+        workspaceId,
+        policyId: pid(p.key),
+        appliesTo: r.appliesTo,
+        kind: r.kind,
+        amount: r.amount ?? null,
+        percent: r.percent ?? null,
+        minimum: r.minimum ?? null,
+        maximum: r.maximum ?? null,
+        hours: r.hours ?? null,
+        notes: r.notes ?? null,
+        isDefault: false,
+      })),
+    ]),
+  );
+  if (deductibleRows.length > 0) await db.insert(schema.policyDeductibles).values(deductibleRows);
 
   const participantRows = book.flatMap((a) => a.policies.flatMap((p) => p.participants.map((x) => ({ workspaceId, policyId: pid(p.key), ...x, notes: null }))));
   if (participantRows.length > 0) await db.insert(schema.policyParticipants).values(participantRows);
   const sublimitRows = book.flatMap((a) => a.policies.flatMap((p) => p.sublimits.map((x) => ({ workspaceId, policyId: pid(p.key), ...x, notes: null }))));
   if (sublimitRows.length > 0) await db.insert(schema.policySublimits).values(sublimitRows);
 
-  const layerRows = book.flatMap((a) =>
-    a.towerLayers.map((t) => ({
-      workspaceId,
-      accountId: accountIds.get(a.name)!,
-      lineGroup: t.lineGroup,
-      layerType: t.layerType,
-      attachment: t.attachment,
-      limit: t.limit,
-      premium: t.premium,
-      carrier: t.carrier,
-      policyId: t.policyKey ? pid(t.policyKey) : null,
-    })),
-  );
-  if (layerRows.length > 0) await db.insert(schema.towerLayers).values(layerRows);
+  // v1.3: program layers with their participations (a v0.5 layer is one insurer at 100%).
+  const layerRows: (typeof schema.programLayers.$inferInsert)[] = [];
+  const participationRows: (typeof schema.layerParticipations.$inferInsert)[] = [];
+  for (const a of book) {
+    for (const t of a.towerLayers) {
+      const id = randomUUID();
+      layerRows.push({
+        id,
+        workspaceId,
+        accountId: accountIds.get(a.name)!,
+        lineGroup: t.lineGroup,
+        towerLabel: t.towerLabel ?? "Tower 1",
+        layerType: t.layerType,
+        attachment: t.attachment,
+        limit: t.limit,
+        basis: t.basis ?? "per_occurrence",
+        policyId: t.policyKey ? pid(t.policyKey) : null,
+      });
+      const parts = t.participations ?? [{ insurer: t.carrier, writtenLinePct: null, signedLinePct: 100, premium: t.premium, isLead: true }];
+      for (const x of parts) {
+        participationRows.push({ workspaceId, layerId: id, insurer: x.insurer, writtenLinePct: x.writtenLinePct, signedLinePct: x.signedLinePct, premium: x.premium, policyNumber: x.policyNumber ?? null, isLead: x.isLead ?? false });
+      }
+    }
+  }
+  if (layerRows.length > 0) await db.insert(schema.programLayers).values(layerRows);
+  if (participationRows.length > 0) await db.insert(schema.layerParticipations).values(participationRows);
 
   const requirementRows = book.flatMap((a) => a.requirements.map((r) => ({ workspaceId, accountId: accountIds.get(a.name)!, ...r })));
   if (requirementRows.length > 0) await db.insert(schema.contractRequirements).values(requirementRows);

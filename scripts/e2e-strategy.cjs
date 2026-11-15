@@ -25,11 +25,11 @@ const flat = (s) => s.replace(/\s+/g, " ");
 const rowText = async (table, label) => flat(await table.locator("tbody tr", { hasText: label }).first().innerText());
 
 async function openStrategy(p, slug, account) {
-  await p.goto(`${BASE}/w/${slug}/placement`);
+  await p.goto(`${BASE}/w/${slug}`);
   await settle(p);
   await main(p).getByRole("link", { name: account, exact: true }).click();
-  await p.waitForURL(/loss-runs$/);
-  await p.goto(p.url().replace(/loss-runs$/, "strategy"));
+  await p.waitForURL(/\/accounts\/[0-9a-f-]{36}$/);
+  await p.goto(`${p.url()}/strategy`);
   await settle(p);
 }
 
@@ -45,7 +45,7 @@ async function openStrategy(p, slug, account) {
   /* ---------- Harbourline, seeded (read-only) ---------- */
   await openStrategy(page, SEED, "Harbourline Foods Inc.");
   const strategyUrl = page.url();
-  check("Strategy tab is live (no version hint) and current", /Strategy$/.test(flat(await main(page).locator('nav[aria-label="Placement sections"] a[aria-current="page"]').innerText())));
+  check("Strategy tab is selected", (await main(page).getByRole("tab", { name: /^Strategy/ }).getAttribute("aria-selected")) === "true");
   const basis = flat(await main(page).getByText("Replaying 5 policy years").innerText());
   check("basis statement names the years, the running year and the raw basis", /PY2022–PY2026, running year included as incomplete\) on raw incurred, as of 12 Nov 2026|PY2022–PY2026, running year included as incomplete\) on raw incurred/.test(basis), basis);
 
@@ -131,7 +131,7 @@ async function openStrategy(p, slug, account) {
   check("print button and export link", (await main(page).getByRole("button", { name: "Print or save as PDF" }).count()) === 1 && (await main(page).getByRole("link", { name: "Export inputs (JSON)" }).count()) === 1);
   await page.screenshot({ path: `${SHOTS}/strategy-report.png`, fullPage: true });
   await page.emulateMedia({ media: "print" });
-  check("print hides the app chrome and the on-screen controls", (await page.locator('nav[aria-label="Placement sections"]:visible').count()) === 0 && (await page.getByRole("link", { name: "Back to Strategy" }).isHidden()) && (await page.getByRole("button", { name: "Print or save as PDF" }).isHidden()) && (await page.locator("article h2").first().isVisible()));
+  check("print hides the app chrome and the on-screen controls", (await page.locator('nav[aria-label="Account sections"]:visible').count()) === 0 && (await page.getByRole("link", { name: "Back to Strategy" }).isHidden()) && (await page.getByRole("button", { name: "Print or save as PDF" }).isHidden()) && (await page.locator("article h2").first().isVisible()));
   await page.emulateMedia({ media: "screen" });
 
   const exportHref = await main(page).getByRole("link", { name: "Export inputs (JSON)" }).getAttribute("href");

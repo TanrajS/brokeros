@@ -27,6 +27,8 @@ export function demoAccountToLossRuns(account: DemoAccount): { policies: LRPolic
     reserved: c.reserved,
     status: c.status,
     policyId: c.policyKey,
+    peril: c.peril,
+    valueAtRisk: c.valueAtRisk,
   }));
   return { policies, claims };
 }

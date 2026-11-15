@@ -2,14 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpen, CalendarClock, LayoutDashboard, Settings, Briefcase } from "lucide-react";
+import { BookOpen, CalendarClock, LayoutDashboard, Settings } from "lucide-react";
 import { cn } from "cn";
 
 const items = [
   { href: "", label: "Book", icon: BookOpen },
   { href: "/renewals", label: "Renewals", icon: CalendarClock },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/placement", label: "Placement", icon: Briefcase },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

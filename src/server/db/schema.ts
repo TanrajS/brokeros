@@ -8,11 +8,14 @@
  *  - money: numeric(14,2); rates: numeric(6,3); calendar dates: date (YYYY-MM-DD strings)
  *
  * v0.2 added checklist_items, tasks, activities and renewal_outcomes; v0.4
- * added claims; v1 added tower_layers, contract_requirements, certificates,
+ * added claims; v1 added tower_layers (replaced in v1.3 by program_layers and
+ * layer_participations), contract_requirements, certificates,
  * policy_participants and policy_sublimits; v1.1 added submissions and quotes
  * (a quote "option" is simply another quote on the same submission); v1.2 added
  * quote_options (retention options for the Strategy tab) and the account's
- * broker fee, risk control and claims administration figures for TCOR.
+ * broker fee, risk control and claims administration figures for TCOR; v1.3
+ * added program_layers, layer_participations, policy_deductibles and the
+ * claims' peril and value_at_risk.
  * Keep the helper column factories below so those tables stay consistent.
  */
 import { relations, sql } from "drizzle-orm";
@@ -30,7 +33,8 @@ import {
   uniqueIndex,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
-import { LAYER_TYPES, LINE_GROUPS, REQUIREMENT_COVERAGES } from "@/lib/domain/program";
+import { DEDUCTIBLE_KINDS } from "@/lib/domain/deductibles";
+import { LAYER_BASES, LAYER_TYPES, LINE_GROUPS, REQUIREMENT_COVERAGES } from "@/lib/domain/program";
 import {
   ACCOUNT_STATUSES,
   ACTIVITY_KINDS,
@@ -59,6 +63,8 @@ export const lostReasonEnum = pgEnum("lost_reason", LOST_REASONS);
 export const claimStatusEnum = pgEnum("claim_status", CLAIM_STATUSES);
 export const lineGroupEnum = pgEnum("line_group", LINE_GROUPS);
 export const layerTypeEnum = pgEnum("layer_type", LAYER_TYPES);
+export const layerBasisEnum = pgEnum("layer_basis", LAYER_BASES);
+export const deductibleKindEnum = pgEnum("deductible_kind", DEDUCTIBLE_KINDS);
 export const requirementCoverageEnum = pgEnum("requirement_coverage", REQUIREMENT_COVERAGES);
 export const participantRoleEnum = pgEnum("participant_role", PARTICIPANT_ROLES);
 export const submissionStatusEnum = pgEnum("submission_status", SUBMISSION_STATUSES);
@@ -289,6 +295,9 @@ export const claims = pgTable(
     paid: money("paid").notNull(),
     reserved: money("reserved").notNull(),
     status: claimStatusEnum("status").notNull(),
+    /** v1.3: the peril or coverage part, matched to the policy's deductible schedule; value at risk for percent-of-value deductibles. */
+    peril: text("peril").notNull().default("All other perils"),
+    valueAtRisk: money("value_at_risk"),
     ...timestamps,
   },
   (t) => [
@@ -301,27 +310,6 @@ export const claims = pgTable(
 
 /* ---------- v1 Program ---------- */
 
-export const towerLayers = pgTable(
-  "tower_layers",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    workspaceId: uuid("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    accountId: uuid("account_id")
-      .notNull()
-      .references(() => accounts.id, { onDelete: "cascade" }),
-    lineGroup: lineGroupEnum("line_group").notNull(),
-    layerType: layerTypeEnum("layer_type").notNull(),
-    attachment: money("attachment").notNull(),
-    limit: money("limit").notNull(),
-    premium: money("premium").notNull(),
-    carrier: text("carrier").notNull(),
-    policyId: uuid("policy_id").references(() => policies.id, { onDelete: "set null" }),
-    ...timestamps,
-  },
-  (t) => [index("tower_layers_account_group_idx").on(t.accountId, t.lineGroup), index("tower_layers_workspace_idx").on(t.workspaceId)],
-);
 
 export const contractRequirements = pgTable(
   "contract_requirements",
@@ -482,6 +470,92 @@ export const quotes = pgTable(
 );
 
 /**
+ * v1.3: a layer of a program placed on a subscription basis. One tower is the
+ * v0.5 case; several towers split the risk horizontally and their layers'
+ * signed shares add up at every point of the limit.
+ */
+export const programLayers = pgTable(
+  "program_layers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    lineGroup: lineGroupEnum("line_group").notNull(),
+    towerLabel: text("tower_label").notNull().default("Tower 1"),
+    layerType: layerTypeEnum("layer_type").notNull(),
+    attachment: money("attachment").notNull(),
+    limit: money("limit").notNull(),
+    basis: layerBasisEnum("basis").notNull().default("per_occurrence"),
+    /** Optional link to the account's policy this layer is written on. */
+    policyId: uuid("policy_id").references(() => policies.id, { onDelete: "set null" }),
+    notes: text("notes"),
+    ...timestamps,
+  },
+  (t) => [index("program_layers_account_group_idx").on(t.accountId, t.lineGroup), index("program_layers_workspace_idx").on(t.workspaceId)],
+);
+
+/** v1.3: an insurer's line on a layer. A v0.5 layer is one participation signed at 100%. */
+export const layerParticipations = pgTable(
+  "layer_participations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    layerId: uuid("layer_id")
+      .notNull()
+      .references(() => programLayers.id, { onDelete: "cascade" }),
+    insurer: text("insurer").notNull(),
+    /** Line offered, percent 0–100; null when lines were signed directly. */
+    writtenLinePct: rate("written_line_pct"),
+    signedLinePct: rate("signed_line_pct").notNull(),
+    premium: money("premium").notNull(),
+    policyNumber: text("policy_number"),
+    isLead: boolean("is_lead").notNull().default(false),
+    notes: text("notes"),
+    ...timestamps,
+  },
+  (t) => [index("layer_participations_layer_idx").on(t.layerId), index("layer_participations_workspace_idx").on(t.workspaceId)],
+);
+
+/**
+ * v1.3: a policy's deductible schedule. The row with is_default mirrors
+ * `policies.deductible` (all other perils) and the two are kept in sync by the
+ * policy and schedule actions; the other rows name a peril or coverage part.
+ */
+export const policyDeductibles = pgTable(
+  "policy_deductibles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    policyId: uuid("policy_id")
+      .notNull()
+      .references(() => policies.id, { onDelete: "cascade" }),
+    appliesTo: text("applies_to").notNull(),
+    kind: deductibleKindEnum("kind").notNull(),
+    amount: money("amount"),
+    percent: rate("percent"),
+    minimum: money("minimum"),
+    maximum: money("maximum"),
+    hours: integer("hours"),
+    notes: text("notes"),
+    isDefault: boolean("is_default").notNull().default(false),
+    ...timestamps,
+  },
+  (t) => [
+    index("policy_deductibles_policy_idx").on(t.policyId),
+    index("policy_deductibles_workspace_idx").on(t.workspaceId),
+    uniqueIndex("policy_deductibles_default_idx").on(t.policyId).where(sql`${t.isDefault} = true`),
+  ],
+);
+
+/**
  * v1.2: a retention option for the Strategy tab: a deductible (or self-insured
  * retention) with its annual premium, optionally capped per year, entered by hand
  * or imported from a quote (the link is kept for the report's audit trail).
@@ -544,7 +618,6 @@ export type Task = typeof tasks.$inferSelect;
 export type Activity = typeof activities.$inferSelect;
 export type RenewalOutcome = typeof renewalOutcomes.$inferSelect;
 export type Claim = typeof claims.$inferSelect;
-export type TowerLayer = typeof towerLayers.$inferSelect;
 export type ContractRequirement = typeof contractRequirements.$inferSelect;
 export type Certificate = typeof certificates.$inferSelect;
 export type PolicyParticipant = typeof policyParticipants.$inferSelect;
@@ -552,3 +625,6 @@ export type PolicySublimit = typeof policySublimits.$inferSelect;
 export type Submission = typeof submissions.$inferSelect;
 export type Quote = typeof quotes.$inferSelect;
 export type QuoteOption = typeof quoteOptions.$inferSelect;
+export type ProgramLayer = typeof programLayers.$inferSelect;
+export type LayerParticipation = typeof layerParticipations.$inferSelect;
+export type PolicyDeductible = typeof policyDeductibles.$inferSelect;
