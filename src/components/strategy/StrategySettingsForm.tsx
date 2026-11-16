@@ -17,7 +17,7 @@ interface Props {
   policyId: string;
   current: StrategySettingsInput;
   prospectiveYear: number | null;
-  /** Label of the running year, when there is one, e.g. "PY2026". */
+  /** Label of the current (incomplete) year, when there is one, e.g. "PY2026". */
   runningYear: string | null;
   availableYears: number;
 }
@@ -30,7 +30,7 @@ const AGES = [
   ["ldf60", "60+ months"],
 ] as const;
 
-/** Years, running-year toggle and the v0.4 adjustments. Apply writes them to the URL so the view and the report share them. */
+/** Years, current-year toggle and the v0.4 adjustments. Apply writes them to the URL so the view and the report share them. */
 export function StrategySettingsForm({ slug, accountId, policyId, current, prospectiveYear, runningYear, availableYears }: Props) {
   const router = useRouter();
   const { register, handleSubmit, formState, control } = useForm<StrategySettingsInput, unknown, StrategySettingsValues>({
@@ -52,14 +52,14 @@ export function StrategySettingsForm({ slug, accountId, policyId, current, prosp
         Analysis settings
       </h2>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field id="st-years" label="Policy years to replay" required error={e.years?.message} hint={`Most recent first; ${availableYears} ${availableYears === 1 ? "year has" : "years have"} started by the as-of date.`}>
+        <Field id="st-years" label="Policy years to use" required error={e.years?.message} hint={`Most recent first; ${availableYears} ${availableYears === 1 ? "year has" : "years have"} started so far.`}>
           <Input {...register("years")} {...fieldA11y("st-years", e.years?.message, "hint")} inputMode="numeric" className="max-w-32" />
         </Field>
         <fieldset className="flex flex-col gap-2">
-          <legend className="sr-only">Running year</legend>
-          <NativeCheckbox id="st-current" label={runningYear ? `Include the running year (${runningYear}, incomplete)` : "Include the running year"} {...register("includeCurrent")} disabled={!runningYear} />
+          <legend className="sr-only">Current year</legend>
+          <NativeCheckbox id="st-current" label={runningYear ? `Include the current year (${runningYear}, incomplete)` : "Include the current year"} {...register("includeCurrent")} disabled={!runningYear} />
           <p className="text-xs text-muted-foreground">
-            {runningYear ? "The running year's claims are still arriving; counted, it is treated as a full year." : "No policy year is running on the as-of date."}
+            {runningYear ? "The current year's claims are still arriving; when included, it counts as a full year." : "No policy year is running at the workspace date."}
           </p>
         </fieldset>
       </div>
@@ -82,7 +82,7 @@ export function StrategySettingsForm({ slug, accountId, policyId, current, prosp
         <legend className="sr-only">Development</legend>
         <NativeCheckbox id="st-dev-on" label="Apply loss development" {...register("developmentOn")} />
         <p className="text-xs text-muted-foreground">
-          Factors are entered, not calculated. Each policy year uses the factor for its age (whole months from its effective date to the as-of date, bucketed down to 12, 24, 36, 48 or 60+).
+          Factors are entered, not calculated. Each policy year uses the factor for its age (whole months from its effective date to the workspace date, bucketed down to 12, 24, 36, 48 or 60+).
           Developed incurred = incurred × factor, per claim.
         </p>
         {devOn ? (

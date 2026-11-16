@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -26,8 +26,9 @@ import { Field, fieldA11y } from "@/components/form/Field";
 import { NativeSelect } from "@/components/form/NativeSelect";
 import { NativeCheckbox } from "@/components/form/Checkbox";
 import { ValueOrMissing } from "@/components/Missing";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CLAIM_STATUSES, LINES_OF_BUSINESS, type ClaimStatus, type LineOfBusiness } from "@/lib/constants";
-import { CLAIM_FLAG_LABELS, type ClaimFlag } from "@/lib/domain/lossRuns";
+import { CLAIM_FLAG_LABELS, CLAIM_FLAG_REASONS, type ClaimFlag } from "@/lib/domain/lossRuns";
 import { parseCurrencyInput } from "@/lib/domain/money";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { claimFormSchema, type ClaimFormInput, type ClaimFormValues } from "@/lib/schemas/claim";
@@ -76,6 +77,10 @@ export function ClaimsSection({ slug, accountId, asOf, line, claims, policyOptio
   const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState<Editing>(null);
   const [deleting, setDeleting] = useState<ClaimRowView | null>(null);
+  // v1.5: every data-quality flag sits on its claim row; "Flagged only" narrows the table to those rows.
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const flaggedCount = useMemo(() => claims.filter((c) => c.flags.length > 0).length, [claims]);
+  const shown = flaggedOnly ? claims.filter((c) => c.flags.length > 0) : claims;
 
   function confirmDelete() {
     if (!deleting) return;
@@ -98,13 +103,20 @@ export function ClaimsSection({ slug, accountId, asOf, line, claims, policyOptio
         <h2 id="claims-heading" className="text-lg font-semibold">
           Claims, {line}
         </h2>
-        <Button type="button" size="sm" onClick={() => setEditing({ mode: "create" })}>
-          <Plus aria-hidden="true" />
-          Add claim
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          {claims.length > 0 ? <NativeCheckbox id="claims-flagged-only" label={`Flagged only (${flaggedCount})`} checked={flaggedOnly} onChange={(e) => setFlaggedOnly(e.target.checked)} /> : null}
+          <Button type="button" size="sm" onClick={() => setEditing({ mode: "create" })}>
+            <Plus aria-hidden="true" />
+            Add claim
+          </Button>
+        </div>
       </div>
       {claims.length === 0 ? (
         <p className="rounded-lg border p-4 text-sm text-muted-foreground">No {line} claims on this account. Add one or import a loss run CSV.</p>
+      ) : shown.length === 0 ? (
+        <p className="rounded-lg border p-4 text-sm text-muted-foreground" role="status">
+          No {line} claims are flagged.
+        </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border">
           <Table>
@@ -112,12 +124,12 @@ export function ClaimsSection({ slug, accountId, asOf, line, claims, policyOptio
               <TableRow>
                 <TableHead>Claim</TableHead>
                 <TableHead>Policy year</TableHead>
-                <TableHead>Loss / reported</TableHead>
+                <TableHead>Date of loss / reported</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead>Peril</TableHead>
-                <TableHead className="text-right">Paid</TableHead>
-                <TableHead className="text-right">Reserved</TableHead>
-                <TableHead className="text-right">Incurred</TableHead>
+                <TableHead className="text-right">Paid ($)</TableHead>
+                <TableHead className="text-right">Reserved ($)</TableHead>
+                <TableHead className="text-right">Incurred ($)</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-24">
                   <span className="sr-only">Actions</span>
@@ -125,17 +137,22 @@ export function ClaimsSection({ slug, accountId, asOf, line, claims, policyOptio
               </TableRow>
             </TableHeader>
             <TableBody>
-              {claims.map((c) => (
+              {shown.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell className="font-medium whitespace-nowrap">
                     {c.claimNumber}
                     {c.flags.length > 0 ? (
-                      <span className="mt-1 flex flex-col gap-1">
+                      <span className="mt-1 flex flex-col items-start gap-1">
                         {c.flags.map((f) => (
-                          <Badge key={f} variant="outline" className="gap-1 border-amber-500/60 text-xs font-normal">
-                            <AlertTriangle className="size-3" aria-hidden="true" />
-                            {CLAIM_FLAG_LABELS[f]}
-                          </Badge>
+                          <Tooltip key={f}>
+                            <TooltipTrigger asChild>
+                              <Badge variant="outline" tabIndex={0} className="cursor-help gap-1 border-amber-500/60 text-[11px] font-normal" aria-label={`${CLAIM_FLAG_LABELS[f]}: ${CLAIM_FLAG_REASONS[f]}`}>
+                                <AlertTriangle className="size-3" aria-hidden="true" />
+                                {CLAIM_FLAG_LABELS[f]}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs whitespace-normal">{CLAIM_FLAG_REASONS[f]}</TooltipContent>
+                          </Tooltip>
                         ))}
                       </span>
                     ) : null}
@@ -150,7 +167,7 @@ export function ClaimsSection({ slug, accountId, asOf, line, claims, policyOptio
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-xs">
                     {c.peril || "All other perils"}
-                    {c.valueAtRisk !== null && c.valueAtRisk !== undefined ? <span className="block text-muted-foreground">VAR {formatCurrency(c.valueAtRisk)}</span> : null}
+                    {c.valueAtRisk !== null && c.valueAtRisk !== undefined ? <span className="block text-muted-foreground">Value at risk {formatCurrency(c.valueAtRisk)}</span> : null}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{formatCurrency(c.paid)}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatCurrency(c.reserved)}</TableCell>
@@ -325,7 +342,7 @@ function ClaimDialog({
                 max={asOf}
               />
             </Field>
-            <Field id="claim-reported" label="Date reported" required error={msg("dateReported")} hint={`On or after the loss; not after ${formatDate(asOf)}.`}>
+            <Field id="claim-reported" label="Date reported" required error={msg("dateReported")} hint={`On or after the date of loss; not after ${formatDate(asOf)}.`}>
               <Input type="date" {...register("dateReported")} {...fieldA11y("claim-reported", msg("dateReported"), "hint")} max={asOf} />
             </Field>
             <Field id="claim-paid" label="Paid (CAD)" required error={msg("paid")}>

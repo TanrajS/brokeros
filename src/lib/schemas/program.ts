@@ -43,13 +43,13 @@ const optionalPercent = z
   .transform((s) => (s === "" ? null : s))
   .pipe(percentSchema.nullable());
 
-/** v1.3: one insurer's line on a layer. Signed may not exceed written when both are given. */
+/** v1.3: one insurer's line on a layer. Signed may not exceed written when both are given. The premium is quoted at 100% of the layer (v1.5). */
 export const participationFormSchema = z
   .object({
     insurer: requiredText("Insurer", 120),
     writtenLinePct: optionalPercent,
     signedLinePct: percentSchema,
-    premium: currencySchema,
+    premium100: currencySchema,
     policyNumber: optionalText(60),
     isLead: z.boolean(),
     notes: optionalText(500),

@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertTriangle } from "lucide-react";
 import { cn } from "cn";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { InfoTip } from "@/components/InfoTip";
 import { Missing } from "@/components/Missing";
 import { MetricTile } from "@/components/dashboard/MetricTile";
 import { ShowMath } from "@/components/dashboard/ShowMath";
@@ -14,18 +14,7 @@ import { LossRatioChart } from "@/components/lossRuns/LossRatioChart";
 import { LossRunSettingsForm } from "@/components/lossRuns/LossRunSettingsForm";
 import { adjustmentsFrom, lossRunsHref, settingsFromQuery, type LossRunQuery } from "@/components/lossRuns/params";
 import { LINES_OF_BUSINESS, type LineOfBusiness } from "@/lib/constants";
-import {
-  CLAIM_FLAG_LABELS,
-  assignPolicyYear,
-  claimFlags,
-  incurred,
-  largeLosses,
-  openClaims,
-  policyPeriods,
-  policyYearSummary,
-  type Frequency,
-  type SummaryTotal,
-} from "@/lib/domain/lossRuns";
+import { assignPolicyYear, claimFlags, groupPolicyYears, incurred, largeLosses, openClaims, policyPeriods, policyYearSummary, type Frequency, type SummaryRow, type SummaryTotal } from "@/lib/domain/lossRuns";
 import { formatCurrency, formatDate, formatRatioPercent } from "@/lib/format";
 import { loadLossRunInputs } from "@/server/lossRuns/queries";
 import { requireWorkspace } from "../../../../lib";
@@ -34,6 +23,8 @@ export const metadata: Metadata = { title: "Loss runs" };
 
 type SearchParams = Record<string, string | string[] | undefined>;
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? (v[0] ?? "") : (v ?? "")).trim();
+/** Rows shown per group before "Show N more" (v1.5). */
+const GROUP_PREVIEW = 3;
 
 function freqText(f: Frequency): React.ReactNode {
   if (f.value === null) return <Missing what={`Frequency (${f.reason ?? "unavailable"})`} />;
@@ -58,7 +49,7 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
       ? "General Liability"
       : (lines[0] ?? "General Liability");
 
-  const query: LossRunQuery = { line, trend: first(sp.trend), ldf: first(sp.ldf), threshold: first(sp.threshold), cap: first(sp.cap) };
+  const query: LossRunQuery = { line, trend: first(sp.trend), ldf: first(sp.ldf), threshold: first(sp.threshold), cap: first(sp.cap), active: first(sp.active) === "all" ? "all" : "", expired: first(sp.expired) === "all" ? "all" : "" };
   const settings = settingsFromQuery(query);
   const adjustments = adjustmentsFrom(settings.values);
 
@@ -74,13 +65,13 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
   });
   const large = largeLosses(fiveYearClaims, s.total?.earnedPremium ?? 0, settings.values.threshold, settings.values.cap);
   const open = openClaims(lineClaims);
-  const flagged = claims.filter((c) => (flags.value[c.id] ?? []).length > 0);
+  const groups = groupPolicyYears(s.rows, asOf, inputs.policyStatus);
 
   const units = [...new Set(s.rows.map((r) => r.frequency.unit).filter(Boolean))];
   const freqHeader = units.length === 1 ? `Frequency (${units[0]})` : "Frequency";
   const basisLabel = s.adjusted
     ? `adjusted: ${[adjustments.trendRate !== null ? `trend ${formatRatioPercent(adjustments.trendRate)}` : null, adjustments.factors ? "development" : null].filter(Boolean).join(" + ")}`
-    : "raw";
+    : "raw incurred";
   const chartYears = s.rows.map((r) => {
     const amount = s.adjusted ? r.adjustedIncurred : r.incurred;
     const ratio = s.adjusted ? r.adjustedLossRatio : r.lossRatio;
@@ -89,7 +80,7 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
   const policyOptions = policies.map((p) => ({
     id: p.id,
     line: p.lineOfBusiness,
-    label: `PY${p.effectiveDate.slice(0, 4)}: ${p.effectiveDate} to ${p.expiryDate}`,
+    label: `PY${p.effectiveDate.slice(0, 4)}: ${formatDate(p.effectiveDate)} to ${formatDate(p.expiryDate)}`,
   }));
   const claimRows = lineClaims.map((c) => ({
     ...c,
@@ -98,6 +89,11 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
     flags: flags.value[c.id] ?? [],
   }));
   const active = "bg-primary/5";
+  const columnCount = 10 + (s.adjusted ? 4 : 0);
+  const groupDefs = [
+    { key: "active" as const, title: "Active and in progress", rows: groups.value.active, expanded: query.active === "all" },
+    { key: "expired" as const, title: "Expired", rows: groups.value.expired, expanded: query.expired === "all" },
+  ];
 
   return (
     <div className="flex flex-col gap-8">
@@ -111,7 +107,7 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
                 {lines.map((l) => (
                   <li key={l}>
                     <Link
-                      href={lossRunsHref(slug, accountId, query, { line: l })}
+                      href={lossRunsHref(slug, accountId, query, { line: l, active: "", expired: "" })}
                       aria-current={l === line ? "page" : undefined}
                       className={cn(
                         "inline-flex rounded-full border px-3 py-1 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
@@ -137,22 +133,26 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
       {/* ---------------- Policy-year summary ---------------- */}
       <section aria-labelledby="summary-heading" className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 id="summary-heading" className="text-lg font-semibold">
-            {line}: policy-year summary
+          <h2 id="summary-heading" className="flex items-center gap-1.5 text-lg font-semibold">
+            {line}: policy years
+            <InfoTip label="About the policy-year summary">
+              Each claim belongs to the policy year whose term contains its date of loss. The current year&apos;s premium is earned to {formatDate(asOf)}. Totals and averages cover the five most recent
+              policy years. Active and in progress means in force at {formatDate(asOf)} or in a renewal stage with no outcome yet; Expired means expired or closed.
+            </InfoTip>
           </h2>
           <Badge variant={s.adjusted ? "default" : "outline"} className="text-sm">
-            Active basis: {basisLabel}
+            Basis: {basisLabel}
           </Badge>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Each claim belongs to the policy period that contains its date of loss. The running year&apos;s premium is earned to date ({formatDate(asOf)}). Totals and averages
-          cover the five most recent policy years.
-          {s.excludedOutsidePeriod > 0 ? ` ${s.excludedOutsidePeriod} claim${s.excludedOutsidePeriod === 1 ? " is" : "s are"} outside known policy periods and excluded until fixed.` : ""}
-        </p>
+        {s.excludedOutsidePeriod > 0 ? (
+          <p className="text-xs text-amber-900" role="status">
+            {s.excludedOutsidePeriod} claim{s.excludedOutsidePeriod === 1 ? " is" : "s are"} outside known policy periods and excluded until fixed.
+          </p>
+        ) : null}
 
         {s.rows.length === 0 ? (
           <p className="rounded-lg border p-4 text-sm text-muted-foreground">
-            No {line} policy periods start on or before the as-of date, so there are no policy years to summarise.
+            No {line} policy periods start on or before {formatDate(asOf)}, so there are no policy years to summarise.
           </p>
         ) : (
           <>
@@ -161,72 +161,68 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
             </div>
             <div className="overflow-x-auto rounded-lg border">
               <Table>
-                <caption className="sr-only">Policy-year summary for {line}; active basis {basisLabel}</caption>
+                <caption className="sr-only">
+                  Policy-year summary for {line}; basis {basisLabel}; grouped into Active and in progress and Expired
+                </caption>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Policy year</TableHead>
                     <TableHead className="text-right">Claims</TableHead>
                     <TableHead className="text-right">Open</TableHead>
-                    <TableHead className="text-right">Paid</TableHead>
-                    <TableHead className="text-right">Reserved</TableHead>
-                    <TableHead className={cn("text-right", !s.adjusted && active)}>Incurred{!s.adjusted ? " (active)" : " (raw)"}</TableHead>
-                    <TableHead className="text-right">Earned premium</TableHead>
-                    <TableHead className={cn("text-right", !s.adjusted && active)}>Loss ratio{s.adjusted ? " (raw)" : ""}</TableHead>
+                    <TableHead className="text-right">Paid ($)</TableHead>
+                    <TableHead className="text-right">Reserved ($)</TableHead>
+                    <TableHead className={cn("text-right", !s.adjusted && active)}>Incurred ($){!s.adjusted ? ", in use" : ", raw"}</TableHead>
+                    <TableHead className="text-right">Earned premium ($)</TableHead>
+                    <TableHead className={cn("text-right", !s.adjusted && active)}>Loss ratio (%){s.adjusted ? ", raw" : ""}</TableHead>
                     <TableHead className="text-right whitespace-normal">{freqHeader}</TableHead>
-                    <TableHead className="text-right">Severity</TableHead>
+                    <TableHead className="text-right">Severity ($)</TableHead>
                     {s.adjusted ? (
                       <>
                         <TableHead className="text-right">Trend</TableHead>
                         <TableHead className="text-right">Age / factor</TableHead>
-                        <TableHead className={cn("text-right", active)}>Adjusted incurred (active)</TableHead>
-                        <TableHead className={cn("text-right", active)}>Adjusted loss ratio</TableHead>
+                        <TableHead className={cn("text-right", active)}>Adjusted incurred ($), in use</TableHead>
+                        <TableHead className={cn("text-right", active)}>Adjusted loss ratio (%)</TableHead>
                       </>
                     ) : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {s.rows.map((r) => (
-                    <TableRow key={r.period.policyId}>
-                      <TableCell className="whitespace-nowrap">
-                        <span className="font-medium">{r.label}</span>
-                        <span className="block text-xs text-muted-foreground">
-                          {r.period.effectiveDate} to {r.period.expiryDate}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{r.claimCount}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.openCount}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatCurrency(r.paid)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatCurrency(r.reserved)}</TableCell>
-                      <TableCell className={cn("text-right font-medium tabular-nums", !s.adjusted && active)}>{formatCurrency(r.incurred)}</TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatCurrency(r.earnedPremium)}
-                        {r.earnedToDate ? <span className="block text-xs text-muted-foreground">earned to date</span> : null}
-                      </TableCell>
-                      <TableCell className={cn("text-right tabular-nums", !s.adjusted && active)}>
-                        {r.lossRatio === null ? <Missing what="Loss ratio (no earned premium)" /> : formatRatioPercent(r.lossRatio)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{freqText(r.frequency)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.severity === null ? <Missing what="Severity (no claims)" /> : formatCurrency(r.severity)}</TableCell>
-                      {s.adjusted ? (
-                        <>
-                          <TableCell className="text-right whitespace-nowrap tabular-nums">
-                            {r.trendExponent === null ? "off" : `× ${r.trendFactor.toFixed(4)}`}
-                            {r.trendExponent !== null ? <span className="block text-xs text-muted-foreground">exponent {r.trendExponent}</span> : null}
-                          </TableCell>
-                          <TableCell className="text-right whitespace-nowrap tabular-nums">
-                            {adjustments.factors ? `× ${r.developmentFactor.toFixed(2)}` : "off"}
-                            <span className="block text-xs text-muted-foreground">
-                              {r.ageMonths} mo → {r.ageBucket}
-                            </span>
-                          </TableCell>
-                          <TableCell className={cn("text-right font-medium tabular-nums", active)}>{formatCurrency(r.adjustedIncurred)}</TableCell>
-                          <TableCell className={cn("text-right tabular-nums", active)}>
-                            {r.adjustedLossRatio === null ? <Missing what="Adjusted loss ratio (no earned premium)" /> : formatRatioPercent(r.adjustedLossRatio)}
-                          </TableCell>
-                        </>
-                      ) : null}
-                    </TableRow>
-                  ))}
+                  {groupDefs.map((g) => {
+                    const visible = g.expanded ? g.rows : g.rows.slice(0, GROUP_PREVIEW);
+                    const hidden = g.rows.length - visible.length;
+                    return [
+                      <TableRow key={`${g.key}-head`} className="bg-muted/40 hover:bg-muted/40">
+                        <TableHead scope="rowgroup" colSpan={columnCount} className="h-9 font-semibold" id={`group-${g.key}`}>
+                          {g.title} ({g.rows.length})
+                        </TableHead>
+                      </TableRow>,
+                      ...(g.rows.length === 0
+                        ? [
+                            <TableRow key={`${g.key}-empty`}>
+                              <TableCell colSpan={columnCount} className="text-sm text-muted-foreground">
+                                {g.key === "active" ? "No policy year is in force or in a renewal stage." : "No expired or closed policy years."}
+                              </TableCell>
+                            </TableRow>,
+                          ]
+                        : visible.map((r) => <SummaryRowView key={r.period.policyId} r={r} adjusted={s.adjusted} active={active} factorsOn={adjustments.factors !== null} />)),
+                      ...(hidden > 0 || (g.expanded && g.rows.length > GROUP_PREVIEW)
+                        ? [
+                            <TableRow key={`${g.key}-more`}>
+                              <TableCell colSpan={columnCount} className="py-1.5">
+                                <Link
+                                  href={lossRunsHref(slug, accountId, query, { [g.key]: g.expanded ? "" : "all" })}
+                                  scroll={false}
+                                  aria-describedby={`group-${g.key}`}
+                                  className="inline-flex rounded-sm text-sm underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+                                >
+                                  {g.expanded ? `Show ${g.rows.length - GROUP_PREVIEW} fewer` : `Show ${hidden} more`}
+                                </Link>
+                              </TableCell>
+                            </TableRow>,
+                          ]
+                        : []),
+                    ];
+                  })}
                 </TableBody>
                 {s.total && s.average ? (
                   <TableFooter>
@@ -236,16 +232,12 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
                 ) : null}
               </Table>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Loss ratio = incurred ÷ earned premium. Frequency = claims per exposure unit. Severity = incurred ÷ claims. On the average row, loss ratio, frequency and severity
-              are the five-year aggregates.
-            </p>
-            <ShowMath lines={summary.math.steps.lines as string[]} />
+            <ShowMath lines={[...(summary.math.steps.lines as string[]), ...(groups.math.steps.lines as string[])]} />
           </>
         )}
       </section>
 
-      <LossRunSettingsForm key={JSON.stringify(settings.input)} slug={slug} accountId={accountId} line={line} current={settings.input} prospectiveYear={s.prospectiveYear} />
+      <LossRunSettingsForm key={JSON.stringify(settings.input)} slug={slug} accountId={accountId} line={line} current={settings.input} prospectiveYear={s.prospectiveYear} keep={{ active: query.active, expired: query.expired }} asOfLabel={formatDate(asOf) ?? asOf} />
 
       {/* ---------------- Large loss ---------------- */}
       <section aria-labelledby="large-heading" className="flex flex-col gap-3">
@@ -297,8 +289,8 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
                   <TableHead>Date of loss</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Incurred</TableHead>
-                  <TableHead className="text-right">Share of incurred</TableHead>
+                  <TableHead className="text-right">Incurred ($)</TableHead>
+                  <TableHead className="text-right">Share of incurred (%)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -335,8 +327,8 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
                   <TableHead>Claim</TableHead>
                   <TableHead>Date of loss</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Paid</TableHead>
-                  <TableHead className="text-right">Reserved</TableHead>
+                  <TableHead className="text-right">Paid ($)</TableHead>
+                  <TableHead className="text-right">Reserved ($)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -356,38 +348,6 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
         <ShowMath lines={open.math.steps.lines as string[]} />
       </section>
 
-      {/* ---------------- Data quality ---------------- */}
-      <section aria-labelledby="quality-heading" className="flex flex-col gap-3">
-        <h2 id="quality-heading" className="text-lg font-semibold">
-          Data quality
-        </h2>
-        {flagged.length === 0 ? (
-          <p className="rounded-lg border p-4 text-sm text-muted-foreground">No claims on this account are flagged.</p>
-        ) : (
-          <ul className="flex flex-col divide-y rounded-lg border">
-            {flagged.map((c) => (
-              <li key={c.id} className="flex flex-col gap-1 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                <span>
-                  <span className="font-medium">{c.claimNumber}</span>
-                  <span className="text-muted-foreground">
-                    {" "}
-                    · {c.lineOfBusiness} · loss {formatDate(c.dateOfLoss)}
-                  </span>
-                </span>
-                <span className="flex flex-wrap gap-1">
-                  {(flags.value[c.id] ?? []).map((f) => (
-                    <Badge key={f} variant="outline" className="gap-1 border-amber-500/60 font-normal">
-                      <AlertTriangle className="size-3" aria-hidden="true" />
-                      {CLAIM_FLAG_LABELS[f]}
-                    </Badge>
-                  ))}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
       <ClaimsSection
         slug={slug}
         accountId={accountId}
@@ -398,6 +358,52 @@ export default async function LossRunsPage({ params, searchParams }: { params: P
         claimNumbers={claims.map((c) => ({ id: c.id, number: c.claimNumber }))}
       />
     </div>
+  );
+}
+
+function SummaryRowView({ r, adjusted, active, factorsOn }: { r: SummaryRow; adjusted: boolean; active: string; factorsOn: boolean }) {
+  return (
+    <TableRow>
+      <TableCell className="whitespace-nowrap">
+        <span className="font-medium">{r.label}</span>
+        {r.current ? (
+          <Badge variant="outline" className="ml-2">
+            current year
+          </Badge>
+        ) : null}
+        <span className="block text-xs text-muted-foreground">
+          {formatDate(r.period.effectiveDate)} to {formatDate(r.period.expiryDate)}
+        </span>
+      </TableCell>
+      <TableCell className="text-right tabular-nums">{r.claimCount}</TableCell>
+      <TableCell className="text-right tabular-nums">{r.openCount}</TableCell>
+      <TableCell className="text-right tabular-nums">{formatCurrency(r.paid)}</TableCell>
+      <TableCell className="text-right tabular-nums">{formatCurrency(r.reserved)}</TableCell>
+      <TableCell className={cn("text-right font-medium tabular-nums", !adjusted && active)}>{formatCurrency(r.incurred)}</TableCell>
+      <TableCell className="text-right tabular-nums">
+        {formatCurrency(r.earnedPremium)}
+        {r.earnedToDate ? <span className="block text-xs text-muted-foreground">earned to date</span> : null}
+      </TableCell>
+      <TableCell className={cn("text-right tabular-nums", !adjusted && active)}>{r.lossRatio === null ? <Missing what="Loss ratio (no earned premium)" /> : formatRatioPercent(r.lossRatio)}</TableCell>
+      <TableCell className="text-right tabular-nums">{freqText(r.frequency)}</TableCell>
+      <TableCell className="text-right tabular-nums">{r.severity === null ? <Missing what="Severity (no claims)" /> : formatCurrency(r.severity)}</TableCell>
+      {adjusted ? (
+        <>
+          <TableCell className="text-right whitespace-nowrap tabular-nums">
+            {r.trendExponent === null ? "off" : `× ${r.trendFactor.toFixed(4)}`}
+            {r.trendExponent !== null ? <span className="block text-xs text-muted-foreground">exponent {r.trendExponent}</span> : null}
+          </TableCell>
+          <TableCell className="text-right whitespace-nowrap tabular-nums">
+            {factorsOn ? `× ${r.developmentFactor.toFixed(2)}` : "off"}
+            <span className="block text-xs text-muted-foreground">
+              {r.ageMonths} months, {r.ageBucket} bucket
+            </span>
+          </TableCell>
+          <TableCell className={cn("text-right font-medium tabular-nums", active)}>{formatCurrency(r.adjustedIncurred)}</TableCell>
+          <TableCell className={cn("text-right tabular-nums", active)}>{r.adjustedLossRatio === null ? <Missing what="Adjusted loss ratio (no earned premium)" /> : formatRatioPercent(r.adjustedLossRatio)}</TableCell>
+        </>
+      ) : null}
+    </TableRow>
   );
 }
 

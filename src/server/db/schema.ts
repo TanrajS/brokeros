@@ -402,7 +402,8 @@ export const layerParticipations = pgTable(
     /** Line offered, percent 0–100; null when lines were signed directly. */
     writtenLinePct: rate("written_line_pct"),
     signedLinePct: rate("signed_line_pct").notNull(),
-    premium: money("premium").notNull(),
+    /** v1.5: the premium quoted at 100% of the layer. Actual premium = premium_100 × signed line ÷ 100, computed, never stored. */
+    premium100: money("premium_100").notNull(),
     policyNumber: text("policy_number"),
     isLead: boolean("is_lead").notNull().default(false),
     notes: text("notes"),

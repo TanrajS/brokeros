@@ -30,7 +30,7 @@ export const STAGE_RULES: { stage: RenewalStage; rule: string }[] = [
   { stage: "90-day: Marketing", rule: "61 to 90 days to expiry, inclusive." },
   { stage: "60-day: Quoting", rule: "31 to 60 days to expiry, inclusive." },
   { stage: "30-day: Binding", rule: "1 to 30 days to expiry, inclusive." },
-  { stage: "Expired — action required", rule: "0 days (expires on the as-of date) or already expired." },
+  { stage: "Expired — action required", rule: "Expires today (0 days) or has already expired." },
 ];
 
 const CLOSED: readonly RenewalStatus[] = ["renewed", "lost", "non_renewed"];

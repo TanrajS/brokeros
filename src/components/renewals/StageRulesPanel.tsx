@@ -1,4 +1,5 @@
 import { STAGE_RULES } from "@/lib/domain/renewals";
+import { formatDate } from "@/lib/format";
 
 /** The exact rules getRenewalStage applies, rendered from the same source. */
 export function StageRulesPanel({ asOf }: { asOf: string }) {
@@ -7,7 +8,7 @@ export function StageRulesPanel({ asOf }: { asOf: string }) {
       <summary className="cursor-pointer rounded-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50">Stage rules</summary>
       <div className="mt-3 flex flex-col gap-2">
         <p className="text-muted-foreground">
-          Days to expiry are counted from the workspace as-of date ({asOf}), never today&apos;s clock. Rules are checked top to bottom; the first match wins.
+          Days to expiry are counted as of {formatDate(asOf)}, never from today&apos;s clock. Rules are checked top to bottom; the first match wins.
         </p>
         <table className="w-full text-left">
           <thead>

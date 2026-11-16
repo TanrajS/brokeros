@@ -19,7 +19,7 @@ export const quoteOptionFormSchema = z
 export type QuoteOptionFormInput = z.input<typeof quoteOptionFormSchema>;
 export type QuoteOptionFormValues = z.output<typeof quoteOptionFormSchema>;
 
-/** Whole number of policy years to replay, 1 to 10. */
+/** Whole number of policy years to use, 1 to 10. */
 const yearsField = z
   .string()
   .trim()
@@ -36,7 +36,7 @@ const yearsField = z
     return n;
   });
 
-/** Strategy analysis settings: years to replay, running-year toggle, and the v0.4 trend/development inputs. */
+/** Strategy analysis settings: years to use, current-year toggle, and the v0.4 trend/development inputs. */
 export const strategySettingsSchema = lossRunSettingsSchema
   .pick({ trendOn: true, trend: true, developmentOn: true, ldf12: true, ldf24: true, ldf36: true, ldf48: true, ldf60: true })
   .extend({ years: yearsField, includeCurrent: z.boolean() });

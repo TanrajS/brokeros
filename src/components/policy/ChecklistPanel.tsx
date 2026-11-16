@@ -92,7 +92,6 @@ export function ChecklistPanel({ slug, policyId, items }: { slug: string; policy
         ) : null}
       </div>
       <ReadinessMeter readiness={readiness} className="max-w-xs" />
-      <p className="text-xs text-muted-foreground">Readiness is items done ÷ all items. &ldquo;Ready to market&rdquo; appears only at 100%.</p>
 
       <ul className="flex flex-col gap-2">
         {shown.map((i) => (

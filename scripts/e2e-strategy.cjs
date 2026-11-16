@@ -46,8 +46,8 @@ async function openStrategy(p, slug, account) {
   await openStrategy(page, SEED, "Harbourline Foods Inc.");
   const strategyUrl = page.url();
   check("Strategy tab is selected", (await main(page).getByRole("tab", { name: /^Strategy/ }).getAttribute("aria-selected")) === "true");
-  const basis = flat(await main(page).getByText("Replaying 5 policy years").innerText());
-  check("basis statement names the years, the running year and the raw basis", /PY2022–PY2026, running year included as incomplete\) on raw incurred, as of 12 Nov 2026|PY2022–PY2026, running year included as incomplete\) on raw incurred/.test(basis), basis);
+  const basis = flat(await main(page).getByText("Basis: 5 policy years").innerText());
+  check("basis statement names the years, the running year and the raw basis", /PY2022 to PY2026; current year included as incomplete\) on raw incurred, as of 12 Nov 2026|PY2022–PY2026, running year included as incomplete\) on raw incurred/.test(basis), basis);
 
   const options = section(page, "options-heading");
   check("three Pacific Crest options seeded", (await options.locator("tbody tr").count()) === 3);
@@ -72,11 +72,11 @@ async function openStrategy(p, slug, account) {
   check("comparison never marks an option recommended", !/recommend/i.test(await opt.innerText()));
   check("chart has the table beside it (aria-hidden chart present)", (await opt.locator('[aria-hidden="true"] .recharts-wrapper').count()) === 1);
 
-  const replay = opt.locator("details", { hasText: "Per-year replay" });
+  const replay = opt.locator("details", { hasText: "Retained losses by year at each deductible" });
   await replay.locator("summary").click();
   const py23 = flat(await replay.locator("tbody tr", { hasText: "PY2023" }).innerText());
   check("per-year replay: PY2023 retained 20,000 / 40,000 / 65,000, 115,000 transferred at the base", /\$20,000 \$115,000 transferred \$40,000 \$95,000 transferred \$65,000 \$70,000 transferred/.test(py23), py23);
-  check("running year marked incomplete in the replay", /PY2026\s*incomplete/.test(flat(await replay.locator("tbody tr", { hasText: "PY2026" }).innerText())));
+  check("current year marked incomplete in the retained-by-year table", /PY2026\s*incomplete/.test(flat(await replay.locator("tbody tr", { hasText: "PY2026" }).innerText())));
   await opt.locator("details", { hasText: "Show the math" }).first().locator("summary").click();
   check("show the math lists the min() replay lines", /min\(\$120,000, \$25,000\) = \$40,000/.test(await opt.innerText()));
   await opt.screenshot({ path: `${SHOTS}/strategy-optimizer.png` });
@@ -96,16 +96,16 @@ async function openStrategy(p, slug, account) {
 
   const assumptions = section(page, "assumptions-heading");
   const at = await assumptions.innerText();
-  check("assumptions generated from the settings: 5 years, running year, no trend, no development, no caps, hand-entered premiums", /PY2026 \(running year, incomplete\)/.test(at) && /No loss trend is applied/.test(at) && /No loss development is applied/.test(at) && /No option has an aggregate cap/.test(at) && /\$10,000 deductible, \$25,000 deductible, \$50,000 deductible were entered by hand and are not quotes/.test(at) && /are estimated from the loss history and the permissible loss ratio; they are not quotes/.test(at));
+  check("assumptions generated from the settings: 5 years, current year, no trend, no development, no caps, hand-entered premiums", /PY2026 \(running year, incomplete\)/.test(at) && /No loss trend is applied/.test(at) && /No loss development is applied/.test(at) && /No option has an aggregate cap/.test(at) && /\$10,000 deductible, \$25,000 deductible, \$50,000 deductible were entered by hand and are not quotes/.test(at) && /are estimated from the loss history and the permissible loss ratio; they are not quotes/.test(at));
 
   /* ---------- Settings change the basis (URL state) ---------- */
   const settings = main(page).locator("form[aria-labelledby='settings-heading']");
-  await settings.getByLabel(/Include the running year/).uncheck();
+  await settings.getByLabel(/Include the current year/).uncheck();
   await settings.getByRole("button", { name: "Apply settings" }).click();
   await page.waitForURL(/current=0/);
   await settle(page);
-  check("excluding the running year: 4 years, $10,000 average 17,750", /Replaying 4 policy years \(PY2022–PY2025, running year excluded\)/.test(flat(await main(page).innerText())) && /\$17,750/.test(await rowText(section(page, "optimizer-heading").locator("table").first(), "Average retained losses")));
-  check("assumptions say the running year is not used", /PY2026 is not used: running year excluded by the settings/.test(await section(page, "assumptions-heading").innerText()));
+  check("excluding the current year: 4 years, $10,000 average 17,750", /Basis: 4 policy years \(PY2022 to PY2025; current year excluded\)/.test(flat(await main(page).innerText())) && /\$17,750/.test(await rowText(section(page, "optimizer-heading").locator("table").first(), "Average retained losses")));
+  check("assumptions say the current year is not used", /PY2026 is not used: current year excluded by the settings/.test(await section(page, "assumptions-heading").innerText()));
   const settings2 = main(page).locator("form[aria-labelledby='settings-heading']");
   await settings2.getByLabel("Apply loss trend").check();
   await settings2.getByLabel("Annual loss trend (%)").fill("10");

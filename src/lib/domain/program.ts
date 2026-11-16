@@ -305,9 +305,19 @@ export interface ParticipationInput {
   writtenLinePct: number | null;
   /** Line signed, in percent (0–100). */
   signedLinePct: number;
-  premium: number;
+  /**
+   * v1.5: the premium the insurer quoted as if it wrote the whole layer (100%).
+   * What it actually receives is premium100 × signed line ÷ 100; that figure is
+   * computed here and never stored.
+   */
+  premium100: number;
   policyNumber?: string | null;
   isLead: boolean;
+}
+
+/** actual premium = 100% premium × signed line ÷ 100, to the cent. */
+export function actualPremium(premium100: number, signedLinePct: number): number {
+  return round2(premium100 * (signedLinePct / 100));
 }
 
 export interface ProgramLayerInput {
@@ -323,13 +333,17 @@ export interface ProgramLayerInput {
 }
 
 export interface ParticipationSummary extends ParticipationInput {
+  /** premium100 × signed line ÷ 100: what the insurer actually receives. */
+  actualPremium: number;
   /** limit × signed line. */
   exposedLimit: number;
-  /** premium ÷ exposed limit, as a ratio; null when nothing is exposed. */
+  /** premium100 ÷ layer limit, which equals actual premium ÷ exposed limit; null when the limit is zero. */
   rateOnLine: number | null;
   premiumPerMillion: number | null;
-  /** This insurer's premium ÷ the layer premium. */
+  /** This insurer's actual premium ÷ the layer premium (Σ actual premiums). */
   shareOfPremium: number | null;
+  /** This insurer's signed line ÷ the layer's placed share: its width inside the layer block. Null when nothing is placed. */
+  shareOfPlaced: number | null;
 }
 
 export interface LayerSummary {
@@ -338,7 +352,10 @@ export interface LayerSummary {
   exhaustion: number;
   /** Σ signed lines, as a ratio (0.4 = 40%). */
   placedShare: number;
+  /** Σ actual premiums. */
   layerPremium: number;
+  /** layer premium ÷ placed share: what the layer would cost if it were 100% placed at these terms. Null when nothing is placed. */
+  premium100Equivalent: number | null;
   /** limit × placed share. */
   placedLimit: number;
   /** layer premium ÷ placed limit; null when nothing is placed. */
@@ -355,44 +372,51 @@ export function layerLabel(l: Pick<ProgramLayerInput, "attachment" | "limit" | "
 }
 
 /**
- * One layer of a subscription placement.
- *   placed share = Σ signed lines; layer premium = Σ participation premiums
+ * One layer of a subscription placement (v1.5: premiums are quoted at 100%).
+ *   actual premium = 100% premium × signed line ÷ 100
+ *   placed share = Σ signed lines; layer premium = Σ actual premiums
+ *   100% equivalent = layer premium ÷ placed share
  *   placed limit = limit × placed share; layer rate on line = layer premium ÷ placed limit
- *   per insurer: exposed limit = limit × signed line; rate on line = premium ÷ exposed limit
+ *   per insurer: exposed limit = limit × signed line; rate on line = 100% premium ÷ limit = actual premium ÷ exposed limit
  */
 export function layerSummary(layer: ProgramLayerInput): Calc<LayerSummary> {
   if (!Number.isFinite(layer.attachment) || layer.attachment < 0 || !Number.isFinite(layer.limit) || layer.limit < 0) throw new Error(`Layer ${layer.id}: attachment and limit must be non-negative`);
   for (const p of layer.participations) {
-    if (!Number.isFinite(p.signedLinePct) || p.signedLinePct < 0 || !Number.isFinite(p.premium) || p.premium < 0) throw new Error(`Participation ${p.id}: signed line and premium must be non-negative`);
+    if (!Number.isFinite(p.signedLinePct) || p.signedLinePct < 0 || !Number.isFinite(p.premium100) || p.premium100 < 0) throw new Error(`Participation ${p.id}: signed line and 100% premium must be non-negative`);
   }
+  const actuals = layer.participations.map((p) => actualPremium(p.premium100, p.signedLinePct));
   const placedShare = round6(layer.participations.reduce((s, p) => s + p.signedLinePct, 0) / 100);
-  const layerPremium = sumMoney(layer.participations.map((p) => p.premium));
+  const layerPremium = sumMoney(actuals);
+  const premium100Equivalent = placedShare > 0 ? round2(layerPremium / placedShare) : null;
   const placedLimit = round2(layer.limit * placedShare);
   const rateOnLine = placedLimit > 0 ? layerPremium / placedLimit : null;
   const label = layerLabel(layer);
   const lines: string[] = [
-    `${layer.towerLabel}, ${label}: placed share = ${layer.participations.map((p) => pctShare(p.signedLinePct / 100)).join(" + ") || "0%"} = ${pctShare(placedShare)}; layer premium = ${layer.participations.map((p) => usd(p.premium)).join(" + ") || "$0"} = ${usd(layerPremium)}`,
+    `${layer.towerLabel}, ${label}: actual premiums = ${layer.participations.map((p, k) => `${usd(p.premium100)} × ${pctShare(p.signedLinePct / 100)} = ${usd(actuals[k])}`).join("; ") || "none"}`,
+    `${layer.towerLabel}, ${label}: placed share = ${layer.participations.map((p) => pctShare(p.signedLinePct / 100)).join(" + ") || "0%"} = ${pctShare(placedShare)}; layer premium = ${actuals.map((a) => usd(a)).join(" + ") || "$0"} = ${usd(layerPremium)}; 100% equivalent = ${premium100Equivalent === null ? "— (nothing placed)" : `${usd(layerPremium)} ÷ ${pctShare(placedShare)} = ${usd(premium100Equivalent)}`}`,
     `${layer.towerLabel}, ${label}: placed limit = ${usd(layer.limit)} × ${pctShare(placedShare)} = ${usd(placedLimit)}; rate on line = ${rateOnLine === null ? "— (nothing placed)" : `${usd(layerPremium)} ÷ ${usd(placedLimit)} = ${r4(rateOnLine)} = ${pct(rateOnLine, 4)}`}`,
   ];
-  const participations: ParticipationSummary[] = layer.participations.map((p) => {
+  const participations: ParticipationSummary[] = layer.participations.map((p, k) => {
+    const actual = actuals[k];
     const exposedLimit = round2(layer.limit * (p.signedLinePct / 100));
-    const rol = exposedLimit > 0 ? p.premium / exposedLimit : null;
+    const rol = layer.limit > 0 ? p.premium100 / layer.limit : null;
     const perMillion = rol === null ? null : round2(rol * 1_000_000);
-    const shareOfPremium = layerPremium > 0 ? p.premium / layerPremium : null;
+    const shareOfPremium = layerPremium > 0 ? actual / layerPremium : null;
+    const shareOfPlaced = placedShare > 0 ? round6(p.signedLinePct / 100 / placedShare) : null;
     lines.push(
-      `  ${p.insurer}: exposed limit = ${usd(layer.limit)} × ${pctShare(p.signedLinePct / 100)} = ${usd(exposedLimit)}; rate on line = ${rol === null ? "—" : `${usd(p.premium)} ÷ ${usd(exposedLimit)} = ${pct(rol, 4)}`}; per $1M exposed = ${perMillion === null ? "—" : usd2(perMillion)}; share of layer premium = ${shareOfPremium === null ? "—" : `${usd(p.premium)} ÷ ${usd(layerPremium)} = ${pct(shareOfPremium)}`}`,
+      `  ${p.insurer}: actual premium = ${usd(p.premium100)} × ${pctShare(p.signedLinePct / 100)} = ${usd(actual)}; exposed limit = ${usd(layer.limit)} × ${pctShare(p.signedLinePct / 100)} = ${usd(exposedLimit)}; rate on line = ${rol === null ? "—" : `${usd(p.premium100)} ÷ ${usd(layer.limit)} = ${pct(rol, 4)}${exposedLimit > 0 ? ` (= ${usd(actual)} ÷ ${usd(exposedLimit)})` : ""}`}; per $1M exposed = ${perMillion === null ? "—" : usd2(perMillion)}; share of layer premium = ${shareOfPremium === null ? "—" : `${usd(actual)} ÷ ${usd(layerPremium)} = ${pct(shareOfPremium)}`}; share of placed = ${shareOfPlaced === null ? "—" : `${pctShare(p.signedLinePct / 100)} ÷ ${pctShare(placedShare)} = ${pctShare(shareOfPlaced)}`}`,
     );
-    return { ...p, exposedLimit, rateOnLine: rol, premiumPerMillion: perMillion, shareOfPremium };
+    return { ...p, actualPremium: actual, exposedLimit, rateOnLine: rol, premiumPerMillion: perMillion, shareOfPremium, shareOfPlaced };
   });
   const underPlacedPct = placedShare < 1 ? round6((1 - placedShare) * 100) : 0;
   const overPlacedPct = placedShare > 1 ? round6((placedShare - 1) * 100) : 0;
-  if (underPlacedPct > 0) lines.push(`${layer.towerLabel}, ${label}: under-placed by ${group(underPlacedPct, 2).replace(/\.?0+$/, "")} points`);
+  if (underPlacedPct > 0) lines.push(`${layer.towerLabel}, ${label}: short ${group(underPlacedPct, 2).replace(/\.?0+$/, "")} points of 100%`);
   if (overPlacedPct > 0) lines.push(`${layer.towerLabel}, ${label}: over-placed by ${group(overPlacedPct, 2).replace(/\.?0+$/, "")} points`);
   return {
-    value: { layer, label, exhaustion: sumMoney([layer.attachment, layer.limit]), placedShare, layerPremium, placedLimit, rateOnLine, underPlacedPct, overPlacedPct, participations },
+    value: { layer, label, exhaustion: sumMoney([layer.attachment, layer.limit]), placedShare, layerPremium, premium100Equivalent, placedLimit, rateOnLine, underPlacedPct, overPlacedPct, participations },
     math: {
       inputs: { layer: label, tower: layer.towerLabel, participations: layer.participations.length },
-      formula: "placed share = Σ signed lines; layer premium = Σ premiums; placed limit = limit × placed share; rate on line = premium ÷ placed limit (per insurer: ÷ limit × signed line)",
+      formula: "actual premium = 100% premium × signed line; placed share = Σ signed lines; layer premium = Σ actual premiums; 100% equivalent = layer premium ÷ placed share; placed limit = limit × placed share; rate on line = 100% premium ÷ limit = actual premium ÷ exposed limit",
       steps: { lines },
     },
   };
@@ -451,7 +475,7 @@ export function coverageProfile(layers: ProgramLayerInput[], programTop: number 
     const unplacedDollars = round2(shortfallShare * width);
     lines.push(
       `${usd(from)} to ${usd(to)}: ${covering.length ? covering.map((s) => `${s.layer.towerLabel} ${s.label} ${pctShare(s.placedShare)}`).join(" + ") : "no layer"} = ${pctShare(placedShare)} → ${COVERAGE_STATUS_LABELS[status]}` +
-        (shortfallShare > 0 ? `; unplaced = ${pctShare(shortfallShare)} × ${usd(width)} = ${usd(unplacedDollars)}` : "") +
+        (shortfallShare > 0 ? `; short = ${pctShare(shortfallShare)} × ${usd(width)} = ${usd(unplacedDollars)}` : "") +
         (excessShare > 0 ? `; excess ${pctShare(excessShare)}` : ""),
     );
     segments.push({ from, to, width, placedShare, status, shortfallShare, excessShare, unplacedDollars, contributions: covering.map((s) => ({ layerId: s.layer.id, towerLabel: s.layer.towerLabel, label: s.label, share: s.placedShare })) });
@@ -460,7 +484,7 @@ export function coverageProfile(layers: ProgramLayerInput[], programTop: number 
     value: { programTop: top, segments, fullyPlaced: segments.length > 0 && segments.every((s) => s.status === "fully_placed"), totalUnplacedDollars: sumMoney(segments.map((s) => s.unplacedDollars)) },
     math: {
       inputs: { layers: layers.length, programTop },
-      formula: "placed % per segment = Σ signed shares of every layer covering it; fully placed within 0.01 points; unplaced $ = shortfall × segment width",
+      formula: "placed % per segment = Σ signed shares of every layer covering it; fully placed within 0.01 points; short $ = shortfall × segment width",
       steps: { lines },
     },
   };
@@ -477,7 +501,7 @@ export interface ProgramTotals {
   layers: LayerSummary[];
 }
 
-/** Program-wide totals: premium, placed limit, rate per $100 of TIV and a blended rate on line per coverage segment. */
+/** Program-wide totals (actual premiums): premium, placed limit, rate per $100 of TIV and a blended rate on line per coverage segment. */
 export function programTotals(layers: ProgramLayerInput[], tiv: number | null, programTop: number | null = null): Calc<ProgramTotals> {
   const summaries = layers.map((l) => layerSummary(l).value);
   const totalPremium = sumMoney(summaries.map((s) => s.layerPremium));
@@ -485,7 +509,7 @@ export function programTotals(layers: ProgramLayerInput[], tiv: number | null, p
   const ratePer100Tiv = tiv !== null && tiv > 0 ? round6((totalPremium / tiv) * 100) : null;
   const profile = coverageProfile(layers, programTop ?? (tiv !== null && tiv > 0 ? tiv : null)).value;
   const lines = [
-    `Total premium = ${summaries.map((s) => usd(s.layerPremium)).join(" + ") || "$0"} = ${usd(totalPremium)}`,
+    `Program premium (actual) = ${summaries.map((s) => usd(s.layerPremium)).join(" + ") || "$0"} = ${usd(totalPremium)}`,
     `Total placed limit = ${summaries.map((s) => usd(s.placedLimit)).join(" + ") || "$0"} = ${usd(totalPlacedLimit)}`,
     ratePer100Tiv === null ? "Rate per $100 of TIV: — (no TIV)" : `Rate per $100 of TIV = ${usd(totalPremium)} ÷ ${usd(tiv!)} × 100 = ${usd2(ratePer100Tiv).replace(/^\$/, "$")} (${group(ratePer100Tiv, 4)})`,
   ];
@@ -501,7 +525,7 @@ export function programTotals(layers: ProgramLayerInput[], tiv: number | null, p
     value: { totalPremium, totalPlacedLimit, tiv, ratePer100Tiv, segments, layers: summaries },
     math: {
       inputs: { layers: layers.length, tiv },
-      formula: "total premium = Σ layer premiums; rate per $100 TIV = total premium ÷ TIV × 100; blended rate on line per segment = Σ(premium ÷ limit) ÷ Σ placed shares",
+      formula: "program premium = Σ layer premiums (actual); rate per $100 TIV = program premium ÷ TIV × 100; blended rate on line per segment = Σ(layer premium ÷ limit) ÷ Σ placed shares",
       steps: { lines },
     },
   };
@@ -566,10 +590,12 @@ export function isAdvancedProgram(layers: ProgramLayerInput[]): boolean {
 
 /* ---------- Placement schedule CSV ---------- */
 
-export const PLACEMENT_COLUMNS = ["tower", "layer_type", "attachment", "limit", "insurer", "written_line_pct", "signed_line_pct", "premium", "policy_number"] as const;
+export const PLACEMENT_COLUMNS = ["tower", "layer_type", "attachment", "limit", "insurer", "written_line_pct", "signed_line_pct", "premium_100", "policy_number"] as const;
 export type PlacementColumn = (typeof PLACEMENT_COLUMNS)[number];
 /** Columns a schedule must carry; tower, written line and policy number may be blank. */
-export const PLACEMENT_REQUIRED_COLUMNS: PlacementColumn[] = ["layer_type", "attachment", "limit", "insurer", "signed_line_pct", "premium"];
+export const PLACEMENT_REQUIRED_COLUMNS: PlacementColumn[] = ["layer_type", "attachment", "limit", "insurer", "signed_line_pct", "premium_100"];
+/** The note carried as a comment line at the top of the CSV export and skipped on import. */
+export const PLACEMENT_CSV_NOTE = "# premium_100: premium quoted at 100% of the layer; actual premium = premium_100 × signed_line_pct ÷ 100";
 
 export function checkPlacementColumns(headers: string[]): Calc<{ missing: PlacementColumn[]; extra: string[] }> {
   const seen = new Set(headers.map((h) => h.trim().toLowerCase()));
@@ -588,7 +614,10 @@ export interface ParsedPlacementRow {
   insurer: string;
   writtenLinePct: number | null;
   signedLinePct: number;
-  premium: number;
+  /** Quoted at 100% of the layer. */
+  premium100: number;
+  /** premium100 × signed line ÷ 100, shown in the import preview; never stored. */
+  actualPremium: number;
   policyNumber: string | null;
 }
 
@@ -649,9 +678,9 @@ export function validatePlacementRows(rows: Record<string, string>[]): Calc<Plac
     if (!raw.signed_line_pct) reasons.push("missing signed line");
     else if (signed === null || signed > 100) reasons.push(`signed line "${raw.signed_line_pct}" must be a percentage from 0 to 100`);
     if (written !== null && signed !== null && signed > written) reasons.push(`signed line ${signed}% is above the written line ${written}%`);
-    const premium = parseMoney(raw.premium ?? "");
-    if (!raw.premium) reasons.push("missing premium");
-    else if (premium === null) reasons.push(`premium "${raw.premium}" is not a non-negative amount`);
+    const premium = parseMoney(raw.premium_100 ?? "");
+    if (!raw.premium_100) reasons.push("missing premium_100 (the premium quoted at 100% of the layer)");
+    else if (premium === null) reasons.push(`premium_100 "${raw.premium_100}" is not a non-negative amount`);
     if (layerType && attachment !== null && limit !== null && insurer) {
       const key = `${towerLabel.toLowerCase()}|${layerType}|${attachment}|${limit}|${insurer.toLowerCase()}`;
       if (seen.has(key)) reasons.push(`duplicate insurer "${insurer}" in this layer`);
@@ -664,7 +693,7 @@ export function validatePlacementRows(rows: Record<string, string>[]): Calc<Plac
       valid,
       reasons,
       warnings,
-      parsed: valid ? { towerLabel, layerType: layerType!, attachment: attachment!, limit: limit!, insurer, writtenLinePct: written, signedLinePct: signed!, premium: premium!, policyNumber: raw.policy_number ? raw.policy_number : null } : null,
+      parsed: valid ? { towerLabel, layerType: layerType!, attachment: attachment!, limit: limit!, insurer, writtenLinePct: written, signedLinePct: signed!, premium100: premium!, actualPremium: actualPremium(premium!, signed!), policyNumber: raw.policy_number ? raw.policy_number : null } : null,
     };
   });
   const validCount = results.filter((r) => r.valid).length;
@@ -672,13 +701,13 @@ export function validatePlacementRows(rows: Record<string, string>[]): Calc<Plac
     value: results,
     math: {
       inputs: { rows: rows.length },
-      formula: "a row is valid with a known layer type, non-negative attachment and limit (limit above zero), an insurer, percentages 0–100 with signed ≤ written, a non-negative premium and no repeated insurer in the layer",
+      formula: "a row is valid with a known layer type, non-negative attachment and limit (limit above zero), an insurer, percentages 0–100 with signed ≤ written, a non-negative premium_100 and no repeated insurer in the layer; actual premium = premium_100 × signed line",
       steps: { lines: [`${validCount} of ${rows.length} rows valid`, ...results.filter((r) => !r.valid).map((r) => `Row ${r.row}: ${r.reasons.join("; ")}`)] },
     },
   };
 }
 
-/** Slip-style rows for the CSV export: one line per participation, in the schedule's column order. */
+/** Slip-style rows for the CSV export: one line per participation, in the schedule's column order; premiums at 100%. */
 export function placementScheduleRows(layers: ProgramLayerInput[]): (string | number | null)[][] {
-  return layers.flatMap((l) => l.participations.map((p) => [l.towerLabel, l.layerType, l.attachment, l.limit, p.insurer, p.writtenLinePct, p.signedLinePct, p.premium, p.policyNumber ?? null]));
+  return layers.flatMap((l) => l.participations.map((p) => [l.towerLabel, l.layerType, l.attachment, l.limit, p.insurer, p.writtenLinePct, p.signedLinePct, p.premium100, p.policyNumber ?? null]));
 }

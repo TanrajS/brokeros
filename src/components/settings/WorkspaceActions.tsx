@@ -118,7 +118,7 @@ export function WorkspaceActions({ slug, accountCount }: { slug: string; account
         </div>
       </ActionRow>
 
-      <ActionRow title="Reset this workspace" description="Delete every account, contact and policy. The workspace, its name, link and as-of date stay.">
+      <ActionRow title="Reset this workspace" description="Delete every account, contact and policy. The workspace, its name, link and date stay.">
         <Button type="button" variant="destructive" onClick={() => setResetOpen(true)} disabled={pending}>
           <Trash2 aria-hidden="true" />
           Reset this workspace

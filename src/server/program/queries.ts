@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, eq, inArray } from "drizzle-orm";
-import type { ProgramLayerInput } from "@/lib/domain/program";
+import { LINE_GROUP_PRIMARY, type ProgramLayerInput } from "@/lib/domain/program";
 import { getDb } from "@/server/db/client";
 import {
   accounts,
@@ -28,7 +28,7 @@ export function toProgramLayerInput(l: ProgramLayer, parts: LayerParticipation[]
     limit: l.limit,
     policyId: l.policyId,
     notes: l.notes,
-    participations: parts.map((p) => ({ id: p.id, insurer: p.insurer, writtenLinePct: p.writtenLinePct, signedLinePct: p.signedLinePct, premium: p.premium, policyNumber: p.policyNumber, isLead: p.isLead })),
+    participations: parts.map((p) => ({ id: p.id, insurer: p.insurer, writtenLinePct: p.writtenLinePct, signedLinePct: p.signedLinePct, premium100: p.premium100, policyNumber: p.policyNumber, isLead: p.isLead })),
   };
 }
 
@@ -74,6 +74,23 @@ export async function loadProgramInputs(ws: Workspace, accountId: string): Promi
 export function layersFor(inputs: Pick<ProgramInputs, "layerRows" | "layers">, lineGroup: ProgramLayer["lineGroup"]): ProgramLayerInput[] {
   const ids = new Set(inputs.layerRows.filter((l) => l.lineGroup === lineGroup).map((l) => l.id));
   return inputs.layers.filter((l) => ids.has(l.id));
+}
+
+/**
+ * The TIV for a line group: the insurable value of a policy linked to one of its
+ * layers, else the largest current insurable value on the group's primary line.
+ * Shared by the Program tab and the PDF export so they agree.
+ */
+export function programTivFor(policyRows: Policy[], lineGroup: ProgramLayer["lineGroup"], groupLayers: ProgramLayerInput[]): number | null {
+  const superseded = new Set(policyRows.map((p) => p.previousPolicyId).filter((x): x is string => x !== null));
+  const linked = groupLayers.map((l) => l.policyId).filter((x): x is string => !!x);
+  return (
+    policyRows.find((p) => linked.includes(p.id) && p.insurableValue !== null)?.insurableValue ??
+    policyRows
+      .filter((p) => !superseded.has(p.id) && p.lineOfBusiness === LINE_GROUP_PRIMARY[lineGroup] && p.insurableValue !== null)
+      .sort((a, b) => (b.insurableValue ?? 0) - (a.insurableValue ?? 0))[0]?.insurableValue ??
+    null
+  );
 }
 
 /** A policy's co-insurers and sub-limits, for the policy page. */

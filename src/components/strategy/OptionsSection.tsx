@@ -21,6 +21,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Field, fieldA11y } from "@/components/form/Field";
+import { InfoTip } from "@/components/InfoTip";
 import { formatCurrency } from "@/lib/format";
 import { quoteOptionFormSchema, type QuoteOptionFormInput, type QuoteOptionFormValues } from "@/lib/schemas/strategy";
 import { deleteQuoteOption, saveQuoteOption } from "@/server/strategy/actions";
@@ -45,7 +46,7 @@ type Dialogs = { kind: "edit"; o: OptionRow | null } | { kind: "delete"; o: Opti
 const str = (n: number | null) => (n === null ? "" : String(n));
 const money = (n: number | null | undefined) => formatCurrency(n) ?? "—";
 
-/** The retention options table: a deductible (or SIR) and its annual premium, by hand or imported from Marketing quotes. */
+/** The retention options entered by hand: a deductible (or self-insured retention) and its annual premium. */
 export function OptionsSection({ slug, policyId, expiringCarrier, rows }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -67,8 +68,12 @@ export function OptionsSection({ slug, policyId, expiringCarrier, rows }: Props)
   return (
     <section aria-labelledby="options-heading" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="options-heading" className="text-lg font-semibold">
-          Retention options
+        <h2 id="options-heading" className="flex items-center gap-1.5 text-lg font-semibold">
+          Retention options entered by hand
+          <InfoTip label="About manual options">
+            A deductible (or self-insured retention) with the annual premium entered by hand. Manual options override the estimated ones at the same deductible. An aggregate cap limits what the client
+            retains in a year.
+          </InfoTip>
         </h2>
         <div className="flex flex-wrap gap-2">
           <Button type="button" size="sm" onClick={() => setDialog({ kind: "edit", o: null })}>
@@ -77,9 +82,8 @@ export function OptionsSection({ slug, policyId, expiringCarrier, rows }: Props)
           </Button>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">Manual options override the estimated ones: a deductible (or self-insured retention) with the annual premium entered by hand. An aggregate cap limits what the client retains in a year.</p>
       {rows.length === 0 ? (
-        <p className="rounded-lg border p-4 text-sm text-muted-foreground">No manual options yet. The findings below estimate premiums from the loss history; add options entered by hand here to override them.</p>
+        <p className="rounded-lg border p-4 text-sm text-muted-foreground">No options entered by hand yet. The estimated options below come from the loss history; add one here to override an estimate.</p>
       ) : (
         <div className="relative overflow-x-auto rounded-lg border">
           <Table>
@@ -124,7 +128,7 @@ export function OptionsSection({ slug, policyId, expiringCarrier, rows }: Props)
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{dialog?.kind === "delete" ? `Delete ${dialog.o.label}?` : ""}</AlertDialogTitle>
-            <AlertDialogDescription>The option leaves the comparison and the report. The quote it came from, if any, is untouched.</AlertDialogDescription>
+            <AlertDialogDescription>The option leaves the comparison and the report. This cannot be undone.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -175,7 +179,7 @@ function OptionDialog({ slug, policyId, expiringCarrier, o, onClose }: { slug: s
         <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>{o ? `Edit ${o.label}` : "Add retention option"}</DialogTitle>
-            <DialogDescription>A deductible or self-insured retention with the annual premium entered for it; it is not a quote. Amounts in dollars.</DialogDescription>
+            <DialogDescription>A deductible or self-insured retention with the annual premium entered for it; it is not a bound quote. Amounts in dollars.</DialogDescription>
           </DialogHeader>
           <Field id="opt-label" label="Label" required error={msg("label")} hint="For example: $25,000 deductible">
             <Input {...register("label")} {...fieldA11y("opt-label", msg("label"), "hint")} autoComplete="off" />
@@ -199,7 +203,7 @@ function OptionDialog({ slug, policyId, expiringCarrier, o, onClose }: { slug: s
               Cancel
             </Button>
             <Button type="submit" disabled={!formState.isValid || pending}>
-              {pending ? "Saving…" : "Save"}
+              {pending ? "Saving…" : "Save option"}
             </Button>
           </DialogFooter>
         </form>

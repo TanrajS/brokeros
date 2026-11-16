@@ -3,10 +3,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cn } from "cn";
 import { AdvancedProgramSection } from "@/components/program/AdvancedProgramSection";
+import { ExportProgramPdfButton } from "@/components/program/ExportProgramPdfButton";
 import { TowerSection } from "@/components/program/TowerSection";
 import { LINE_GROUPS, LINE_GROUP_LABELS, LINE_GROUP_PRIMARY, isAdvancedProgram, towerInputsFrom, type LineGroup } from "@/lib/domain/program";
 import { formatDate } from "@/lib/format";
-import { layersFor, loadProgramInputs } from "@/server/program/queries";
+import { blobReady } from "@/server/documents/blob";
+import { layersFor, loadProgramInputs, programTivFor } from "@/server/program/queries";
 import { requireWorkspace } from "../../../../lib";
 
 export const metadata: Metadata = { title: "Program" };
@@ -46,12 +48,8 @@ export default async function ProgramPage({ params, searchParams }: { params: Pr
   const policyOptions = data.policies
     .filter((p) => !superseded.has(p.id) && (p.lineOfBusiness === LINE_GROUP_PRIMARY[group] || p.lineOfBusiness === "Umbrella/Excess"))
     .map((p) => ({ id: p.id, label: label(p) }));
-  // TIV: the insurable value of the linked property policy, else the largest current property value.
-  const linked = groupLayers.map((l) => l.policyId).filter((x): x is string => !!x);
-  const tiv =
-    data.policies.find((p) => linked.includes(p.id) && p.insurableValue !== null)?.insurableValue ??
-    data.policies.filter((p) => !superseded.has(p.id) && p.lineOfBusiness === LINE_GROUP_PRIMARY[group] && p.insurableValue !== null).sort((a, b) => (b.insurableValue ?? 0) - (a.insurableValue ?? 0))[0]?.insurableValue ??
-    null;
+  const tiv = programTivFor(data.policies, group, groupLayers);
+  const ready = blobReady();
   const pill = (active: boolean) => cn("inline-flex rounded-full border px-3 py-1 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50", active ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted");
 
   return (
@@ -64,15 +62,24 @@ export default async function ProgramPage({ params, searchParams }: { params: Pr
             </Link>
           ))}
         </nav>
-        <nav aria-label="Program view" className="flex items-center gap-1.5 text-sm">
-          <span className="text-muted-foreground">View:</span>
-          <Link href={href(slug, accountId, group, "simple")} aria-current={view === "simple" ? "page" : undefined} aria-disabled={advanced || undefined} className={cn(pill(view === "simple"), advanced && "pointer-events-none opacity-50")} title={advanced ? "This program has several insurers or towers, so the simple view does not apply" : undefined}>
-            Simple
-          </Link>
-          <Link href={href(slug, accountId, group, "advanced")} aria-current={view === "advanced" ? "page" : undefined} className={pill(view === "advanced")}>
-            Advanced
-          </Link>
-        </nav>
+        <div className="flex flex-wrap items-center gap-3">
+          <nav aria-label="Program view" className="flex items-center gap-1.5 text-sm">
+            <span className="text-muted-foreground">View:</span>
+            <Link href={href(slug, accountId, group, "simple")} aria-current={view === "simple" ? "page" : undefined} aria-disabled={advanced || undefined} className={cn(pill(view === "simple"), advanced && "pointer-events-none opacity-50")} title={advanced ? "This program has several insurers or towers, so the simple view does not apply" : undefined}>
+              Simple
+            </Link>
+            <Link href={href(slug, accountId, group, "advanced")} aria-current={view === "advanced" ? "page" : undefined} className={pill(view === "advanced")}>
+              Advanced
+            </Link>
+          </nav>
+          <ExportProgramPdfButton
+            slug={slug}
+            accountId={accountId}
+            lineGroup={group}
+            enabled={ready && groupLayers.length > 0}
+            disabledReason={!ready ? "Documents are not configured on this deployment (BLOB_READ_WRITE_TOKEN is missing)" : "Add a layer first"}
+          />
+        </div>
       </div>
 
       {view === "advanced" ? (
@@ -86,8 +93,6 @@ export default async function ProgramPage({ params, searchParams }: { params: Pr
           policyOptions={policyOptions}
         />
       )}
-
-      <p className="text-xs text-muted-foreground">Every layer is read on a per-occurrence basis: attachments, limits and the coverage profile all describe one loss.</p>
     </div>
   );
 }

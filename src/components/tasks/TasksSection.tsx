@@ -91,7 +91,7 @@ export function TasksSection({ slug, accountId, asOf, tasks, policyOptions, poli
       }
       const { created, skippedPast, skippedExisting } = res.data;
       const parts = [`Created ${created} ${created === 1 ? "task" : "tasks"}`];
-      if (skippedPast) parts.push(`skipped ${skippedPast} already past the as-of date`);
+      if (skippedPast) parts.push(`skipped ${skippedPast} already due before ${formatDate(asOf)}`);
       if (skippedExisting) parts.push(`skipped ${skippedExisting} already on this policy`);
       (created > 0 ? toast.success : toast.info)(parts.join("; ") + ".");
       router.refresh();
@@ -303,7 +303,7 @@ function TaskDialog({
         <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>{editing.mode === "edit" ? "Edit task" : "Add task"}</DialogTitle>
-            <DialogDescription>Overdue means due before the as-of date and not done.</DialogDescription>
+            <DialogDescription>Overdue means due before {formatDate(asOf)} and not done.</DialogDescription>
           </DialogHeader>
           <Field id="task-title" label="Title" required error={msg("title")}>
             <Input {...register("title")} {...fieldA11y("task-title", msg("title"))} autoComplete="off" />

@@ -190,7 +190,7 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
   const sublimitRows = book.flatMap((a) => a.policies.flatMap((p) => p.sublimits.map((x) => ({ workspaceId, policyId: pid(p.key), ...x, notes: null }))));
   if (sublimitRows.length > 0) await db.insert(schema.policySublimits).values(sublimitRows);
 
-  // v1.3: program layers with their participations (a v0.5 layer is one insurer at 100%).
+  // v1.3: program layers with their participations (a v0.5 layer is one insurer at 100%); v1.5: premiums are quoted at 100% of the layer.
   const layerRows: (typeof schema.programLayers.$inferInsert)[] = [];
   const participationRows: (typeof schema.layerParticipations.$inferInsert)[] = [];
   for (const a of book) {
@@ -207,9 +207,9 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
         limit: t.limit,
         policyId: t.policyKey ? pid(t.policyKey) : null,
       });
-      const parts = t.participations ?? [{ insurer: t.carrier, writtenLinePct: null, signedLinePct: 100, premium: t.premium, isLead: true }];
+      const parts = t.participations ?? [{ insurer: t.carrier, writtenLinePct: null, signedLinePct: 100, premium100: t.premium, isLead: true }];
       for (const x of parts) {
-        participationRows.push({ workspaceId, layerId: id, insurer: x.insurer, writtenLinePct: x.writtenLinePct, signedLinePct: x.signedLinePct, premium: x.premium, policyNumber: x.policyNumber ?? null, isLead: x.isLead ?? false });
+        participationRows.push({ workspaceId, layerId: id, insurer: x.insurer, writtenLinePct: x.writtenLinePct, signedLinePct: x.signedLinePct, premium100: x.premium100, policyNumber: x.policyNumber ?? null, isLead: x.isLead ?? false });
       }
     }
   }

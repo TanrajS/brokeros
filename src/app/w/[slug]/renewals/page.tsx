@@ -48,8 +48,7 @@ export default async function RenewalsPage({ params, searchParams }: { params: P
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Renewals</h1>
           <p className="text-sm text-muted-foreground">
-            Every policy by renewal stage, counted from the as-of date ({formatDate(ws.asOfDate)}). Showing {data.rows.length} of {data.totalPolicies}{" "}
-            {data.totalPolicies === 1 ? "policy" : "policies"}.
+            Showing {data.rows.length} of {data.totalPolicies} {data.totalPolicies === 1 ? "policy" : "policies"}.
           </p>
         </div>
         <nav aria-label="Renewals view" className="flex gap-1 rounded-lg border p-1">

@@ -21,7 +21,8 @@ import {
 const M = 1_000_000;
 const asOf = "2026-11-12";
 let seq = 0;
-const part = (insurer: string, signedLinePct: number, premium: number, writtenLinePct: number | null = null, isLead = false): ParticipationInput => ({ id: `p${++seq}`, insurer, writtenLinePct, signedLinePct, premium, policyNumber: null, isLead });
+/** v1.5: premiums are quoted at 100% of the layer; a single insurer at 100% keeps the same figure. */
+const part = (insurer: string, signedLinePct: number, premium100: number, writtenLinePct: number | null = null, isLead = false): ParticipationInput => ({ id: `p${++seq}`, insurer, writtenLinePct, signedLinePct, premium100, policyNumber: null, isLead });
 const single = (id: string, layerType: ProgramLayerInput["layerType"], attachment: number, limit: number, premium: number, insurer = "Dominion Shield Insurance", tower = "Tower 1"): ProgramLayerInput => ({
   id,
   towerLabel: tower,
@@ -148,24 +149,24 @@ describe("price findings", () => {
     expect(priceFindings({ layers: tower(40_000) }).value.filter((f) => f.kind === "inverted_pricing")).toEqual([]);
   });
 
-  it("line priced above the layer: Maplewood at 84,000 on PNT's B2 (0.28% vs 0.1544%, 81% above); at 42,000 it does not fire", () => {
-    const b2 = (maplewood: number): ProgramLayerInput => ({
+  it("line priced above the layer: Maplewood re-priced to 560,000 at 100% (actual 84,000) on PNT's B2 (0.28% vs 0.1544%, 81% above); at 280,000 (actual 42,000) it does not fire", () => {
+    const b2 = (maplewood100: number): ProgramLayerInput => ({
       id: "B2",
       towerLabel: "Tower 2",
       layerType: "excess",
       attachment: 100 * M,
       limit: 200 * M,
-      participations: [part("Pacific Crest Insurance (fictional)", 25, 75_000, null, true), part("Ironwood Specialty (fictional)", 20, 64_000), part("Maplewood Underwriters (fictional)", 15, maplewood)],
+      participations: [part("Pacific Crest Insurance (fictional)", 25, 300_000, null, true), part("Ironwood Specialty (fictional)", 20, 320_000), part("Maplewood Underwriters (fictional)", 15, maplewood100)],
     });
-    const fired = priceFindings({ layers: [b2(84_000)] }).value.filter((f) => f.kind === "line_above_layer");
-    // Maplewood: 84,000 ÷ (200M × 15% = 30M) = 0.28%; others: (75,000 + 64,000) ÷ (50M + 40M) = 139,000 ÷ 90,000,000 = 0.1544%; 0.28 ÷ 0.1544 − 1 = 0.813
+    const fired = priceFindings({ layers: [b2(560_000)] }).value.filter((f) => f.kind === "line_above_layer");
+    // Maplewood: 560,000 ÷ 200M = 84,000 actual ÷ (200M × 15% = 30M) = 0.28%; others (actual): (300,000 × 25% + 320,000 × 20%) ÷ (50M + 40M) = 139,000 ÷ 90,000,000 = 0.1544%; 0.28 ÷ 0.1544 − 1 = 0.813
     expect(fired).toHaveLength(1);
     expect(fired[0].title).toBe("Tower 2 $200M xs $100M: Maplewood Underwriters (fictional)'s line priced above the layer");
     expect(fired[0].evidence[0]).toMatch(/0\.2800% on line vs 0\.1544%/);
     expect(fired[0].evidence[0]).toMatch(/81% above/);
     // at the average, 30,000,000 × 0.0015444 = 46,333; difference 84,000 − 46,333 = 37,667
     expect(fired[0].estimatedImpact).toBe(37_667);
-    expect(priceFindings({ layers: [b2(42_000)] }).value.filter((f) => f.kind === "line_above_layer")).toEqual([]);
+    expect(priceFindings({ layers: [b2(280_000)] }).value.filter((f) => f.kind === "line_above_layer")).toEqual([]);
   });
 
   it("rate above exposure: a renewal whose rate rose 10 points more than exposure", () => {
@@ -231,5 +232,55 @@ describe("catastrophe bands and modifiers", () => {
     expect(all.findings.slice(-2).every((f) => f.estimatedImpact === null)).toBe(true);
     for (const f of all.findings) expect(`${f.title} ${f.suggestedAction}`).not.toMatch(/\brecommended\b(?! for discussion)/);
     expect(all.options.map((o) => o.deductible)).toEqual([10_000, 25_000, 60_000, 125_000]);
+  });
+});
+
+describe("partial-line retention (v1.5)", () => {
+  /* Harbourline Foods: single-insurer $1M primary at 142,000 (premium_100 142,000, signed 100%), deductible 10,000,
+     tolerances 125,000 per occurrence and 250,000 per year. */
+  const primary142 = [single("primary", "primary", 0, 1 * M, 142_000)];
+  const r = bandAnalysis({ years, layers: primary142, defaultDeductible: 10_000, tolerances }).value;
+  const f = r.findings.find((x) => x.kind === "partial_line")!;
+
+  it("fires a 12% line: saving 17,040, expected retained 5,088, worst-year retained 13,800, net 11,952", () => {
+    const band = r.bands.find((b) => b.id === "primary")!;
+    // average retained at $1M is 61,000 and at $10,000 is 18,600 → average in-band 42,400; worst year PY2023: 135,000 − 20,000 = 115,000
+    expect([band.averageInBand, band.worstYear]).toEqual([42_400, { label: "PY2023", inBand: 115_000 }]);
+    // single insurer at 100%: 100% equivalent = 142,000
+    expect(band.premium100Equivalent).toBe(142_000);
+    expect(f).toBeDefined();
+    // largest whole % with line × 990,000 ≤ 125,000 (12.6 → 12) and line × 115,000 ≤ 250,000 (217 → 100): 12%
+    expect(f.title).toBe("Tower 1 $1M primary: candidate for the client to retain a 12% line");
+    expect(f.suggestedAction).toBe("Candidate: client retains a 12% line of Tower 1 $1M primary alongside the insurers; recommended for discussion.");
+    // saving 12% × 142,000 = 17,040; expected retained 12% × 42,400 = 5,088; worst 12% × 115,000 = 13,800; net 17,040 − 5,088 = 11,952
+    expect(f.estimatedImpact).toBe(11_952);
+    expect(f.evidence[1]).toMatch(/Premium saving \$17,040 a year/);
+    expect(f.evidence[1]).toMatch(/expected retained \$5,088\.00/);
+    expect(f.evidence[0]).toMatch(/\$13,800 in the worst year \(PY2023\)/);
+    expect(f.math.at(-1)).toBe("Saving = 12% × $142,000 = $17,040.00; expected retained = 12% × $42,400.00 = $5,088.00; worst-year retained = 12% × $115,000 = $13,800.00; net expected saving = $17,040.00 − $5,088.00 = $11,952.00");
+    // sits beside the raise-deductible candidate for the same band
+    expect(r.findings.map((x) => x.id)).toEqual(expect.arrayContaining(["raise_deductible:primary", "partial_line:primary"]));
+    // fully placed, so no sentence about the segment's unplaced share
+    expect(f.suggestedAction).not.toMatch(/unplaced share/);
+  });
+
+  it("with a per-occurrence tolerance of 5,000 the line would be 0% and no candidate appears", () => {
+    const tight = bandAnalysis({ years, layers: primary142, defaultDeductible: 10_000, tolerances: { ...tolerances, perOccurrence: 5_000 } }).value;
+    // 5,000 ÷ 990,000 = 0.5% → floor 0 → below the 1% minimum
+    expect(tight.findings.filter((x) => x.kind === "partial_line")).toEqual([]);
+    expect(tight.findings.some((x) => x.kind === "raise_deductible")).toBe(false); // 5,000 < the 10,000 deductible: nothing to raise to
+  });
+
+  it("the annual tolerance can bind instead, and the under-placed sentence names the segment shortfall", () => {
+    // worst-year in-band 115,000: a 50,000 annual tolerance allows floor(50,000 ÷ 115,000 × 100) = 43%, below the 12% per-occurrence cap, so 12% still wins;
+    // at 10,000 a year: floor(10,000 ÷ 115,000 × 100) = 8% binds
+    const annual = bandAnalysis({ years, layers: primary142, defaultDeductible: 10_000, tolerances: { ...tolerances, perYear: 10_000 } }).value;
+    expect(annual.findings.find((x) => x.kind === "partial_line")!.title).toMatch(/retain an? 8% line/);
+    // a 60%-placed layer (single insurer at 60%, 142,000 at 100% → actual 85,200; 100% equivalent 142,000): the segment is 40% short; a 12% line takes it to 28%
+    const short = bandAnalysis({ years, layers: [{ ...primary142[0], participations: [part("Solo", 60, 142_000, null, true)] }], defaultDeductible: 10_000, tolerances }).value;
+    const g = short.findings.find((x) => x.kind === "partial_line")!;
+    expect(short.bands.find((b) => b.id === "primary")!.premium100Equivalent).toBe(142_000);
+    expect(g.estimatedImpact).toBe(11_952);
+    expect(g.suggestedAction).toMatch(/This line would also reduce the unplaced share of the segment from 40% to 28%\.$/);
   });
 });

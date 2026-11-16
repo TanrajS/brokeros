@@ -11,12 +11,13 @@ import { EstimatedOptionsTable } from "@/components/strategy/EstimatedOptionsTab
 import { FindingsList } from "@/components/strategy/FindingsList";
 import { OptimizerTable } from "@/components/strategy/OptimizerTable";
 import { OptionsSection, type OptionRow } from "@/components/strategy/OptionsSection";
-import { ReplayTable } from "@/components/strategy/ReplayTable";
+import { RetainedByYearTable } from "@/components/strategy/RetainedByYearTable";
 import { StrategySettingsForm } from "@/components/strategy/StrategySettingsForm";
 import { TcorSection } from "@/components/strategy/TcorSection";
 import { ToleranceForm } from "@/components/strategy/ToleranceForm";
 import { parseStrategyQuery, strategyHref } from "@/components/strategy/params";
 import { ShowMath } from "@/components/dashboard/ShowMath";
+import { InfoTip } from "@/components/InfoTip";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { buildStrategyView } from "@/server/strategy/view";
 import { requireWorkspace } from "../../../../lib";
@@ -36,7 +37,7 @@ export default async function StrategyPage({ params, searchParams }: { params: P
   if (!policy) {
     return (
       <p className="rounded-lg border p-6 text-sm text-muted-foreground">
-        No policy on this account is in renewal (open, with no outcome recorded), and none has retention options. Strategy starts once a renewal is underway.
+        No expiring policy on this account is in renewal (open, with no outcome recorded), and none has retention options. Strategy starts once a renewal is under way.
       </p>
     );
   }
@@ -46,13 +47,14 @@ export default async function StrategyPage({ params, searchParams }: { params: P
   const years = a.years;
   const policyLabel = (p: (typeof choices)[number]) => `${p.lineOfBusiness} · ${p.carrier} · expires ${formatDate(p.expiryDate)}`;
   const optionRowsManual: OptionRow[] = policyOptions.map((o) => ({ id: o.id, label: o.label, carrier: o.carrier, deductible: o.deductible, aggregateCap: o.aggregateCap, premium: o.premium }));
-  const yearsText = years.length ? `${years[0].label}–${years[years.length - 1].label}` : "no policy years";
+  const yearsText = years.length ? `${years[0].label} to ${years[years.length - 1].label}` : "no policy years";
   const runningYear = grouped.value.years.find((y) => y.current)?.label ?? null;
+  // "Basis: 3 policy years (PY2024 to PY2026; current year included as incomplete), raw incurred, as of 16 Nov 2026."
   const basisSentence =
-    `Replaying ${years.length} policy year${years.length === 1 ? "" : "s"} (${yearsText}` +
-    (runningYear ? `, running year ${settings.values.includeCurrent ? "included as incomplete" : "excluded"}` : "") +
-    `) on ${a.basisLabel}` +
-    (a.adjusted && a.prospectiveYear ? `, prospective year ${a.prospectiveYear}` : "") +
+    `Basis: ${years.length} policy year${years.length === 1 ? "" : "s"} (${yearsText}` +
+    (runningYear ? `; current year ${settings.values.includeCurrent ? "included as incomplete" : "excluded"}` : "") +
+    `), ${a.basisLabel}` +
+    (a.adjusted && a.prospectiveYear ? ` to ${a.prospectiveYear}` : "") +
     `, as of ${formatDate(ws.asOfDate)}.`;
 
   return (
@@ -73,10 +75,7 @@ export default async function StrategyPage({ params, searchParams }: { params: P
       <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <p className="flex flex-wrap items-center gap-2 text-sm">
-              <Badge variant={a.adjusted ? "default" : "outline"}>Basis in use</Badge>
-              <span>{basisSentence}</span>
-            </p>
+            <p className="text-sm font-medium">{basisSentence}</p>
             <p className="text-xs text-muted-foreground">
               Expiring {line} with {policy.carrier}: {formatCurrency(policy.annualPremium)} premium, {currentDeductible === null ? "no deductible" : `${formatCurrency(currentDeductible)} deductible`}; premium at the current deductible used for estimates:{" "}
               {formatCurrency(currentPremium)}.
@@ -121,13 +120,13 @@ export default async function StrategyPage({ params, searchParams }: { params: P
       />
 
       <section aria-labelledby="findings-heading" className="flex flex-col gap-3">
-        <h2 id="findings-heading" className="text-lg font-semibold">
+        <h2 id="findings-heading" className="flex items-center gap-1.5 text-lg font-semibold">
           Findings and candidates for discussion
+          <InfoTip label="About the findings">
+            Read from the program layers and their insurer lines, the loss history, the deductible schedule and the tolerances above. Each finding carries its math. Nothing here is a decision:
+            &ldquo;recommended&rdquo; appears only as &ldquo;recommended for discussion&rdquo;.
+          </InfoTip>
         </h2>
-        <p className="text-xs text-muted-foreground">
-          Read from the program layers, their participations, the loss history, the deductible schedule and the tolerances above. Every statement is supported by the math beside it; nothing here is a decision,
-          and &ldquo;recommended&rdquo; appears only as &ldquo;recommended for discussion&rdquo;.
-        </p>
         {findings ? (
           <>
             <FindingsList slug={slug} accountId={accountId} findings={findings.value.findings} modifiers={findings.value.modifiers} accepted={[...accepted]} />
@@ -146,7 +145,7 @@ export default async function StrategyPage({ params, searchParams }: { params: P
                         </th>
                       ))}
                       <th className="px-3 py-2 text-right font-medium">Average ($ per year)</th>
-                      <th className="px-3 py-2 text-right font-medium">Premium ($)</th>
+                      <th className="px-3 py-2 text-right font-medium">Actual premium ($ per year)</th>
                       <th className="px-3 py-2 text-left font-medium">Class</th>
                     </tr>
                   </thead>
@@ -174,10 +173,6 @@ export default async function StrategyPage({ params, searchParams }: { params: P
                   </tbody>
                 </table>
               </div>
-              <p className="border-t px-3 py-2 text-xs text-muted-foreground">
-                In-band losses = Σ min(max(incurred − attachment, 0), limit). A band is working when the history shows any loss in it or losses reach it more than 0.2 times a year; otherwise it is a catastrophe band
-                and no retention is proposed.
-              </p>
             </details>
             <ShowMath lines={findings.math.steps.lines as string[]} />
           </>
@@ -189,8 +184,12 @@ export default async function StrategyPage({ params, searchParams }: { params: P
       <OptionsSection slug={slug} policyId={policy.id} expiringCarrier={policy.carrier} rows={optionRowsManual} />
 
       <section aria-labelledby="options-table-heading" className="flex flex-col gap-3">
-        <h2 id="options-table-heading" className="text-lg font-semibold">
+        <h2 id="options-table-heading" className="flex items-center gap-1.5 text-lg font-semibold">
           Retention options: estimated and manual premiums
+          <InfoTip label="About estimated premiums">
+            Estimated premium = premium at the current deductible − (increase in average retained losses ÷ permissible loss ratio), floored at 25% of the current premium. Manual premiums entered by hand
+            override the estimate where one exists.
+          </InfoTip>
         </h2>
         <EstimatedOptionsTable
           rows={optionRows}
@@ -202,18 +201,21 @@ export default async function StrategyPage({ params, searchParams }: { params: P
       </section>
 
       <section aria-labelledby="optimizer-heading" className="flex flex-col gap-3">
-        <h2 id="optimizer-heading" className="text-lg font-semibold">
-          Retention optimizer
+        <h2 id="optimizer-heading" className="flex items-center gap-1.5 text-lg font-semibold">
+          Retention options compared
+          <InfoTip label="About the comparison">
+            Each option applies its deductible to the account&apos;s actual claims, year by year; the sum is limited to the aggregate cap where one exists. The lowest deductible is the base. Nothing here is
+            marked as the option to choose.
+          </InfoTip>
         </h2>
         <OptimizerTable analysis={a} mathLines={analysis.math.steps.lines as string[]} />
         {a.options.length > 0 && years.length > 0 ? (
           <div className="rounded-lg border p-3">
-            <h3 className="mb-1 text-sm font-medium">Expected total cost by option, with the worst historical year</h3>
-            <p className="mb-2 text-xs text-muted-foreground">Expected = premium + average retained per year. Worst year = premium + the most retained in any year used. The table above carries the same figures.</p>
+            <h3 className="mb-2 text-sm font-medium">Expected total cost by option, with the worst year</h3>
             <CostChart points={a.options.map((o) => ({ label: o.option.label, expected: o.expectedTotalCost, worst: o.worstYearTotalCost, worstYear: o.worstYear?.label ?? null }))} />
           </div>
         ) : null}
-        <ReplayTable analysis={a} />
+        <RetainedByYearTable analysis={a} />
         {a.options.length > 0 ? <ShowMath lines={grouped.math.steps.lines as string[]} label="Show how claims were grouped by policy year" /> : null}
       </section>
 
@@ -236,8 +238,12 @@ export default async function StrategyPage({ params, searchParams }: { params: P
       </section>
 
       <section aria-labelledby="tcor-heading" className="flex flex-col gap-3">
-        <h2 id="tcor-heading" className="text-lg font-semibold">
-          Total cost of risk by option
+        <h2 id="tcor-heading" className="flex items-center gap-1.5 text-lg font-semibold">
+          Total cost of risk (TCOR) by option
+          <InfoTip label="About total cost of risk">
+            TCOR = premiums + expected retained losses + broker fees + risk control spend + internal claims administration. Premiums are the in-force policies with the option&apos;s premium in place of the
+            expiring {line} premium; other lines&apos; retained losses are their five-year average below their deductibles, and a line with no loss runs counts as zero and is flagged.
+          </InfoTip>
         </h2>
         <TcorSection
           slug={slug}
@@ -256,7 +262,6 @@ export default async function StrategyPage({ params, searchParams }: { params: P
         <h2 id="assumptions-heading" className="text-lg font-semibold">
           Assumptions and limitations
         </h2>
-        <p className="text-xs text-muted-foreground">Generated from the settings in use; the report carries the same list.</p>
         <ul className="list-disc rounded-lg border p-4 pl-8 text-sm">
           {assumptions.value.map((l) => (
             <li key={l}>{l}</li>

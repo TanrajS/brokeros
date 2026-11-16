@@ -61,9 +61,9 @@ export function PoliciesTable({ slug, accountId, asOf, policies, coinsurerCounts
                 <TableHead>Carrier</TableHead>
                 <TableHead>Line</TableHead>
                 <TableHead>Limits</TableHead>
-                <TableHead className="text-right">Deductible</TableHead>
-                <TableHead className="text-right">Premium</TableHead>
-                <TableHead className="text-right">Commission</TableHead>
+                <TableHead className="text-right">Deductible ($)</TableHead>
+                <TableHead className="text-right">Premium ($ per year)</TableHead>
+                <TableHead className="text-right">Commission ($)</TableHead>
                 <TableHead>Expiry</TableHead>
                 <TableHead>Days to expiry</TableHead>
                 <TableHead>Stage</TableHead>

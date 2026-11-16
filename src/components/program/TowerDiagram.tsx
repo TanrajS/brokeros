@@ -28,8 +28,9 @@ const HATCH_AMBER = "repeating-linear-gradient(45deg, rgba(217,119,6,0.4) 0 6px,
 /**
  * The tower as stacked blocks: vertical (primary at the bottom) from the md
  * breakpoint, a horizontal strip below it. Block size is proportional to the
- * dollar span, with a floor so small layers stay readable. Gaps are hatched red,
- * overlaps hatched amber. The table beside carries the same figures.
+ * dollar span, with a floor so small layers stay readable. Gaps are hatched red
+ * and labelled "Gap", overlaps hatched amber and labelled "Overlap"; the table
+ * beside carries the same figures.
  */
 export function TowerDiagram({ analysis }: { analysis: TowerAnalysis }) {
   const blocks = blocksFor(analysis);
@@ -69,9 +70,6 @@ export function TowerDiagram({ analysis }: { analysis: TowerAnalysis }) {
           );
         })}
       </div>
-      <figcaption className="text-xs text-muted-foreground">
-        {analysis.continuous ? `Continuous to ${formatCurrency(analysis.topExhaustion ?? 0)}.` : "Not continuous."} Red hatching marks a gap, amber an overlap; blocks are drawn to scale with a minimum size.
-      </figcaption>
     </figure>
   );
 }

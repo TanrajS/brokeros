@@ -17,7 +17,7 @@ interface Props {
 const money = (n: number | null | undefined) => (n === null || n === undefined ? null : formatCurrency(n));
 const SOURCE_LABEL: Record<string, string> = { current: "current deductible", tolerance: "per-occurrence tolerance", p50: "50th percentile severity", p75: "75th percentile severity", p90: "90th percentile severity", manual: "entered by hand" };
 
-/** Every deductible in play with its estimated premium beside the one entered by hand, and which the replay used. */
+/** Every deductible in play with its estimated premium beside the one entered by hand, and which one the comparison used. */
 export function EstimatedOptionsTable({ rows, premiumSource, manualHref, estimatedHref, tolerancePerYear, print = false }: Props) {
   const head = cn("px-3 py-2 text-left font-medium align-bottom whitespace-nowrap", print && "px-2 py-1");
   const cell = cn("px-3 py-2 align-top tabular-nums", print && "px-2 py-1");
@@ -25,8 +25,8 @@ export function EstimatedOptionsTable({ rows, premiumSource, manualHref, estimat
   return (
     <div className="flex flex-col gap-2">
       {print ? null : (
-        <nav aria-label="Premiums used in the replay" className="flex flex-wrap items-center gap-1.5 text-sm">
-          <span className="text-muted-foreground">Replay runs on:</span>
+        <nav aria-label="Premiums used in the comparison" className="flex flex-wrap items-center gap-1.5 text-sm">
+          <span className="text-muted-foreground">Premiums used:</span>
           <Link href={manualHref} aria-current={premiumSource === "manual" ? "page" : undefined} className={pill(premiumSource === "manual")}>
             Manual where entered
           </Link>
@@ -47,7 +47,7 @@ export function EstimatedOptionsTable({ rows, premiumSource, manualHref, estimat
               <th className={cn(head, "text-right")}>Estimated credit ($)</th>
               <th className={cn(head, "text-right")}>Average retained ($ per year)</th>
               <th className={cn(head, "text-right")}>Worst year retained ($)</th>
-              <th className={head}>Used in the replay</th>
+              <th className={head}>Premium used</th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -93,10 +93,7 @@ export function EstimatedOptionsTable({ rows, premiumSource, manualHref, estimat
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Estimated premium = premium at the current deductible − (increase in average retained losses ÷ permissible loss ratio), floored at 25% of the current premium. Estimated premiums are derived from your
-        loss history and this ratio; they are not quotes. Manual options override them where one exists.
-      </p>
+      <p className="text-xs text-muted-foreground">Estimated premiums are derived from your loss history and this ratio; they are not quotes.</p>
     </div>
   );
 }

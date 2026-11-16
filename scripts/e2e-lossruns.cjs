@@ -39,14 +39,14 @@ const summaryRow = (p, label) => main(p).locator("section[aria-labelledby='summa
   await page.goto(`${page.url()}/loss-runs`);
   await settle(page);
   const harbourUrl = page.url();
-  check("Loss Runs tab is selected", (await main(page).getByRole("tab", { name: /^Loss Runs/ }).getAttribute("aria-selected")) === "true");
-  check("tabs show Overview, Loss Runs, Program, Documents, Strategy", /Overview Loss Runs.*Program.*Documents.*Strategy/.test((await main(page).getByRole("navigation", { name: "Account sections" }).innerText()).replace(/\s+/g, " ").trim()));
+  check("Loss runs tab is selected", (await main(page).getByRole("tab", { name: /^Loss runs/ }).getAttribute("aria-selected")) === "true");
+  check("tabs show Overview, Loss runs, Program, Documents, Strategy", /Overview Loss runs.*Program.*Documents.*Strategy/.test((await main(page).getByRole("navigation", { name: "Account sections" }).innerText()).replace(/\s+/g, " ").trim()));
 
   const py23 = (await summaryRow(page, "PY2023").innerText()).replace(/\s+/g, " ");
   check("PY2023 incurred $135,000", py23.includes("$135,000"), py23);
   check("PY2023 loss ratio 96.4%, severity $67,500, frequency 0.08", py23.includes("96.4%") && py23.includes("$67,500") && py23.includes("0.08"));
   check("frequency basis labelled", (await main(page).getByRole("columnheader", { name: "Frequency (per $1M of revenue)" }).count()) === 1);
-  check("running year earned to date", (await summaryRow(page, "PY2026").innerText()).includes("earned to date"));
+  check("current year earned to date", (await summaryRow(page, "PY2026").innerText()).includes("earned to date"));
   const total = (await main(page).locator("section[aria-labelledby='summary-heading'] tfoot tr").first().innerText()).replace(/\s+/g, " ");
   check("five-year total 12 claims and $305,000", total.startsWith("5-year total (PY2022–PY2026) 12 2") && total.includes("$305,000"), total);
   check("chart renders 5 bars and a loss-ratio line", (await main(page).locator(".recharts-bar-rectangle").count()) === 5 && (await main(page).locator(".recharts-line-curve").count()) === 1);

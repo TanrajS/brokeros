@@ -45,7 +45,7 @@ const section = (p, id) => main(p).locator(`section[aria-labelledby='${id}']`).f
   const rows = await tower.locator("tbody tr").allInnerTexts();
   check("umbrella rate on line 0.44%, excess 0.18%", rows.some((r) => /\$5M xs \$1M[\s\S]*0\.44%/.test(r)) && rows.some((r) => /\$10M xs \$6M[\s\S]*0\.18%/.test(r)));
   check("tower diagram drawn with 3 layers and no hatching", (await tower.locator("figure [role='img'] > div").count()) === 3);
-  check("per-occurrence basis stated once on the Program tab", (await main(page).getByText(/per-occurrence basis/).count()) === 1);
+  check("per-occurrence basis stated once on the Program tab, in the heading tooltip", (await main(page).getByRole("button", { name: /^About the tower|^About subscription placements/ }).count()) === 1);
   check("no contract requirements or certificates sections", (await main(page).locator("section[aria-labelledby='requirements-heading']").count()) === 0 && (await main(page).locator("section[aria-labelledby='certificates-heading']").count()) === 0);
   await page.screenshot({ path: `${SHOTS}/program-harbourline.png`, fullPage: true });
 

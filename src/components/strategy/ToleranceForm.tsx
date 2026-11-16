@@ -67,7 +67,7 @@ export function ToleranceForm({ slug, accountId, current, defaults, revenue }: P
       </p>
       <div>
         <Button type="submit" size="sm" disabled={!formState.isValid || pending || !formState.isDirty}>
-          {pending ? "Saving…" : "Save tolerance"}
+          {pending ? "Saving…" : "Save tolerances"}
         </Button>
       </div>
     </form>

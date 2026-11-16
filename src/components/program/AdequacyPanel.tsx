@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Input } from "@/components/ui/input";
 import { Field, fieldA11y } from "@/components/form/Field";
 import { NativeSelect } from "@/components/form/NativeSelect";
+import { InfoTip } from "@/components/InfoTip";
 import { Missing } from "@/components/Missing";
 import { ShowMath } from "@/components/dashboard/ShowMath";
 import { COINSURANCE_PERCENTS } from "@/lib/constants";
@@ -42,13 +43,13 @@ export function AdequacyPanel({ defaults }: Props) {
 
   return (
     <section aria-labelledby="adequacy-heading" className="flex flex-col gap-3 rounded-lg border p-4">
-      <h2 id="adequacy-heading" className="text-lg font-semibold">
+      <h2 id="adequacy-heading" className="flex items-center gap-1.5 text-lg font-semibold">
         Adequacy (coinsurance)
+        <InfoTip label="About the adequacy check">
+          Required limit = insurable value × coinsurance clause. Below it, a loss is paid in the proportion carried ÷ required, less the deductible, up to the limit carried. This shows the arithmetic;
+          whether the limit is adequate is your call with the client.
+        </InfoTip>
       </h2>
-      <p className="text-xs text-muted-foreground">
-        Required limit = insurable value × coinsurance clause. Below it, a loss is paid in the proportion carried ÷ required, less the deductible, up to the limit carried. This shows the
-        arithmetic; whether the limit is adequate is your call with the client.
-      </p>
       <form noValidate className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5" aria-label="Adequacy inputs">
         <Field id="adq-value" label="Insurable value (CAD)" required error={msg("insurableValue")}>
           <Input {...register("insurableValue")} {...fieldA11y("adq-value", msg("insurableValue"))} inputMode="decimal" />

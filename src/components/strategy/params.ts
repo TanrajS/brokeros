@@ -4,15 +4,15 @@ import { DEFAULT_STRATEGY_SETTINGS, strategySettingsSchema, type StrategySetting
 /** Raw URL parameters for the Strategy tab. Empty string = default. */
 export interface StrategyQuery {
   policy: string;
-  /** Policy years to replay; "" = 5. */
+  /** Policy years to use; "" = 5. */
   years: string;
-  /** "0" excludes the running year; "" includes it. */
+  /** "0" excludes the current year; "" includes it. */
   current: string;
   /** Trend percent; present means trend is on. */
   trend: string;
   /** Five comma-separated development factors; present means development is on. */
   ldf: string;
-  /** "estimated" runs the replay on estimated premiums for every option; "" = manual where one exists. */
+  /** "estimated" runs the comparison on estimated premiums for every option; "" = manual where one exists. */
   premiums: string;
 }
 

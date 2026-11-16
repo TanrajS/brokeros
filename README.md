@@ -10,7 +10,7 @@ management, a fictional demo book and settings. Version 0.2 added the Renewals
 module: a stage board, readiness checklists, tasks, an activity log, renewal
 outcomes and rate-change math. Version 0.3 added the Dashboard: the book in
 force, retention, expiring premium, a revenue forecast and concentration.
-Version 0.4 opened Placement with Loss Runs: claims, CSV import and a
+Version 0.4 opened Placement with Loss runs: claims, CSV import and a
 policy-year summary with loss ratio, frequency and severity. Version 1 added the
 Program tab: tower analysis, a contract requirements checker, certificates of
 insurance and property adequacy, plus co-insurers and sub-limits on policies.
@@ -27,7 +27,13 @@ per account backed by Vercel Blob, a Policy page that generates certificates of
 insurance as PDFs, automatic strategy findings with estimated retention options,
 and a focused ten-account demo book; it removes the Marketing tab, contract
 requirements, layer bases, the coverage strip and Workers Compensation, so the
-history above describes features that no longer exist.
+history above describes features that no longer exist. Version 1.5 is a polish
+release: insurer premiums on a placement are quoted at 100% of the layer with
+the actual premium derived from the signed line, layer blocks share their width
+by placed total, the Program tab exports a PDF summary into Documents, the Loss
+runs tab groups policy years into active and expired, the findings engine adds
+partial-line retention candidates, and every page lost its helper copy in favour
+of a consistent glossary.
 
 ## Local setup
 
@@ -259,9 +265,18 @@ paid + reserved**; it is always computed, never stored.
 - **Validation and flags.** Paid and reserved must be non-negative. The report
   date must be on or after the loss date and not after the as-of date. A closed
   claim with a reserve is allowed only after confirming it (reopened files
-  exist). Duplicate claim numbers on an account are allowed but flagged. The data
-  quality panel lists claims outside policy periods, duplicates, closed with a
-  reserve, reported before the loss, or dated after the as-of date.
+  exist). Duplicate claim numbers on an account are allowed but flagged. Every
+  flag (outside policy periods, duplicate number, closed with a reserve, reported
+  before the loss, dated in the future) sits as a small badge on its claim row
+  with the reason on hover; a **Flagged only** filter narrows the claims table to
+  those rows (v1.5 removed the separate data quality panel).
+- **Policy-year groups (v1.5).** The policy-year table is split into **Active
+  and in progress** (in force at the as-of date, or in a renewal stage with no
+  outcome yet; soonest expiry first) and **Expired** (expired or closed; most
+  recent expiry first). Each group shows three rows, with a "Show N more" link
+  that expands in place and is remembered in the URL (`active=all`,
+  `expired=all`); group headers carry counts. Totals and averages still cover the
+  five most recent years whatever is expanded.
 - **CSV import** takes the template columns in any order. Every row is checked
   for missing or malformed dates (YYYY-MM-DD), future dates, an unknown line,
   missing or non-numeric amounts, an unknown status and duplicate numbers. Only
@@ -302,20 +317,24 @@ paid + reserved**; it is always computed, never stored.
   sub-limits with their own deductibles; the policy's limit and deductible stay
   the defaults for everything not listed.
 
-### Strategy: retained-loss replay, break-even, worst-year test, TCOR
+### Strategy: retained losses by year, break-even, worst-year test, TCOR
 
 - **Retention options** are deductibles (or self-insured retentions) with their
   annual premium and an optional aggregate cap, entered by hand (manual options)
   or generated automatically with an estimated premium (see Strategy findings
   below). Manual premiums are not quotes either; nothing in the app is.
-- **Retained-loss replay.** The account's own claims for the line are grouped by
+- **Retained losses by year.** Each option applies its deductible to the
+  account's actual claims, year by year. Claims for the line are grouped by
   policy year (effective ≤ date of loss < expiry). For every option and year:
   **retained = Σ min(incurred, deductible)**, then **min(retained, aggregate cap)**
-  where a cap exists; **transferred = incurred − retained**. The replay uses the
-  five most recent policy years by default, including the running year (flagged
-  incomplete, with a toggle to exclude it). Trend and development from Loss runs
-  can be applied, per claim, before the deductible; both are off by default. The
-  basis in use is always stated beside the figures.
+  where a cap exists; **transferred = incurred − retained**. The comparison uses
+  the five most recent policy years by default, including the current year
+  (flagged incomplete, with a toggle to exclude it). Trend and development from
+  Loss runs can be applied, per claim, before the deductible; both are off by
+  default. The basis in use is stated beside the figures in one sentence:
+  "Basis: 3 policy years (PY2024 to PY2026; current year included as
+  incomplete), raw incurred, as of 16 Nov 2026." The word "replay" does not
+  appear anywhere a user reads (v1.5).
 - **Across years:** average retained per year, the worst year's retained and
   which year it was.
 - **Against the base** (the lowest-deductible option; ties go to the cheaper):
@@ -325,7 +344,7 @@ paid + reserved**; it is always computed, never stored.
 - **Break-even retained losses** = the premium saving: the most additional
   retained loss the client can absorb in a year before the option costs more
   than the base.
-- **Worst historical year test.** In the option's worst year, additional
+- **Worst year test.** In the option's worst year, additional
   retained = option retained − base retained in that same year; compared with
   the premium saving and reported as "in PY2023 this option would have cost
   $2,000 more than the base".
@@ -347,14 +366,15 @@ paid + reserved**; it is always computed, never stored.
 - **Renewal strategy report.** A print-styled route assembles profile and
   exposures, the program layers, five-year losses with the basis stated, the
   findings accepted for discussion, the options (manual and estimated premiums
-  side by side) with their per-year replay, TCOR by option, the considerations
+  side by side) with retained losses by year, TCOR by option, the considerations
   and an **Assumptions and limitations** section generated from the settings
   actually used, including the tolerances and permissible loss ratio. It compares options and
   never says what the client should buy. Every input is exportable as JSON.
 
 #### Strategy limitations (what an actuary would do differently)
 
-The optimizer is a **historical replay** of the account's own claims. It is
+The optimizer applies each option's deductible to the account's **own past
+claims**, year by year. It is
 transparent and easy to audit, and it is not a forecast. In particular:
 
 - **Credibility.** Five years of one account's claims (twelve for Harbourline,
@@ -362,7 +382,7 @@ transparent and easy to audit, and it is not a forecast. In particular:
   the account's experience with an industry or book expectation, weighting the
   account's own data by its credibility (more claims, more weight), rather than
   taking its average as the expected value.
-- **Loss distributions.** The replay can only reproduce claim sizes that have
+- **Loss distributions.** The method can only reproduce claim sizes that have
   happened. Retained losses at a higher deductible depend on how many claims
   fall just below or above it, which a fitted severity distribution (and a
   frequency distribution for the count of claims) estimates far better than
@@ -376,7 +396,7 @@ transparent and easy to audit, and it is not a forecast. In particular:
 - **Trend.** A single trend rate applied uniformly to every claim ignores that
   frequency and severity trend differently, and that the deductible itself erodes
   with inflation (more of each claim crosses it over time).
-- **Aggregate caps and correlation.** The cap is applied to the replayed total; a
+- **Aggregate caps and correlation.** The cap is applied to each year's total; a
   distribution-based model would price the cap on the probability of exceeding
   it, including years with more claims than any seen.
 - **Expected total cost ignores the time value of money and the cost of
@@ -385,20 +405,44 @@ transparent and easy to audit, and it is not a forecast. In particular:
 
 ### Placement: subscription layers, several towers, deductible schedules
 
-- **Account tabs.** Each account has Overview, Loss Runs, Program, Documents and
+- **Account tabs.** Each account has Overview, Loss runs, Program, Documents and
   Strategy tabs under its name (`/w/<slug>/accounts/<id>/<tab>`). Strategy
   opens on the policy with the fewest days to expiry that has no outcome yet,
   and remembers the chosen policy in the URL. Old `/placement/…` links
   redirect to the matching tab.
 - **Layers and participations.** A program layer (tower, type, attachment,
   limit) carries one or more insurer participations, each with a written
-  line (optional), a signed line and its own premium. A v0.5 layer is one
+  line (optional), a signed line and a **100% premium**. A v0.5 layer is one
   participation signed at 100%.
-  - **Placed share** = Σ signed lines. **Layer premium** = Σ participation
-    premiums. **Placed limit** = limit × placed share. **Layer rate on line** =
-    layer premium ÷ placed limit.
+  - **The 100% premium convention (v1.5).** Insurers quote a premium as if they
+    wrote the whole layer. What an insurer actually receives is its **actual
+    premium = 100% premium × signed line ÷ 100**, computed in the domain layer
+    and never stored (`layer_participations.premium_100`; values entered before
+    v1.5 were already quoted at 100%, so the column was renamed without
+    conversion). The participation table shows both; the layer total row shows
+    the placed %, the sum of actual premiums and a **100% equivalent** = sum of
+    actual premiums ÷ placed share, labelled as such. The CSV schedule uses the
+    column `premium_100` and opens with a note line saying so; the import preview
+    shows the computed actual premium per row.
+  - **Placed share** = Σ signed lines. **Layer premium** = Σ actual premiums.
+    **Placed limit** = limit × placed share. **Layer rate on line** = layer
+    premium ÷ placed limit. Program premium, rate per $100 of TIV, blended rate
+    on line, the strategy report and the findings engine all use actual
+    premiums.
   - **Per participation:** exposed limit = limit × signed line; rate on line =
-    premium ÷ exposed limit; premium per $1M exposed; share of layer premium.
+    100% premium ÷ layer limit, which equals actual premium ÷ exposed limit (the
+    math shows both forms); premium per $1M exposed; share of layer premium.
+  - **Layer blocks (v1.5).** Inside a layer block, insurer segments share the
+    full width in proportion to their share of the layer's placed total, not of
+    100%: a single insurer at 50% fills the whole block; 15% and 35% fill 30%
+    and 70%. The block's top-left label ("50% placed") and the Placement column
+    are the only places short or over-placement shows in the diagram.
+  - **Program PDF (v1.5).** Export PDF on the Program tab renders a landscape
+    summary (title, tiles, the tower diagram with every segment labelled by an
+    insurer key, the segment table, the participation table with 100% and actual
+    premiums, totals and a fictional-data footer) with `@react-pdf/renderer`,
+    files it under Documents → Policy documents as "Program summary — <line
+    group> — <as-of date>" and opens it in a new tab.
 - **Coverage profile.** 0 to the program top (the highest exhaustion, or the TIV
   when set) is cut at every attachment and exhaustion point. A segment's placed %
   is the sum of the signed shares of every layer in every tower that covers it:
@@ -421,8 +465,8 @@ transparent and easy to audit, and it is not a forecast. In particular:
   minimum and maximum), **percent of value** (percent × the claim's value at
   risk, clamped; flagged when no value at risk is known, and the minimum is used
   if there is one) or **waiting period** (hours, not dollars; excluded from
-  dollar replays with a flag).
-- **Matching rule in the replay.** Each claim carries a peril (default All other
+  the dollar analysis with a flag).
+- **Matching rule in the retention analysis.** Each claim carries a peril (default All other
   perils). The retention optimizer uses the schedule rule whose applies_to equals
   the claim's peril (case-insensitive), otherwise the default rule. A retention
   option replaces only the default deductible amount, so claims under a named
@@ -490,8 +534,26 @@ They produce candidates for discussion, never recommendations.
   to $5,000, or to $25,000 above $100,000), de-duplicated. **Estimated premium =
   current premium − (increase in average retained vs the current deductible) ÷
   PLR**, floored at 25% of the current premium and flagged when the floor
-  applies. Manual and estimated premiums sit in two columns; the replay runs on
+  applies. Manual and estimated premiums sit in two columns; the comparison runs on
   the chosen source, defaulting to manual where one exists.
+- **Partial-line retention candidate (v1.5).** For a working band whose limit
+  exceeds the per-occurrence tolerance, the engine considers the client taking a
+  line on the band instead of the whole band. Client line = the largest whole
+  percentage such that line × band limit ≤ per-occurrence tolerance and line ×
+  worst-year in-band losses ≤ annual tolerance, minimum 1%, otherwise no
+  candidate. In-band losses for the band above the current deductible are the
+  losses between the deductible and the band top (average retained at the band
+  top minus average retained at the deductible; same for the worst year).
+  Premium saving = line × the layer's 100% equivalent premium; expected retained
+  = line × average in-band losses; worst-year retained = line × worst-year
+  in-band losses; **net expected saving = saving − expected retained**; the
+  candidate fires when it is positive and is shown beside the raise-deductible
+  candidate for the same band. Where a segment is short of 100% the finding adds
+  "This line would also reduce the unplaced share of the segment from X% to Y%."
+  Hand-verified: Harbourline Foods, $1M primary at 142,000, deductible 10,000,
+  tolerances 125,000 / 250,000 → average in-band 42,400, worst year 115,000, line
+  12%, saving 17,040, expected retained 5,088, worst-year retained 13,800, net
+  11,952; with a 5,000 per-occurrence tolerance the line is 0% and nothing fires.
 - **Modifiers** that temper every finding: a rising claim frequency, a high open
   reserve share, and fewer than three policy years of history.
 
@@ -501,6 +563,11 @@ They produce candidates for discussion, never recommendations.
   than 0.2 claims a year), the tolerance defaults, the 25%/10-point price
   thresholds and the 10% excess-limit rule are judgement calls a broker should
   challenge; an actuary would fit distributions and model credibility.
+- **The 100% premium convention is an assumption.** Every participation premium
+  is read as quoted at 100% of its layer and the actual premium is derived from
+  the signed line. A slip that records each insurer's actual premium instead must
+  be converted (actual ÷ signed line) before import; the app cannot tell the two
+  apart.
 - **Estimated premiums are not quotes.** They rescale the current premium by the
   change in expected retained losses at a fixed permissible loss ratio and
   ignore expense loads, risk charges, market cycle and minimum premiums.
@@ -528,5 +595,7 @@ v1.2 — Strategy: retention optimizer, total cost of risk, renewal strategy rep
 v1.3 — Account tabs replace Placement; subscription placements with signed lines and multiple towers; deductible schedules with per-peril replay; five more demo accounts.
 
 v1.4 — Documents tab with Vercel Blob; Policy page with certificate generation; automatic strategy findings and estimated retention options; removed Marketing, contract requirements, layer basis, coverage strip and Workers Compensation; ten-account demo book.
+
+v1.5 — Polish: 100% premium basis for participations, proportional layer widths, program PDF export, loss-runs grouping, partial-line retention candidates, copy and wording audit.
 
 Full details in [CHANGELOG.md](CHANGELOG.md).

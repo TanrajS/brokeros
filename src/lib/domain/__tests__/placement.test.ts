@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  PLACEMENT_COLUMNS,
+  PLACEMENT_CSV_NOTE,
   analyzeTower,
+  checkPlacementColumns,
   coverageProfile,
   isAdvancedProgram,
   layerSummary,
@@ -15,24 +18,28 @@ import {
 
 const M = 1_000_000;
 let seq = 0;
-const part = (insurer: string, signedLinePct: number, premium: number, writtenLinePct: number | null = null, isLead = false): ParticipationInput => ({
+/** v1.5: premiums are quoted at 100% of the layer; actual premium = premium100 × signed line. */
+const part = (insurer: string, signedLinePct: number, premium100: number, writtenLinePct: number | null = null, isLead = false): ParticipationInput => ({
   id: `p${++seq}`,
   insurer,
   writtenLinePct,
   signedLinePct,
-  premium,
+  premium100,
   policyNumber: null,
   isLead,
 });
 
-/* Pacific Northwest Terminals: TIV $300M placed across two towers. */
+/* Pacific Northwest Terminals: TIV $300M placed across two towers. 100% premiums restated in v1.5 so every actual premium
+   (800,000 × 15% = 120,000; 720,000 × 10% = 72,000; 780,000 × 10% = 78,000; 800,000 × 5% = 40,000; 450,000 × 20% = 90,000;
+   480,000 × 10% = 48,000; 420,000 × 30% = 126,000; 300,000 × 25% = 75,000; 320,000 × 20% = 64,000; 280,000 × 15% = 42,000)
+   equals the v1.3 figure and every expected value below holds. */
 const towerOne: ProgramLayerInput = {
   id: "A1",
   towerLabel: "Tower 1",
   layerType: "primary",
   attachment: 0,
   limit: 300 * M,
-  participations: [part("Westcoast Re (fictional)", 15, 120_000, null, true), part("Summit Indemnity (fictional)", 10, 72_000), part("Granville Specialty (fictional)", 10, 78_000), part("Kitsilano Mutual (fictional)", 5, 40_000)],
+  participations: [part("Westcoast Re (fictional)", 15, 800_000, null, true), part("Summit Indemnity (fictional)", 10, 720_000), part("Granville Specialty (fictional)", 10, 780_000), part("Kitsilano Mutual (fictional)", 5, 800_000)],
 };
 const b1: ProgramLayerInput = {
   id: "B1",
@@ -40,7 +47,7 @@ const b1: ProgramLayerInput = {
   layerType: "primary",
   attachment: 0,
   limit: 100 * M,
-  participations: [part("Cascadia Mutual (fictional)", 20, 90_000, null, true), part("Northgate Mutual", 10, 48_000), part("Thames Syndicate 2140 (fictional)", 30, 126_000)],
+  participations: [part("Cascadia Mutual (fictional)", 20, 450_000, null, true), part("Northgate Mutual", 10, 480_000), part("Thames Syndicate 2140 (fictional)", 30, 420_000)],
 };
 const b2: ProgramLayerInput = {
   id: "B2",
@@ -48,7 +55,7 @@ const b2: ProgramLayerInput = {
   layerType: "excess",
   attachment: 100 * M,
   limit: 200 * M,
-  participations: [part("Pacific Crest Insurance (fictional)", 25, 75_000, null, true), part("Ironwood Specialty (fictional)", 20, 64_000), part("Maplewood Underwriters (fictional)", 15, 42_000)],
+  participations: [part("Pacific Crest Insurance (fictional)", 25, 300_000, null, true), part("Ironwood Specialty (fictional)", 20, 320_000), part("Maplewood Underwriters (fictional)", 15, 280_000)],
 };
 const layers = [towerOne, b1, b2];
 
@@ -57,36 +64,54 @@ describe("layerSummary", () => {
     const s = layerSummary(towerOne).value;
     // 15 + 10 + 10 + 5 = 40%
     expect(s.placedShare).toBe(0.4);
-    // 120,000 + 72,000 + 78,000 + 40,000 = 310,000
+    // actual premiums 800,000 × 15% + 720,000 × 10% + 780,000 × 10% + 800,000 × 5% = 120,000 + 72,000 + 78,000 + 40,000 = 310,000
     expect(s.layerPremium).toBe(310_000);
+    // 310,000 ÷ 40% = 775,000 as a 100% equivalent
+    expect(s.premium100Equivalent).toBe(775_000);
     // 300,000,000 × 40% = 120,000,000; 310,000 ÷ 120,000,000 = 0.002583…
     expect(s.placedLimit).toBe(120 * M);
     expect(Number(s.rateOnLine!.toFixed(6))).toBe(0.002583);
     const west = s.participations[0];
-    // 300,000,000 × 15% = 45,000,000; 120,000 ÷ 45,000,000 = 0.0026667 = 0.2667%
+    // actual 800,000 × 15% = 120,000; 300,000,000 × 15% = 45,000,000; rate on line 800,000 ÷ 300,000,000 = 120,000 ÷ 45,000,000 = 0.0026667 = 0.2667%
+    expect(west.actualPremium).toBe(120_000);
     expect(west.exposedLimit).toBe(45 * M);
     expect(Number((west.rateOnLine! * 100).toFixed(4))).toBe(0.2667);
     // 120,000 ÷ 45 = 2,666.67 per $1M exposed; 120,000 ÷ 310,000 = 38.71% of the layer premium
     expect(west.premiumPerMillion).toBe(2_666.67);
     expect(Number(west.shareOfPremium!.toFixed(4))).toBe(0.3871);
+    // width inside the block: 15% ÷ 40% = 37.5% of the layer's placed total (v1.5)
+    expect(west.shareOfPlaced).toBe(0.375);
+    expect(s.participations.map((p) => p.shareOfPlaced)).toEqual([0.375, 0.25, 0.25, 0.125]);
     expect(s.underPlacedPct).toBe(60);
     expect(s.label).toBe("$300M primary");
   });
 
   it("B1: placed 60%, premium 264,000, 0.44% on line; B2: 60%, 181,000, 0.1508%", () => {
     const s1 = layerSummary(b1).value;
-    // 20 + 10 + 30 = 60; 90,000 + 48,000 + 126,000 = 264,000; 264,000 ÷ 60,000,000 = 0.0044
+    // 20 + 10 + 30 = 60; actual 450,000 × 20% + 480,000 × 10% + 420,000 × 30% = 90,000 + 48,000 + 126,000 = 264,000; 264,000 ÷ 60,000,000 = 0.0044
     expect([s1.placedShare, s1.layerPremium, s1.placedLimit, s1.rateOnLine]).toEqual([0.6, 264_000, 60 * M, 0.0044]);
     const s2 = layerSummary(b2).value;
-    // 25 + 20 + 15 = 60; 75,000 + 64,000 + 42,000 = 181,000; 181,000 ÷ 120,000,000 = 0.0015083…
+    // 25 + 20 + 15 = 60; actual 300,000 × 25% + 320,000 × 20% + 280,000 × 15% = 75,000 + 64,000 + 42,000 = 181,000; 181,000 ÷ 120,000,000 = 0.0015083…
     expect([s2.placedShare, s2.layerPremium, s2.placedLimit]).toEqual([0.6, 181_000, 120 * M]);
     expect(Number((s2.rateOnLine! * 100).toFixed(4))).toBe(0.1508);
     expect(s2.label).toBe("$200M xs $100M");
   });
 
-  it("a single insurer at 100% is the v0.5 special case", () => {
+  it("a single insurer at 100% is the v0.5 special case: 100% premium = actual premium = 100% equivalent", () => {
     const s = layerSummary({ id: "x", towerLabel: "Tower 1", layerType: "primary", attachment: 0, limit: 1 * M, participations: [part("Dominion Shield Insurance", 100, 150_000)] }).value;
     expect([s.placedShare, s.layerPremium, s.placedLimit, s.rateOnLine, s.underPlacedPct]).toEqual([1, 150_000, 1 * M, 0.15, 0]);
+    expect([s.participations[0].actualPremium, s.premium100Equivalent, s.participations[0].shareOfPlaced]).toEqual([150_000, 150_000, 1]);
+  });
+
+  it("a single insurer at 50% fills the whole block; Intact 15% and Northbridge 35% fill 30% and 70%", () => {
+    const half = layerSummary({ id: "h", towerLabel: "Tower 1", layerType: "primary", attachment: 0, limit: 1 * M, participations: [part("Solo", 50, 100_000)] }).value;
+    // actual 100,000 × 50% = 50,000; 100% equivalent 50,000 ÷ 50% = 100,000; width 50% ÷ 50% = 100%
+    expect([half.layerPremium, half.premium100Equivalent, half.participations[0].shareOfPlaced]).toEqual([50_000, 100_000, 1]);
+    const two = layerSummary({ id: "t", towerLabel: "Tower 1", layerType: "primary", attachment: 0, limit: 1 * M, participations: [part("Intact (fictional)", 15, 100_000), part("Northbridge (fictional)", 35, 100_000)] }).value;
+    // 15 ÷ 50 = 30%; 35 ÷ 50 = 70%
+    expect(two.participations.map((p) => p.shareOfPlaced)).toEqual([0.3, 0.7]);
+    // actual 15,000 + 35,000 = 50,000; 100% equivalent 50,000 ÷ 50% = 100,000
+    expect([two.layerPremium, two.premium100Equivalent]).toEqual([50_000, 100_000]);
   });
 
   it("flags over-placement and refuses negative amounts", () => {
@@ -187,11 +212,21 @@ describe("towers and the v0.5 analysis", () => {
 });
 
 describe("validatePlacementRows", () => {
-  const row = (over: Record<string, string>) => ({ tower: "Tower 2", layer_type: "excess", attachment: "100000000", limit: "200000000", insurer: "Pacific Crest", written_line_pct: "30", signed_line_pct: "25", premium: "75000", policy_number: "", ...over });
-  it("accepts a well-formed row and defaults a blank tower", () => {
+  const row = (over: Record<string, string>) => ({ tower: "Tower 2", layer_type: "excess", attachment: "100000000", limit: "200000000", insurer: "Pacific Crest", written_line_pct: "30", signed_line_pct: "25", premium_100: "300000", policy_number: "", ...over });
+  it("accepts a well-formed row, defaults a blank tower and computes the actual premium", () => {
     const r = validatePlacementRows([row({ tower: "" })]).value[0];
     expect(r.valid).toBe(true);
-    expect(r.parsed).toMatchObject({ towerLabel: "Tower 1", layerType: "excess", attachment: 100 * M, limit: 200 * M, writtenLinePct: 30, signedLinePct: 25, premium: 75_000, policyNumber: null });
+    // 300,000 at 100% × 25% signed = 75,000 actual
+    expect(r.parsed).toMatchObject({ towerLabel: "Tower 1", layerType: "excess", attachment: 100 * M, limit: 200 * M, writtenLinePct: 30, signedLinePct: 25, premium100: 300_000, actualPremium: 75_000, policyNumber: null });
+  });
+  it("requires the premium_100 column and says what it means", () => {
+    expect(checkPlacementColumns(["layer_type", "attachment", "limit", "insurer", "signed_line_pct", "premium"]).value.missing).toEqual(["premium_100"]);
+    expect(PLACEMENT_COLUMNS).toContain("premium_100");
+    expect(PLACEMENT_CSV_NOTE).toMatch(/^# premium_100: premium quoted at 100% of the layer/);
+    const legacy = { ...row({}) } as Record<string, string>;
+    delete legacy.premium_100;
+    legacy.premium = "75000";
+    expect(validatePlacementRows([legacy]).value[0].reasons[0]).toMatch(/missing premium_100/);
   });
   it("rejects bad percentages, signed above written, negative amounts, unknown types and duplicate insurers", () => {
     const rs = validatePlacementRows([
@@ -211,9 +246,10 @@ describe("validatePlacementRows", () => {
     expect(rs[5].reasons[0]).toMatch(/duplicate insurer/);
     expect(rs[6].reasons[0]).toMatch(/above zero/);
   });
-  it("exports one slip row per participation", () => {
+  it("exports one slip row per participation with the premium at 100%", () => {
     const rows = placementScheduleRows([b1]);
     expect(rows).toHaveLength(3);
-    expect(rows[0]).toEqual(["Tower 2", "primary", 0, 100 * M, "Cascadia Mutual (fictional)", null, 20, 90_000, null]);
+    // Cascadia: 450,000 at 100% (actual 90,000 at 20%)
+    expect(rows[0]).toEqual(["Tower 2", "primary", 0, 100 * M, "Cascadia Mutual (fictional)", null, 20, 450_000, null]);
   });
 });

@@ -101,7 +101,7 @@ export function OptimizerTable({ analysis, mathLines, print = false }: Props) {
               "be",
             )}
             {row(
-              <>Worst historical year test{unit("additional retained in that year vs the premium saving")}</>,
+              <>Worst year test{unit("additional retained in that year vs the premium saving")}</>,
               (o) =>
                 o.isBase ? (
                   <span className="text-muted-foreground">—</span>
@@ -132,15 +132,7 @@ export function OptimizerTable({ analysis, mathLines, print = false }: Props) {
           </tbody>
         </table>
       </div>
-      {print ? null : (
-        <>
-          <p className="text-xs text-muted-foreground">
-            Retained = Σ min(incurred, deductible) per year, then min(·, aggregate cap). Transferred = incurred − retained. Averages are over the years in use; the running year, when
-            included, counts as a full year. Nothing here is marked as the option to choose: the trade-offs are in the considerations below.
-          </p>
-          <ShowMath lines={mathLines} />
-        </>
-      )}
+      {print ? null : <ShowMath lines={mathLines} />}
     </div>
   );
 }

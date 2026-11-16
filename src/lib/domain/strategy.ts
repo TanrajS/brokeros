@@ -3,14 +3,14 @@
  * the report's assumptions. Pure: claims, policies, options and settings in;
  * { value, math } out. No React, no database, no clock.
  *
- * The optimizer is a historical replay: every claim in the years chosen is run
- * through each option's deductible (and aggregate cap). It does not fit a loss
- * distribution or weight the account's own experience against an industry
- * expectation; the Assumptions section says so.
+ * The optimizer applies each option's deductible (and aggregate cap) to the
+ * account's actual claims, year by year. It does not fit a loss distribution or
+ * weight the account's own experience against an industry expectation; the
+ * Assumptions section says so.
  */
 import type { ClaimStatus, LineOfBusiness } from "@/lib/constants";
 import { DEFAULT_PERIL, deductibleForClaim, describeRule, flatRule, matchRule, type DeductibleRule } from "./deductibles";
-import { layerSummary, towerLabels, type ProgramLayerInput } from "./program";
+import { coverageProfile, layerSummary, towerLabels, type ProgramLayerInput } from "./program";
 import { getRateMetrics, type RateTerm } from "./renewals";
 import {
   assignPolicyYear,
@@ -39,6 +39,12 @@ const usd2 = (n: number) => `$${group(n, 2)}`;
 const r4 = (n: number) => group(n, 4);
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const sumMoney = (xs: number[]) => xs.reduce((c, x) => c + Math.round(x * 100), 0) / 100;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "12 Nov 2026" from "2026-11-12" for sentences; the ISO string is kept where a date is data. */
+const longDate = (iso: ISODate) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : iso;
+};
 
 /* ------------------------------------------------------------------ */
 /* Claims grouped by policy year                                       */
@@ -101,7 +107,7 @@ export function groupClaimsByPolicyYear(claims: LRClaim[], policies: LRPolicy[],
     const open = rows.filter((r) => r.status === "open");
     const total = sumMoney(rows.map((r) => r.incurred));
     const isCurrent = current?.policyId === period.policyId;
-    lines.push(`${period.label}${isCurrent ? " (running year, incomplete)" : ""}: ${rows.length} claims, incurred ${rows.map((r) => usd(r.incurred)).join(" + ") || "$0"} = ${usd(total)}; age ${age.months} months → ${age.bucket}`);
+    lines.push(`${period.label}${isCurrent ? " (current year, incomplete)" : ""}: ${rows.length} claims, incurred ${rows.map((r) => usd(r.incurred)).join(" + ") || "$0"} = ${usd(total)}; age ${age.months} months → ${age.bucket}`);
     return {
       period,
       label: `PY${period.year}`,
@@ -141,16 +147,16 @@ export interface RetentionOption {
 }
 
 export interface ReplaySettings {
-  /** Policy years to replay, most recent first (default 5). */
+  /** Policy years to use, most recent first (default 5). */
   yearsToUse: number;
-  /** Whether the running (incomplete) year counts as one of them (default true). */
+  /** Whether the current (incomplete) year counts as one of them (default true). */
   includeCurrentYear: boolean;
-  /** Trend and development from the Loss Runs tab (default both off). */
+  /** Trend and development from the Loss runs tab (default both off). */
   adjustments: Adjustments;
   /**
    * The policy's deductible schedule (v1.3). A claim whose peril matches a rule
    * uses that rule; every other claim uses the option's deductible, which stands
-   * in for the default (all other perils) rule. Empty or absent = flat replay.
+   * in for the default (all other perils) rule. Empty or absent = one flat deductible.
    */
   schedule?: DeductibleRule[];
 }
@@ -256,7 +262,7 @@ export interface RetentionAnalysis {
   basisLabel: string;
 }
 
-/** Picks the years to replay and restates each claim on the chosen basis. */
+/** Picks the policy years to use and restates each claim on the chosen basis. */
 export function selectReplayYears(grouped: ClaimsByPolicyYear, settings: ReplaySettings): Calc<{ years: ReplayYear[]; omitted: { label: string; reason: string }[] }> {
   const { adjustments } = settings;
   const omitted: { label: string; reason: string }[] = [];
@@ -264,7 +270,7 @@ export function selectReplayYears(grouped: ClaimsByPolicyYear, settings: ReplayS
   const current = pool.find((y) => y.current);
   if (current && !settings.includeCurrentYear) {
     pool = pool.filter((y) => !y.current);
-    omitted.push({ label: current.label, reason: "running year excluded by the settings" });
+    omitted.push({ label: current.label, reason: "current year excluded by the settings" });
   }
   const n = Math.max(0, Math.floor(settings.yearsToUse));
   const dropped = pool.slice(0, Math.max(0, pool.length - n));
@@ -277,7 +283,7 @@ export function selectReplayYears(grouped: ClaimsByPolicyYear, settings: ReplayS
     const claims: ReplayClaim[] = y.claims.map((c) => ({ ...c, trendFactor: tf, developmentFactor: df, adjustedIncurred: round2(c.incurred * tf * df) }));
     const total = sumMoney(claims.map((c) => c.adjustedIncurred));
     lines.push(
-      `${y.label}${y.current ? " (running year, incomplete)" : ""}: ${claims.length} claims` +
+      `${y.label}${y.current ? " (current year, incomplete)" : ""}: ${claims.length} claims` +
         (tf !== 1 || df !== 1 ? `, each × trend ${r4(tf)} × development ${r4(df)} (age ${y.ageBucket})` : "") +
         ` → ${claims.map((c) => usd(c.adjustedIncurred)).join(" + ") || "$0"} = ${usd(total)}`,
     );
@@ -288,7 +294,7 @@ export function selectReplayYears(grouped: ClaimsByPolicyYear, settings: ReplayS
     value: { years, omitted },
     math: {
       inputs: { yearsToUse: settings.yearsToUse, includeCurrentYear: settings.includeCurrentYear, adjustments, available: grouped.years.map((y) => y.label) },
-      formula: "the most recent N policy years (running year optional); adjusted incurred = incurred × trend factor × development factor",
+      formula: "the most recent N policy years (current year optional); adjusted incurred = incurred × trend factor × development factor",
       steps: { lines },
     },
   };
@@ -530,8 +536,8 @@ export function totalCostOfRisk(i: TcorInputs): Calc<Tcor> {
 
 /**
  * Another line's expected retained losses: its five most recent policy years
- * (running year included) replayed below the line's current deductible, raw.
- * Null when the line has no claims and no policy periods to replay.
+ * (current year included) limited to the line's current deductible, raw.
+ * Null when the line has no claims and no policy periods to use.
  */
 export function otherLineRetained(claims: LRClaim[], policies: LRPolicy[], line: LineOfBusiness, deductible: number | null, asOf: ISODate): Calc<{ averageRetained: number | null; years: number; reason: string | null }> {
   const grouped = groupClaimsByPolicyYear(claims, policies, line, asOf).value;
@@ -539,7 +545,7 @@ export function otherLineRetained(claims: LRClaim[], policies: LRPolicy[], line:
     return { value: { averageRetained: null, years: 0, reason: "no deductible on the policy" }, math: { inputs: { line, deductible }, formula: "no deductible: nothing is retained below it", steps: { lines: [`${line}: no deductible entered, so expected retained is not estimated`] } } };
   }
   if (grouped.years.length === 0) {
-    return { value: { averageRetained: null, years: 0, reason: "no policy periods" }, math: { inputs: { line, deductible }, formula: "no periods to replay", steps: { lines: [`${line}: no policy periods start before the as-of date`] } } };
+    return { value: { averageRetained: null, years: 0, reason: "no policy periods" }, math: { inputs: { line, deductible }, formula: "no periods to use", steps: { lines: [`${line}: no policy periods start on or before ${longDate(asOf)}`] } } };
   }
   const hasClaims = grouped.years.some((y) => y.claims.length > 0);
   if (!hasClaims) {
@@ -592,26 +598,26 @@ export function considerations(i: ConsiderationInputs): Calc<Consideration[]> {
   const items: Consideration[] = [
     {
       topic: "Cash flow",
-      observation: i.revenue !== null ? `Annual revenue is ${usd(i.revenue)}; the worst replayed year's incurred was ${usd(maxIncurred)}.` : "Annual revenue is not entered, so retained losses cannot be set against it.",
+      observation: i.revenue !== null ? `Annual revenue is ${usd(i.revenue)}; the worst year's incurred was ${usd(maxIncurred)}.` : "Annual revenue is not entered, so retained losses cannot be set against it.",
       favoursLower: "Retained losses are paid as claims settle, so a business with tight cash or seasonal income has less room to absorb a bad year.",
       favoursHigher: "A business that can fund the maximum annual exposure from cash keeps the premium saving in every year that stays below break-even.",
     },
     {
       topic: "Claim volatility",
       observation: n ? `Incurred ranged from ${usd(minIncurred)} to ${usd(maxIncurred)} across the ${n} years used (average ${usd2(avgIncurred)}).` : "No years are in use.",
-      favoursLower: "Wide swings between years mean the replay average understates how bad a single year can be.",
+      favoursLower: "Wide swings between years mean the average understates how bad a single year can be.",
       favoursHigher: "Years that cluster near the average make the expected retained figure more dependable.",
     },
     {
       topic: "Frequency trend",
-      observation: n ? `Claim counts by year: ${i.years.map((y) => `${y.label} ${y.claims.length}${y.current ? " (running)" : ""}`).join(", ")}; frequency ${trendWord}.` : "No years are in use.",
-      favoursLower: "Rising frequency means more claims fall inside the deductible each year than the replay shows.",
-      favoursHigher: "Falling frequency means the replay overstates future retained losses.",
+      observation: n ? `Claim counts by year: ${i.years.map((y) => `${y.label} ${y.claims.length}${y.current ? " (current year)" : ""}`).join(", ")}; frequency ${trendWord}.` : "No years are in use.",
+      favoursLower: "Rising frequency means more claims fall inside the deductible each year than the history shows.",
+      favoursHigher: "Falling frequency means the history overstates future retained losses.",
     },
     {
       topic: "Open reserves",
       observation: openCount ? `${openCount} open claim${openCount === 1 ? " carries" : "s carry"} ${usd(openReserved)} of reserves that can still move.` : "No open claims in the years used.",
-      favoursLower: "Open reserves can develop upward, pushing more of each claim across the deductible than the replay counts.",
+      favoursLower: "Open reserves can develop upward, pushing more of each claim across the deductible than the history counts.",
       favoursHigher: "Reserves that close below their estimate reduce what was retained.",
     },
   ];
@@ -653,10 +659,10 @@ export interface AssumptionInputs {
 export function assumptionsAndLimitations(i: AssumptionInputs): Calc<string[]> {
   const a = i.settings.adjustments;
   const lines: string[] = [];
-  const used = i.yearsUsed.map((y) => `${y.label}${y.current ? " (running year, incomplete)" : ""}`);
-  lines.push(`Loss history: ${i.line} claims replayed over ${i.yearsUsed.length} policy year${i.yearsUsed.length === 1 ? "" : "s"} (${used.join(", ") || "none"}), as of ${i.asOf}.`);
+  const used = i.yearsUsed.map((y) => `${y.label}${y.current ? " (current year, incomplete)" : ""}`);
+  lines.push(`Loss history: ${i.line} claims over ${i.yearsUsed.length} policy year${i.yearsUsed.length === 1 ? "" : "s"} (${used.join(", ") || "none"}), as of ${longDate(i.asOf)}.`);
   const running = i.yearsUsed.find((y) => y.current);
-  if (running) lines.push(`${running.label} is the running year: its claims are incomplete and its figures are counted as a full year.`);
+  if (running) lines.push(`${running.label} is the current year: its claims are incomplete and it is counted as a full year.`);
   for (const o of i.omittedYears) lines.push(`${o.label} is not used: ${o.reason}.`);
   lines.push(
     a.trendRate === null
@@ -685,11 +691,11 @@ export function assumptionsAndLimitations(i: AssumptionInputs): Calc<string[]> {
     lines.push(`Risk tolerance used for the findings: ${usd(i.tolerances.perOccurrence)} per occurrence and ${usd(i.tolerances.perYear)} per policy year; permissible loss ratio ${r4(i.tolerances.permissibleLossRatio)}.`);
     lines.push("Estimated premiums are derived from the loss history and this ratio; they are not quotes. Findings are heuristics on historical losses and the tolerances above, for discussion, not decisions.");
   }
-  if (i.premiumSource) lines.push(i.premiumSource === "estimated" ? "The replay used estimated premiums for every option." : "The replay used premiums entered by hand where one exists and estimated premiums elsewhere.");
+  if (i.premiumSource) lines.push(i.premiumSource === "estimated" ? "Estimated premiums were used for every option." : "Premiums entered by hand were used where one exists and estimated premiums elsewhere.");
   if (i.linesWithoutLossRuns.length) lines.push(`Total cost of risk counts expected retained losses as zero for ${i.linesWithoutLossRuns.join(", ")} because no claims are recorded for ${i.linesWithoutLossRuns.length === 1 ? "that line" : "those lines"}.`);
   for (const m of i.missing) lines.push(`${m}.`);
   lines.push(
-    "Method: a historical replay of the account's own claims, each limited to the deductible. It does not fit a loss distribution, weight the account's experience against industry data, or model claims larger than any seen; a year unlike the past will not be predicted by it.",
+    "Method: each option applies its deductible to the account's actual claims, year by year. It does not fit a loss distribution, weight the account's experience against industry data, or model claims larger than any seen; a year unlike the past will not be predicted by it.",
   );
   lines.push("This report compares options; it does not state which the client should buy.");
   return {
@@ -743,7 +749,7 @@ export function defaultTolerances(revenue: number | null): Calc<{ perOccurrence:
   };
 }
 
-export type FindingKind = "self_insure" | "raise_deductible" | "catastrophe_price" | "inverted_pricing" | "line_above_layer" | "rate_above_exposure" | "underinsured" | "excess_limit";
+export type FindingKind = "self_insure" | "raise_deductible" | "partial_line" | "catastrophe_price" | "inverted_pricing" | "line_above_layer" | "rate_above_exposure" | "underinsured" | "excess_limit";
 
 export interface Finding {
   /** Stable key so an acceptance can be stored, e.g. "self_insure:<layerId>". */
@@ -767,8 +773,10 @@ export interface BandResult {
   /** Dollars from which the band responds and how much it can pay per occurrence. */
   attachment: number;
   limit: number;
-  /** Premium paid for the band (null for the deductible band, which the client already retains). */
+  /** Actual premium paid for the band, Σ over its insurers (null for the deductible band, which the client already retains). */
   premium: number | null;
+  /** v1.5: the layer's 100% equivalent premium (layer premium ÷ placed share); what a 1% line is worth per point. */
+  premium100Equivalent: number | null;
   perYear: { label: string; inBand: number; count: number }[];
   averageInBand: number;
   worstYear: { label: string; inBand: number } | null;
@@ -784,6 +792,8 @@ export interface BandAnalysisInput {
   layers: ProgramLayerInput[];
   defaultDeductible: number | null;
   tolerances: ToleranceSettings;
+  /** Total insured value, when known; sets the program top for the under-placed sentence on partial-line candidates. */
+  tiv?: number | null;
 }
 
 /**
@@ -810,21 +820,23 @@ export function bandAnalysis(i: BandAnalysisInput): Calc<{ bands: BandResult[]; 
     );
     return { ...b, classification };
   };
-  const summarize = (id: string, towerLabel: string, label: string, attachment: number, limit: number, premium: number | null, isDeductibleBand: boolean): BandResult => {
+  const summarize = (id: string, towerLabel: string, label: string, attachment: number, limit: number, premium: number | null, premium100Equivalent: number | null, isDeductibleBand: boolean): BandResult => {
     const perYear = inBandOf(attachment, limit);
     const averageInBand = n ? round2(sumMoney(perYear.map((y) => y.inBand)) / n) : 0;
     const worst = perYear.reduce<{ label: string; inBand: number } | null>((w, y) => (y.inBand > 0 && (w === null || y.inBand > w.inBand) ? { label: y.label, inBand: y.inBand } : w), null);
     const inBandClaims = perYear.reduce((s, y) => s + y.count, 0);
-    return describe({ id, towerLabel, label, attachment, limit, premium, perYear, averageInBand, worstYear: worst, inBandClaims, frequency: n ? inBandClaims / n : 0, isDeductibleBand });
+    return describe({ id, towerLabel, label, attachment, limit, premium, premium100Equivalent, perYear, averageInBand, worstYear: worst, inBandClaims, frequency: n ? inBandClaims / n : 0, isDeductibleBand });
   };
 
-  if (i.defaultDeductible !== null && i.defaultDeductible > 0) bands.push(summarize("deductible", "Retained", `${compact(i.defaultDeductible)} deductible`, 0, i.defaultDeductible, null, true));
+  if (i.defaultDeductible !== null && i.defaultDeductible > 0) bands.push(summarize("deductible", "Retained", `${compact(i.defaultDeductible)} deductible`, 0, i.defaultDeductible, null, null, true));
   for (const l of i.layers) {
     const s = layerSummary(l).value;
     const attachment = l.attachment === 0 ? ded : l.attachment;
     const limit = l.attachment === 0 ? Math.max(0, l.limit - ded) : l.limit;
-    bands.push(summarize(l.id, l.towerLabel, s.label, attachment, limit, s.layerPremium, false));
+    bands.push(summarize(l.id, l.towerLabel, s.label, attachment, limit, s.layerPremium, s.premium100Equivalent, false));
   }
+  // Segment shortfalls, for the sentence a partial-line candidate adds when its layer is short of 100%.
+  const profile = i.layers.length ? coverageProfile(i.layers, i.tiv ?? null).value : null;
 
   const t = i.tolerances;
   const deductibleBand = bands.find((b) => b.isDeductibleBand) ?? null;
@@ -844,7 +856,7 @@ export function bandAnalysis(i: BandAnalysisInput): Calc<{ bands: BandResult[]; 
         title: `${b.towerLabel} ${b.label}: catastrophe band, price only`,
         evidence: [`No in-band losses in ${n} year${n === 1 ? "" : "s"}`, `Premium ${usd(b.premium)} for ${usd(b.limit)} of limit (rate on line ${b.limit > 0 ? pctShare(b.premium / b.limit) : "—"})`],
         estimatedImpact: null,
-        caveats: ["A band with no history is not a band without risk; the replay cannot see a loss larger than any that has happened.", ...(multi > 1 ? ["Several insurers share this layer: a smaller signed share is an alternative to dropping it."] : [])],
+        caveats: ["A band with no history is not a band without risk; the loss history cannot show a loss larger than any that has happened.", ...(multi > 1 ? ["Several insurers share this layer: a smaller signed share is an alternative to dropping it."] : [])],
         suggestedAction: multi > 1 ? "Candidate for a price discussion only; if cost must fall, reduce the signed share rather than drop the layer." : "Candidate for a price discussion only; retention is not proposed for a band with no loss history.",
         math: findingMath,
       });
@@ -865,7 +877,7 @@ export function bandAnalysis(i: BandAnalysisInput): Calc<{ bands: BandResult[]; 
           `Break-even: in-band losses of ${usd(b.premium)} in a year cost the same as the premium`,
         ],
         estimatedImpact: saving,
-        caveats: ["Average saving from a historical replay; a year worse than the history would cost more.", worstCost > 0 ? `In ${b.worstYear!.label} self-insuring would have cost ${usd(worstCost)} more than the premium.` : "Even the worst year in the history stayed below the premium."],
+        caveats: ["Average saving from the loss history; a year worse than the history would cost more.", worstCost > 0 ? `In ${b.worstYear!.label} self-insuring would have cost ${usd(worstCost)} more than the premium.` : "Even the worst year in the history stayed below the premium."],
         suggestedAction: `Candidate to self-insure the ${b.label} band: expected saving ${usd(saving)} a year, break-even at ${usd(b.premium)} of in-band losses.`,
         math: [...findingMath, `Saving = ${usd(b.premium)} − ${usd2(b.averageInBand)} = ${usd2(saving)}; worst-year cost = ${usd(b.worstYear?.inBand ?? 0)} − ${usd(b.premium)} = ${usd2(worstCost)}`],
       });
@@ -890,13 +902,66 @@ export function bandAnalysis(i: BandAnalysisInput): Calc<{ bands: BandResult[]; 
         math: [...findingMath, `Average losses ${usd(ded)} to ${usd(t.perOccurrence)} = (${belowTolerance.map((y) => usd(y.inBand)).join(" + ") || "$0"}) ÷ ${n} = ${usd2(avgBelow)}; ÷ ${r4(t.permissibleLossRatio)} = ${usd2(credit)}`],
       });
     }
+    // v1.5: a partial line on a band too large to retain whole. The client takes the largest whole-percent
+    // line that keeps line × band limit within the per-occurrence tolerance and line × worst-year in-band
+    // losses within the annual tolerance; the saving is that share of the layer's 100% equivalent premium.
+    if (!withinOccurrence && b.premium100Equivalent !== null && b.premium100Equivalent > 0 && b.limit > 0) {
+      const worstInBand = b.worstYear?.inBand ?? 0;
+      const byOccurrence = Math.floor((t.perOccurrence / b.limit) * 100 + 1e-9);
+      const byYear = worstInBand > 0 ? Math.floor((t.perYear / worstInBand) * 100 + 1e-9) : 100;
+      const line = Math.max(0, Math.min(100, byOccurrence, byYear));
+      const lineMath = `Client line = largest whole % with line × ${usd(b.limit)} ≤ ${usd(t.perOccurrence)} (→ ${byOccurrence}%) and line × ${usd(worstInBand)} ≤ ${usd(t.perYear)} (→ ${worstInBand > 0 ? `${byYear}%` : "no limit"}) = ${line}%`;
+      if (line < 1) {
+        lines.push(`${b.towerLabel} ${b.label}: ${lineMath}; below 1%, so no partial-line candidate`);
+      } else {
+        const share = line / 100;
+        const saving = round2(b.premium100Equivalent * share);
+        const expectedRetained = round2(b.averageInBand * share);
+        const worstRetained = round2(worstInBand * share);
+        const net = round2(saving - expectedRetained);
+        const exposure = round2(b.limit * share);
+        lines.push(
+          `${b.towerLabel} ${b.label}: ${lineMath}; saving = ${line}% × ${usd(b.premium100Equivalent)} = ${usd2(saving)}; expected retained = ${line}% × ${usd2(b.averageInBand)} = ${usd2(expectedRetained)}; worst-year retained = ${line}% × ${usd(worstInBand)} = ${usd2(worstRetained)}; net = ${usd2(saving)} − ${usd2(expectedRetained)} = ${usd2(net)} → ${net > 0 ? "candidate" : "no candidate"}`,
+        );
+        if (net > 0) {
+          const layer = i.layers.find((l) => l.id === b.id) ?? null;
+          const shortSegments = profile && layer ? profile.segments.filter((seg) => seg.status === "under_placed" && layer.attachment <= seg.from && layer.attachment + layer.limit >= seg.to) : [];
+          const shortSentences = shortSegments.map((seg) => {
+            const from = round2(seg.shortfallShare * 100);
+            const to = Math.max(0, round2(from - line));
+            return `This line would also reduce the unplaced share of the segment from ${group(from, 2).replace(/\.?0+$/, "")}% to ${group(to, 2).replace(/\.?0+$/, "")}%.`;
+          });
+          findings.push({
+            id: `partial_line:${b.id}`,
+            kind: "partial_line",
+            title: `${b.towerLabel} ${b.label}: candidate for the client to retain a ${line}% line`,
+            evidence: [
+              `Band limit ${usd(b.limit)} exceeds the ${usd(t.perOccurrence)} per-occurrence tolerance; a ${line}% line exposes ${usd(exposure)} per occurrence and ${usd(worstRetained)} in the worst year${b.worstYear ? ` (${b.worstYear.label})` : ""}, within both tolerances`,
+              `Premium saving ${usd(saving)} a year, ${line}% of the layer's ${usd(b.premium100Equivalent)} 100% equivalent premium, against expected retained ${usd2(expectedRetained)} (${line}% of average in-band losses ${usd2(b.averageInBand)})`,
+              `Net expected saving ${usd2(net)} a year`,
+              ...shortSentences,
+            ],
+            estimatedImpact: net,
+            caveats: ["The client would sit alongside the insurers on this band and share every loss in it pro rata; the saving assumes the insurers' 100% premium holds at the smaller share.", "Average saving from the loss history; a year worse than the history would cost more."],
+            suggestedAction: `Candidate: client retains a ${line}% line of ${b.towerLabel} ${b.label} alongside the insurers; recommended for discussion.${shortSentences.length ? ` ${shortSentences.join(" ")}` : ""}`,
+            math: [
+              ...findingMath,
+              `In-band losses above the deductible: average ${usd2(b.averageInBand)}, worst year ${usd(worstInBand)}`,
+              lineMath,
+              `Saving = ${line}% × ${usd(b.premium100Equivalent)} = ${usd2(saving)}; expected retained = ${line}% × ${usd2(b.averageInBand)} = ${usd2(expectedRetained)}; worst-year retained = ${line}% × ${usd(worstInBand)} = ${usd2(worstRetained)}; net expected saving = ${usd2(saving)} − ${usd2(expectedRetained)} = ${usd2(net)}`,
+            ],
+          });
+        }
+      }
+    }
   }
   if (deductibleBand) lines.push(`The ${deductibleBand.label} band is what the client retains today: average ${usd2(deductibleBand.averageInBand)} a year.`);
   return {
     value: { bands, findings },
     math: {
       inputs: { years: i.years.map((y) => y.label), layers: i.layers.length, defaultDeductible: i.defaultDeductible, tolerances: i.tolerances },
-      formula: "in-band losses = Σ min(max(incurred − attachment, 0), limit); working = any in-band loss or frequency > 0.2 a year; self-insure when limit ≤ per-occurrence tolerance, worst year ≤ annual tolerance and premium > average in-band ÷ permissible loss ratio",
+      formula:
+        "in-band losses = Σ min(max(incurred − attachment, 0), limit); working = any in-band loss or frequency > 0.2 a year; self-insure when limit ≤ per-occurrence tolerance, worst year ≤ annual tolerance and premium > average in-band ÷ permissible loss ratio; partial line = largest whole % with line × band limit ≤ per-occurrence tolerance and line × worst-year in-band ≤ annual tolerance, candidate when line × 100% equivalent premium − line × average in-band > 0",
       steps: { lines },
     },
   };
@@ -952,7 +1017,7 @@ export function priceFindings(i: PriceFindingsInput): Calc<Finding[]> {
     for (const p of s.participations) {
       if (p.rateOnLine === null) continue;
       const others = s.participations.filter((o) => o.id !== p.id);
-      const otherPremium = sumMoney(others.map((o) => o.premium));
+      const otherPremium = sumMoney(others.map((o) => o.actualPremium));
       const otherExposed = sumMoney(others.map((o) => o.exposedLimit));
       if (otherExposed <= 0) continue;
       const average = otherPremium / otherExposed;
@@ -960,16 +1025,16 @@ export function priceFindings(i: PriceFindingsInput): Calc<Finding[]> {
       lines.push(`${l.towerLabel} ${s.label}, ${p.insurer}: ${pctShare(p.rateOnLine, 4)} vs other lines ${usd(otherPremium)} ÷ ${usd(otherExposed)} = ${pctShare(average, 4)}${above !== null ? ` (${group(above * 100, 0)}% ${above >= 0 ? "above" : "below"})` : ""}`);
       if (above !== null && above >= LINE_PRICE_THRESHOLD) {
         const atAverage = Math.round(average * p.exposedLimit);
-        const difference = Math.round(p.premium - atAverage);
+        const difference = Math.round(p.actualPremium - atAverage);
         findings.push({
           id: `line_above_layer:${p.id}`,
           kind: "line_above_layer",
           title: `${l.towerLabel} ${s.label}: ${p.insurer}'s line priced above the layer`,
-          evidence: [`${p.insurer} ${pctShare(p.rateOnLine, 4)} on line vs ${pctShare(average, 4)} for the other ${others.length} line${others.length === 1 ? "" : "s"} (${group(above * 100, 0)}% above)`, `Premium ${usd(p.premium)} for ${usd(p.exposedLimit)} exposed; at the layer average it would be ${usd(atAverage)}, a difference of ${usd(difference)}`],
+          evidence: [`${p.insurer} ${pctShare(p.rateOnLine, 4)} on line vs ${pctShare(average, 4)} for the other ${others.length} line${others.length === 1 ? "" : "s"} (${group(above * 100, 0)}% above)`, `Actual premium ${usd(p.actualPremium)} (${usd(p.premium100)} at 100% × ${p.signedLinePct}%) for ${usd(p.exposedLimit)} exposed; at the layer average it would be ${usd(atAverage)}, a difference of ${usd(difference)}`],
           estimatedImpact: difference,
           caveats: ["A lead's line often carries the engineering and claims handling; compare terms as well as rate."],
           suggestedAction: `Candidate for a line-price discussion with ${p.insurer}: ${usd(difference)} above the layer's other lines, recommended for discussion.`,
-          math: [`Other lines: ${usd(otherPremium)} ÷ ${usd(otherExposed)} = ${r4(average)}; ${p.insurer}: ${usd(p.premium)} ÷ ${usd(p.exposedLimit)} = ${r4(p.rateOnLine)}; ${r4(p.rateOnLine)} ÷ ${r4(average)} − 1 = ${r4(above)}`, `At the average: ${r4(average)} × ${usd(p.exposedLimit)} = ${usd(atAverage)}; difference ${usd(difference)}`],
+          math: [`Other lines: ${usd(otherPremium)} ÷ ${usd(otherExposed)} = ${r4(average)}; ${p.insurer}: ${usd(p.premium100)} ÷ ${usd(l.limit)} = ${usd(p.actualPremium)} ÷ ${usd(p.exposedLimit)} = ${r4(p.rateOnLine)}; ${r4(p.rateOnLine)} ÷ ${r4(average)} − 1 = ${r4(above)}`, `At the average: ${r4(average)} × ${usd(p.exposedLimit)} = ${usd(atAverage)}; difference ${usd(difference)}`],
         });
       }
     }
@@ -1162,7 +1227,7 @@ export function modifiers(years: ReplayYear[]): Calc<Modifier[]> {
   const openReserved = sumMoney(years.map((y) => y.openReserved));
   const share = incurred > 0 ? openReserved / incurred : 0;
   const out: Modifier[] = [
-    { key: "frequency_trend", text: complete.length < 2 ? "Frequency trend cannot be read from fewer than two complete years." : `Claim frequency is ${trend} over the history (${first.toFixed(1)} a year in the earlier half, ${second.toFixed(1)} in the later half); ${trend === "rising" ? "the replay understates what is coming" : trend === "falling" ? "the replay overstates it" : "the replay is a fair guide"}.` },
+    { key: "frequency_trend", text: complete.length < 2 ? "Frequency trend cannot be read from fewer than two complete years." : `Claim frequency is ${trend} over the history (${first.toFixed(1)} a year in the earlier half, ${second.toFixed(1)} in the later half); ${trend === "rising" ? "the history understates what is coming" : trend === "falling" ? "the history overstates it" : "the history is a fair guide"}.` },
     { key: "open_reserves", text: incurred > 0 ? `${pctShare(share, 1)} of incurred (${usd(openReserved)} of ${usd(incurred)}) is still in open reserves and can move either way.` : "No incurred losses in the years used." },
   ];
   if (years.length < 3) out.push({ key: "few_years", text: `Only ${years.length} year${years.length === 1 ? "" : "s"} of history: the findings are weak and should carry little weight.` });

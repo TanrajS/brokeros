@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AlertTriangle, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/InfoTip";
 import { cn } from "cn";
 import { DocumentsFolder, type DocumentRowView } from "@/components/documents/DocumentsFolder";
 import { UploadDocumentDialog } from "@/components/documents/UploadDocumentDialog";
@@ -73,9 +74,19 @@ export default async function DocumentsPage({ params, searchParams }: { params: 
 
       <section aria-labelledby="folder-heading" className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 id="folder-heading" className="text-lg font-semibold">
+          <h2 id="folder-heading" className="flex items-center gap-1.5 text-lg font-semibold">
             {DOCUMENT_TYPE_LABELS[folder]}
-            <span className="ml-2 text-sm font-normal text-muted-foreground">{rows.length === inFolder.length ? `${inFolder.length} on file` : `${rows.length} of ${inFolder.length} shown`}</span>
+            <span className="ml-1 text-sm font-normal text-muted-foreground">{rows.length === inFolder.length ? `${inFolder.length} on file` : `${rows.length} of ${inFolder.length} shown`}</span>
+            <InfoTip label={`About ${DOCUMENT_TYPE_LABELS[folder].toLowerCase()}`}>
+              {folder === "proposal"
+                ? "Proposals carry a status (Draft or Final) and a policy year."
+                : folder === "submission"
+                  ? "Submissions record the markets they went to; the list is seeded from insurers already in the workspace."
+                  : folder === "certificate"
+                    ? "Certificates generated on a policy page are filed here automatically; manual uploads are allowed too. A certificate is flagged Reissue needed once its policy renews or expires."
+                    : "Wordings, binders, endorsements, statements of values, applications and program summaries exported from the Program tab, optionally linked to a policy."}{" "}
+              Sorted by upload date, newest first.
+            </InfoTip>
           </h2>
           {ready ? <UploadDocumentDialog slug={slug} accountId={accountId} folder={folder} policyYears={years} insurers={insurers} policies={policies} /> : null}
         </div>
@@ -112,10 +123,6 @@ export default async function DocumentsPage({ params, searchParams }: { params: 
             </Link>
           ) : null}
         </form>
-        <p className="text-xs text-muted-foreground">
-          {folder === "proposal" ? "Proposals carry a status (Draft or Final) and a policy year." : folder === "submission" ? "Submissions record the markets they went to; the list is seeded from insurers already in the workspace." : folder === "certificate" ? "Certificates generated on a policy page are filed here automatically; manual uploads are allowed too. A certificate is flagged Reissue needed once its policy renews or expires." : "Wordings, binders, endorsements, statements of values and applications, optionally linked to a policy."}{" "}
-          Sorted by upload date, newest first.
-        </p>
         <DocumentsFolder slug={slug} accountId={accountId} folder={folder} rows={rows} policyYears={years} insurers={insurers} policies={policies} canUpload={ready} emptyText={inFolder.length === 0 ? `Nothing filed under ${DOCUMENT_TYPE_LABELS[folder].toLowerCase()} yet. Upload the first one.` : "No documents match the filters."} />
       </section>
     </div>

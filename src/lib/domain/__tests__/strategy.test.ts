@@ -210,10 +210,10 @@ describe("analyzeRetentionOptions (Harbourline, three Pacific Crest options)", (
 });
 
 describe("analyzeRetentionOptions settings", () => {
-  it("excluding the running year leaves four years: $10,000 average = 71,000 ÷ 4 = 17,750", () => {
+  it("excluding the current year leaves four years: $10,000 average = 71,000 ÷ 4 = 17,750", () => {
     const a = analyzeRetentionOptions(grouped, options, { ...DEFAULT_REPLAY_SETTINGS, includeCurrentYear: false }).value;
     expect(a.years.map((y) => y.label)).toEqual(["PY2022", "PY2023", "PY2024", "PY2025"]);
-    expect(a.omittedYears).toEqual([{ label: "PY2026", reason: "running year excluded by the settings" }]);
+    expect(a.omittedYears).toEqual([{ label: "PY2026", reason: "current year excluded by the settings" }]);
     // 22,500 + 20,000 + 18,500 + 10,000 = 71,000
     expect(a.options[0].averageRetained).toBe(17_750);
   });
@@ -340,13 +340,13 @@ describe("considerations", () => {
 });
 
 describe("assumptionsAndLimitations", () => {
-  it("states the years, the running year, the adjustments actually used, caps, unlinked premiums and missing items", () => {
+  it("states the years, the current year, the adjustments actually used, caps, unlinked premiums and missing items", () => {
     const lines = assumptionsAndLimitations({
       line: "General Liability",
       asOf,
       settings: { yearsToUse: 5, includeCurrentYear: false, adjustments: { trendRate: 0.05, factors: null } },
       yearsUsed: [{ label: "PY2022", current: false }, { label: "PY2025", current: false }],
-      omittedYears: [{ label: "PY2026", reason: "running year excluded by the settings" }],
+      omittedYears: [{ label: "PY2026", reason: "current year excluded by the settings" }],
       prospectiveYear: 2027,
       options: [
         { label: "$10,000 deductible", aggregateCap: null, source: "manual" },
@@ -355,8 +355,9 @@ describe("assumptionsAndLimitations", () => {
       missing: ["Annual revenue not entered"],
       linesWithoutLossRuns: ["Property"],
     }).value;
-    expect(lines[0]).toBe("Loss history: General Liability claims replayed over 2 policy years (PY2022, PY2025), as of 2026-11-12.");
-    expect(lines).toContain("PY2026 is not used: running year excluded by the settings.");
+    // v1.5 wording: no "replay", dates as 12 Nov 2026
+    expect(lines[0]).toBe("Loss history: General Liability claims over 2 policy years (PY2022, PY2025), as of 12 Nov 2026.");
+    expect(lines).toContain("PY2026 is not used: current year excluded by the settings.");
     expect(lines).toContain("Loss trend of 5.0% a year restates each year to 2027: factor = (1 + trend) ^ (2027 − policy year).");
     expect(lines).toContain("No loss development is applied: open claims are at their current paid plus reserved.");
     expect(lines).toContain("Aggregate caps: $50,000 deductible capped at $40,000 a year; other options have no cap.");

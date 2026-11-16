@@ -79,8 +79,7 @@ export function SublimitsSection({ slug, policyId, policyLimit, policyDeductible
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        Policy default: limit {policyLimit === null ? "not entered" : formatCurrency(policyLimit)}, deductible {policyDeductible === null ? "not entered" : formatCurrency(policyDeductible)}. Rows here override
-        it for one coverage (earthquake, flood, stock…).
+        Policy default: limit {policyLimit === null ? "not entered" : formatCurrency(policyLimit)}, deductible {policyDeductible === null ? "not entered" : formatCurrency(policyDeductible)}.
       </p>
       {rows.length === 0 ? (
         <p className="rounded-lg border p-4 text-sm text-muted-foreground">No sub-limits recorded; the policy limit and deductible apply throughout.</p>

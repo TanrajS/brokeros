@@ -31,10 +31,7 @@ export default async function BookPage({ params, searchParams }: { params: Promi
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Book</h1>
-        <p className="text-sm text-muted-foreground">Every account in this workspace, with days to expiry counted from the as-of date.</p>
-      </div>
+      <h1 className="text-2xl font-semibold tracking-tight">Book</h1>
 
       {isEmptyWorkspace ? (
         <WelcomeCard slug={slug} />

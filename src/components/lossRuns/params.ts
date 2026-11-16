@@ -1,7 +1,7 @@
 import { DEFAULT_LOSS_RUN_SETTINGS, lossRunSettingsSchema, type LossRunSettingsInput, type LossRunSettingsValues } from "@/lib/schemas/claim";
 import type { Adjustments } from "@/lib/domain/lossRuns";
 
-/** Raw URL parameters for the Loss Runs tab. Empty string = default / off. */
+/** Raw URL parameters for the Loss runs tab. Empty string = default / off. */
 export interface LossRunQuery {
   line: string;
   /** Trend percent; present means trend is on. */
@@ -10,12 +10,18 @@ export interface LossRunQuery {
   ldf: string;
   threshold: string;
   cap: string;
+  /** v1.5: "all" shows every row of the Active and in progress group; "" shows the first three. */
+  active: string;
+  /** v1.5: "all" shows every row of the Expired group; "" shows the first three. */
+  expired: string;
 }
+
+export const LOSS_RUN_QUERY_KEYS = ["line", "trend", "ldf", "threshold", "cap", "active", "expired"] as const;
 
 export function lossRunsHref(slug: string, accountId: string, q: LossRunQuery, patch: Partial<LossRunQuery> = {}): string {
   const next = { ...q, ...patch };
   const params = new URLSearchParams();
-  for (const key of ["line", "trend", "ldf", "threshold", "cap"] as const) if (next[key]) params.set(key, next[key]);
+  for (const key of LOSS_RUN_QUERY_KEYS) if (next[key]) params.set(key, next[key]);
   const qs = params.toString();
   return `/w/${slug}/accounts/${accountId}/loss-runs${qs ? `?${qs}` : ""}`;
 }
@@ -41,10 +47,12 @@ export function settingsFromQuery(q: LossRunQuery): { input: LossRunSettingsInpu
   return { input: DEFAULT_LOSS_RUN_SETTINGS, values: fallback, invalid: true };
 }
 
-/** Validated settings → URL parameters (only non-default values). */
-export function queryFromSettings(v: LossRunSettingsValues, line: string): LossRunQuery {
+/** Validated settings → URL parameters (only non-default values); the group expansions are carried over from `keep`. */
+export function queryFromSettings(v: LossRunSettingsValues, line: string, keep: Pick<LossRunQuery, "active" | "expired"> = { active: "", expired: "" }): LossRunQuery {
   return {
     line,
+    active: keep.active === "all" ? "all" : "",
+    expired: keep.expired === "all" ? "all" : "",
     trend: v.trendOn ? String(v.trend) : "",
     ldf: v.developmentOn ? [v.ldf12, v.ldf24, v.ldf36, v.ldf48, v.ldf60].join(",") : "",
     threshold: v.threshold === 25000 ? "" : String(v.threshold),

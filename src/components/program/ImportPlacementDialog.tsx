@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Label } from "@/components/ui/label";
 import { PLACEMENT_COLUMNS, checkPlacementColumns, validatePlacementRows, type LineGroup, type PlacementRowResult } from "@/lib/domain/program";
+import { formatCurrency } from "@/lib/format";
 import { importPlacementSchedule, type PlacementImportResult } from "@/server/program/actions";
 
 interface Props {
@@ -40,6 +41,8 @@ export function ImportPlacementDialog({ slug, accountId, lineGroup }: Props) {
     Papa.parse<Record<string, string>>(file, {
       header: true,
       skipEmptyLines: "greedy",
+      // The export starts with a "# premium_100: …" note line; it is not data.
+      comments: "#",
       transformHeader: (h) => h.trim().toLowerCase(),
       complete: (out) => {
         const cols = checkPlacementColumns(out.meta.fields ?? []).value;
@@ -91,8 +94,9 @@ export function ImportPlacementDialog({ slug, accountId, lineGroup }: Props) {
           <DialogHeader>
             <DialogTitle>Import a placement schedule</DialogTitle>
             <DialogDescription>
-              One row per insurer line. Columns, in any order: {PLACEMENT_COLUMNS.join(", ")}. Rows with the same tower, layer type, attachment and limit share one layer. Percentages 0–100; signed not
-              above written; the same insurer twice in a layer is rejected.
+              One row per insurer line. Columns, in any order: {PLACEMENT_COLUMNS.join(", ")}. premium_100 is the premium quoted at 100% of the layer; the actual premium (premium_100 × signed line) is
+              computed, never imported. Rows with the same tower, layer type, attachment and limit share one layer. Percentages 0–100; signed not above written; the same insurer twice in a layer is
+              rejected.
             </DialogDescription>
           </DialogHeader>
           {stage.kind === "pick" ? (
@@ -125,12 +129,13 @@ export function ImportPlacementDialog({ slug, accountId, lineGroup }: Props) {
                       <TableHead>Row</TableHead>
                       <TableHead>Tower</TableHead>
                       <TableHead>Type</TableHead>
-                      <TableHead className="text-right">Attachment</TableHead>
-                      <TableHead className="text-right">Limit</TableHead>
+                      <TableHead className="text-right">Attachment ($)</TableHead>
+                      <TableHead className="text-right">Limit ($)</TableHead>
                       <TableHead>Insurer</TableHead>
-                      <TableHead className="text-right">Written</TableHead>
-                      <TableHead className="text-right">Signed</TableHead>
-                      <TableHead className="text-right">Premium</TableHead>
+                      <TableHead className="text-right">Written line (%)</TableHead>
+                      <TableHead className="text-right">Signed line (%)</TableHead>
+                      <TableHead className="text-right">100% premium ($)</TableHead>
+                      <TableHead className="text-right">Actual premium ($)</TableHead>
                       <TableHead>Result</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -145,7 +150,8 @@ export function ImportPlacementDialog({ slug, accountId, lineGroup }: Props) {
                         <TableCell>{r.raw.insurer || "—"}</TableCell>
                         <TableCell className="text-right">{r.raw.written_line_pct || "—"}</TableCell>
                         <TableCell className="text-right">{r.raw.signed_line_pct || "—"}</TableCell>
-                        <TableCell className="text-right">{r.raw.premium || "—"}</TableCell>
+                        <TableCell className="text-right">{r.raw.premium_100 || "—"}</TableCell>
+                        <TableCell className="text-right tabular-nums">{r.parsed ? formatCurrency(r.parsed.actualPremium) : "—"}</TableCell>
                         <TableCell className="min-w-48 whitespace-normal">
                           {r.valid ? <Badge variant="outline">Valid</Badge> : <Badge variant="destructive">Invalid</Badge>}
                           {r.reasons.length > 0 ? <span className="mt-1 block text-xs text-destructive">{r.reasons.join("; ")}</span> : null}

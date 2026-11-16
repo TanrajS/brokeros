@@ -54,15 +54,15 @@ async function openAccount(p, slug, account) {
   const harbourUrl = await openAccount(page, SEED, "Harbourline Foods Inc.");
   const tabs = main(page).getByRole("tablist");
   const tabNames = (await tabs.getByRole("tab").allInnerTexts()).map(flat);
-  check("five tabs under the account name", /^Overview$/.test(tabNames[0]) && /^Loss Runs/.test(tabNames[1]) && /^Program/.test(tabNames[2]) && /^Documents/.test(tabNames[3]) && /^Strategy/.test(tabNames[4]), tabNames.join(" | "));
+  check("five tabs under the account name", /^Overview$/.test(tabNames[0]) && /^Loss runs/.test(tabNames[1]) && /^Program/.test(tabNames[2]) && /^Documents/.test(tabNames[3]) && /^Strategy/.test(tabNames[4]), tabNames.join(" | "));
   check("Overview is selected on the account page", (await tabs.getByRole("tab", { name: "Overview" }).getAttribute("aria-selected")) === "true");
-  check("count badges: 17 claims (12 GL + 5 Property), 3 layers, 4 documents, 3 options", /Loss Runs 17/.test(tabNames[1]) && /Program 3/.test(tabNames[2]) && /Documents 4/.test(tabNames[3]) && /Strategy 3/.test(tabNames[4]), tabNames.join(" | "));
+  check("count badges: 17 claims (12 GL + 5 Property), 3 layers, 4 documents, 3 options", /Loss runs 17/.test(tabNames[1]) && /Program 3/.test(tabNames[2]) && /Documents 4/.test(tabNames[3]) && /Strategy 3/.test(tabNames[4]), tabNames.join(" | "));
   check("overview keeps policies, contacts, certificates, tasks and activity", (await section(page, "policies-heading").count()) === 1 && (await section(page, "contacts-heading").count()) === 1 && (await section(page, "tasks-heading").count()) === 1);
   await tabs.getByRole("tab", { name: "Overview" }).focus();
   await page.keyboard.press("ArrowRight");
   await page.waitForURL(/\/loss-runs$/);
   await settle(page);
-  check("ArrowRight moves to the Loss Runs tab and opens it", (await main(page).getByRole("tab", { name: /^Loss Runs/ }).getAttribute("aria-selected")) === "true");
+  check("ArrowRight moves to the Loss runs tab and opens it", (await main(page).getByRole("tab", { name: /^Loss runs/ }).getAttribute("aria-selected")) === "true");
   await page.keyboard.press("End");
   await page.waitForURL(/\/strategy$/);
   await settle(page);
@@ -89,14 +89,14 @@ async function openAccount(p, slug, account) {
   const b1 = await rowText(parts, "Tower 2 $100M primary: layer total");
   check("B1 layer total 60%, 264,000, 0.4400% on line", /60\.0% short 40% \$264,000 \$60,000,000 0\.4400%/.test(b1), b1);
   check("towers drawn side by side without a coverage strip", (await adv.getByRole("img").count()) === 1 && /Tower 1.*Tower 2/.test(flat(await adv.locator("figure").innerText())) && !/Placed\b/.test(flat(await adv.locator("figure").innerText())));
-  check("no basis column or per-location wording on the Program tab", !/per location|Basis/.test(advText) && /per-occurrence basis/.test(flat(await main(page).innerText())));
+  check("no basis column or per-location wording on the Program tab; the per-occurrence basis sits in the heading tooltip", !/per location|Basis/.test(advText) && (await main(page).getByRole("button", { name: "About subscription placements" }).count()) === 1);
   await adv.screenshot({ path: `${SHOTS}/advanced-program.png` });
 
   // Inline edit recomputes immediately, before saving
   await parts.getByRole("button", { name: "Edit Pacific Crest Insurance (fictional) on Tower 2 $200M xs $100M" }).click();
   await parts.getByLabel("Signed line %").fill("15");
   const second = flat(await coverage.locator("tbody tr").nth(1).innerText());
-  check("Pacific Crest at 15%: 100M–300M segment 90.00% placed, $20,000,000 unplaced, Under-placed", /90\.00%/.test(second) && /\$20,000,000/.test(second) && /Under-placed/.test(second), second);
+  check("Pacific Crest at 15%: 100M–300M segment 90.00% placed, $20,000,000 short, Under-placed", /90\.00%/.test(second) && /\$20,000,000/.test(second) && /Under-placed/.test(second), second);
   check("under-placed Placed % is shown in red", (await coverage.locator("tbody tr").nth(1).locator(".text-red-800").count()) >= 1);
   check("program premium falls with the draft (310,000 + 264,000 + 181,000 unchanged premium)", /\$755,000/.test(flat(await adv.innerText())));
   await parts.getByRole("button", { name: "Cancel editing Pacific Crest Insurance (fictional)" }).click();
@@ -123,7 +123,7 @@ async function openAccount(p, slug, account) {
   await page.goto(`${pntUrl}/loss-runs?line=Property`);
   await settle(page);
   const claimsText = flat(await section(page, "claims-heading").innerText());
-  check("claims table shows the peril and value at risk", /Flood/.test(claimsText) && /VAR \$42,000,000/.test(claimsText) && /Stock/.test(claimsText));
+  check("claims table shows the peril and value at risk", /Flood/.test(claimsText) && /Value at risk \$42,000,000/.test(claimsText) && /Stock/.test(claimsText));
 
   // Strategy replay uses the schedule
   await page.goto(`${pntUrl}/strategy`);
@@ -177,7 +177,7 @@ async function openAccount(p, slug, account) {
   await dlg.getByLabel("Signed line (%)").fill("10");
   check("signed above written is rejected inline", (await dlg.getByRole("button", { name: "Add insurer" }).isDisabled()));
   await dlg.getByLabel("Written line (%)").fill("");
-  await dlg.getByLabel("Premium (CAD)").fill("30000");
+  await dlg.getByLabel("100% premium (CAD)").fill("300000"); // 300,000 at 100% × 10% signed = 30,000 actual
   await dlg.getByRole("button", { name: "Add insurer" }).click();
   await adv2.locator("tbody tr", { hasText: "Granville Specialty (fictional)" }).nth(1).waitFor();
   await w.waitForLoadState("networkidle");
@@ -271,7 +271,7 @@ async function openAccount(p, slug, account) {
   await dlg.getByLabel("Value at risk (CAD)").fill("1,500,000");
   await dlg.getByRole("button", { name: /Save|Add claim/ }).last().click();
   await section(w, "claims-heading").locator("tbody tr", { hasText: "DSI-GL-26-0400" }).waitFor();
-  check("claim saved with its peril and value at risk", /Earthquake VAR \$1,500,000/.test(flat(await section(w, "claims-heading").locator("tbody tr", { hasText: "DSI-GL-26-0400" }).innerText())));
+  check("claim saved with its peril and value at risk", /Earthquake Value at risk \$1,500,000/.test(flat(await section(w, "claims-heading").locator("tbody tr", { hasText: "DSI-GL-26-0400" }).innerText())));
 
   // Mobile
   await w.setViewportSize({ width: 375, height: 760 });

@@ -73,7 +73,7 @@ before changing anything, and keep it current when the rules change.
 | Display formatting | `src/lib/format/` (returns `null` for missing, never a fake value) |
 | Enumerations | `src/lib/constants.ts` (shared by schema, Zod and UI) |
 | Demo book | `src/server/db/seed/demoBookData.ts` (pure, takes as-of; `buildDemoBook` = the ten accounts every test pins), `demoDocuments.tsx` (renders the seed PDFs and uploads them once under `seed/`) and `demoBook.ts` (writes it); `demoBookDashboard.ts` / `demoBookLossRuns.ts` / `demoBookProgram.ts` / `demoBookStrategy.ts` map it for tests |
-| Documents and Blob | `src/server/documents/blob.ts` (the only module that imports `@vercel/blob`), `src/server/documents/{queries,actions}.ts`, download route `src/app/w/[slug]/documents/[documentId]/route.ts`; certificates in `src/server/certificates/` (`pdf.tsx` is the only `@react-pdf/renderer` user) |
+| Documents and Blob | `src/server/documents/blob.ts` (the only module that imports `@vercel/blob`), `src/server/documents/{queries,actions}.ts`, download route `src/app/w/[slug]/documents/[documentId]/route.ts`; PDFs in `src/server/certificates/pdf.tsx` and `src/server/program/pdf.tsx`, both loading `@react-pdf/renderer` through `src/server/pdf/reactPdf.ts`; their content comes from pure `certificateContent` and `programSummaryContent` (`src/lib/domain/programSummary.ts`) |
 | Pages | `src/app/w/[slug]/…`; pages call `requireWorkspace(slug)` from `src/app/w/[slug]/lib.ts`. Account tabs live in the route group `accounts/[accountId]/(tabs)/` (layout = header + `AccountTabs`); edit and policy pages sit outside the group. `/placement/…` only redirects |
 | UI components | `src/components/<area>/`; shadcn primitives in `src/components/ui/` |
 
@@ -111,7 +111,11 @@ before changing anything, and keep it current when the rules change.
 - v0.2 added `checklist_items`, `tasks`, `activities` and `renewal_outcomes`.
   Later versions add `claims`, `quote_options`, `program_layers`,
   `layer_participations`, `policy_deductibles` and (v1.4) `documents` through
-  new migrations using the same column helpers. v1.4 dropped
+  new migrations using the same column helpers. v1.5 renamed
+  `layer_participations.premium` to `premium_100` (`0013_premium_100`, written
+  with `drizzle-kit generate --custom`; the custom snapshot copies the previous
+  schema, so the column was renamed in `0013_snapshot.json` by hand and
+  `drizzle-kit generate` confirmed "No schema changes"). v1.4 dropped
   `contract_requirements`, `certificates`, `submissions` and `quotes`
   (`0011_removals`, after copying quote-derived option premiums into
   `quote_options.premium` as manual options) and removed Workers Compensation
@@ -184,6 +188,14 @@ before changing anything, and keep it current when the rules change.
 - Claims with a blank policy are auto-linked on save/import to the policy whose
   term contains the loss date.
 - Undo outcome refuses when the successor has claims (`checkUndoOutcome`).
+- **Flags live on the rows (v1.5).** There is no data quality panel: every
+  `ClaimFlag` is a badge on its claim row with `CLAIM_FLAG_REASONS[f]` on hover,
+  and the claims table has a "Flagged only" checkbox. The policy-year table is
+  split by `groupPolicyYears(rows, asOf, policyStatus)` into Active and in
+  progress (in force, or no outcome with an open status; soonest expiry first)
+  and Expired (the rest; most recent first); three rows per group, "Show N more"
+  remembered in the URL as `active=all` / `expired=all` (`LossRunQuery`), counts
+  in the group headers. `loadLossRunInputs` returns `policyStatus` for it.
 - The demo seed's Harbourline and Cedar Ridge GL chains and claims are the
   hand-verification cases (`src/server/db/seed/__tests__/demoBookLossRuns.test.ts`);
   they must keep passing alongside the v0.3 retention test.
@@ -225,10 +237,16 @@ before changing anything, and keep it current when the rules change.
 - **The base is the lowest deductible** (ties: lowest premium). Nothing marks an
   option recommended; the Considerations panel is neutral (favours lower /
   favours higher). The report never says what the client should buy.
-- **Replay arithmetic:** retained = Σ min(adjusted incurred, deductible), then
-  min(·, cap); adjustments (trend, development) apply per claim before the
-  deductible. The running year counts as a full year when included and is
-  labelled incomplete.
+- **Retained-loss arithmetic:** retained = Σ min(adjusted incurred, deductible),
+  then min(·, cap); adjustments (trend, development) apply per claim before the
+  deductible. The current year counts as a full year when included and is
+  labelled incomplete. The domain functions keep their names
+  (`selectReplayYears`, `replayYear`, `ReplaySettings`) but no user-facing
+  string, README sentence or report line says "replay" or "running year" (v1.5):
+  the basis line is "Basis: N policy years (PYa to PYb; current year included as
+  incomplete), raw incurred, as of 16 Nov 2026.", the table is "Retained losses
+  by year at each deductible" and the method sentence is "Each option applies its
+  deductible to the account's actual claims, year by year."
 - **TCOR premiums are in-force current terms** (the v0.3 rule) with the option's
   premium in place of the analysed line; other lines without loss runs count as
   zero and are flagged, never silently.
@@ -246,10 +264,33 @@ before changing anything, and keep it current when the rules change.
   overlap checks), `isAdvancedProgram`, `validatePlacementRows`,
   `placementScheduleRows`. `program_layers` hold tower label, type (incl.
   `quota_share`), attachment and limit (per occurrence is assumed and stated
-  once on the Program tab; the v1.3 `basis` column was dropped in v1.4); `layer_participations` hold each
-  insurer's written line, signed line, premium and lead flag. A simple layer is
-  one participation signed at 100%; `saveTowerLayer` keeps that invariant and
-  refuses to edit a multi-insurer layer.
+  once on the Program tab, in the heading's info tooltip; the v1.3 `basis`
+  column was dropped in v1.4); `layer_participations` hold each insurer's
+  written line, signed line, **100% premium** (`premium_100`) and lead flag. A
+  simple layer is one participation signed at 100%; `saveTowerLayer` keeps that
+  invariant and refuses to edit a multi-insurer layer.
+- **Premiums are quoted at 100% (v1.5).** `premium_100` is what the insurer
+  quoted as if it wrote the whole layer; `actualPremium(premium100, signed)` =
+  premium_100 × signed line ÷ 100 is computed in `layerSummary` and never stored.
+  Layer premium = Σ actual premiums; `premium100Equivalent` = layer premium ÷
+  placed share (the layer total row labels it "100% equivalent"); rate on line
+  per insurer = premium_100 ÷ layer limit = actual ÷ exposed limit, and the math
+  line shows both forms. Program premium, rate per $100 of TIV, blended rate on
+  line, the report and the findings engine use actual premiums. The CSV column is
+  `premium_100`; the export starts with `PLACEMENT_CSV_NOTE` and the import
+  parses with `comments: "#"`. The seed states every participation at 100% so the
+  v1.3 actual figures (310,000 / 264,000 / 181,000; 755,000) are unchanged.
+- **Layer block widths (v1.5):** segments share the block by `shareOfPlaced` =
+  signed line ÷ placed share, not by signed line of 100%; the block carries a
+  small "N% placed" label top-left. Under- or over-placement shows only in the
+  Placement column, the segment table and the layer total row.
+- **Program PDF (v1.5):** `exportProgramPdf` (in `src/server/program/actions.ts`)
+  renders `programSummaryContent` with `src/server/program/pdf.tsx` (landscape
+  Letter, every segment labelled with an insurer key), uploads it with
+  `uploadDocumentBlob` and files a `policy_document` titled "Program summary —
+  <line group> — <as-of date>"; the button opens the new tab on the click so
+  pop-up blockers allow it. `programTivFor` in `src/server/program/queries.ts`
+  is the one TIV rule shared by the tab and the export.
 - **Line groups** are `gl`, `auto` and `property`; `layersFor(inputs, group)`
   selects a group's layers. TIV comes from the linked policy's
   `insurable_value`.
@@ -310,6 +351,17 @@ before changing anything, and keep it current when the rules change.
   (`tolerance_occurrence`, `tolerance_year`, `permissible_loss_ratio`, null =
   defaults 0.5% / 1% of revenue / 0.65); accepted finding ids in
   `accounts.accepted_findings`.
+- **Partial-line retention (v1.5):** in `bandAnalysis`, for a working band whose
+  limit exceeds the per-occurrence tolerance, client line = the largest whole %
+  with line × band limit ≤ per-occurrence tolerance and line × worst-year in-band
+  ≤ annual tolerance (minimum 1%); saving = line × `premium100Equivalent`,
+  expected retained = line × average in-band, worst-year retained = line ×
+  worst-year in-band, net = saving − expected retained; `partial_line` fires when
+  net > 0 and adds "This line would also reduce the unplaced share of the segment
+  from X% to Y%." for a short segment (via `coverageProfile`, so `tiv` flows into
+  `BandAnalysisInput`). Never for a catastrophe band. `FindingsList` renders it
+  beside the `raise_deductible` finding of the same band. Pinned in
+  `findings.test.ts` (Harbourline 142,000: 12%, 17,040, 5,088, 13,800, 11,952).
 - **Band rules:** the primary responds from the deductible (attachment =
   deductible, limit = limit − deductible); in-band loss per year = Σ min(max(
   incurred − attachment, 0), limit); working = any in-band loss or frequency
@@ -322,6 +374,32 @@ before changing anything, and keep it current when the rules change.
 - **Nightly reset.** `/api/cron/reset-demo` (Bearer `CRON_SECRET`, scheduled
   in `vercel.json`) calls `resetDemoWorkspace` for workspaces with
   `reset_nightly`; it re-uses the `seed/` blobs and never re-uploads.
+
+## Copy and wording rules (v1.5)
+
+- **No helper sentences.** Pages show data, units in column headers, the as-of
+  date in the header, Show the math, validation messages, empty states and any
+  sentence stating an assumption the user can change (basis in use, tolerances,
+  permissible loss ratio). Anything else a new user might need goes in an
+  `<InfoTip>` (`src/components/InfoTip.tsx`) on the section heading, never in a
+  paragraph under it. The per-occurrence basis is stated once, in the Program
+  heading's tooltip.
+- **Glossary (use these words, consistently):** expiring policy (the term coming
+  up for renewal), renewal, successor policy (the term created by a renewed
+  outcome; never "renewal policy"), bound, signed line, written line, 100%
+  premium, actual premium, placed, short (in labels and tiles: "$X short", "Short
+  ($)"; "Under-placed" stays only as the status word), exposed limit, rate on
+  line, band, deductible, retention, tolerance, basis. Never "replay",
+  "replaying", "running year" (say "current year"), "unplaced" in a label (the
+  spec's own partial-line sentence keeps "unplaced share"), "VAR" (say "value at
+  risk") or "occ / agg".
+- **Form:** sentence case everywhere ("Loss runs", "Show the math"); no
+  abbreviations a client would not know except TIV, ROL and TCOR (spelled out
+  the first time: "Total cost of risk (TCOR)"); dates as 16 Nov 2026
+  (`formatDate`; the domain uses a local `longDate` for sentences and keeps ISO
+  where a date is data); "as of" rather than "as-of" in prose (the Settings field
+  and code identifiers keep `as-of`/`asOf`); buttons are verbs (Generate report,
+  Export PDF, Add insurer, Save option, Save tolerances).
 
 ## Commands
 

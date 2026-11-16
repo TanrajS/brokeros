@@ -20,6 +20,7 @@ import {
   type ToleranceSettings,
 } from "@/lib/domain/strategy";
 import type { LineGroup } from "@/lib/domain/program";
+import { formatDate } from "@/lib/format";
 import type { Policy, Workspace } from "@/server/db/schema";
 import { replaySettingsFrom, settingsFromQuery, type StrategyQuery } from "@/components/strategy/params";
 import { listPolicyDeductibles, toRule } from "@/server/deductibles/queries";
@@ -35,7 +36,7 @@ export interface OtherLine {
   mathLines: string[];
 }
 
-/** One row of the options table: a deductible with its manual (entered by hand) premium, its estimated premium, and which one the replay used. */
+/** One row of the options table: a deductible with its manual (entered by hand) premium, its estimated premium, and which one the comparison used. */
 export interface OptionRowView {
   id: string;
   deductible: number;
@@ -45,7 +46,7 @@ export interface OptionRowView {
   manualPremium: number | null;
   manualOptionId: string | null;
   estimated: AutomaticOption | null;
-  /** The premium the replay ran on. */
+  /** The premium the comparison ran on. */
   premiumUsed: number;
   usedSource: "manual" | "estimated";
   isCurrent: boolean;
@@ -56,7 +57,7 @@ export const groupForLine = (line: string): LineGroup | null => (line === "Gener
 /**
  * Everything the Strategy tab, the report and the JSON export share: the policy
  * under analysis, the settings in use, the automatic findings and estimated
- * options, the manual options, the replay, TCOR per option and the generated
+ * options, the manual options, retained losses by year, TCOR per option and the generated
  * assumptions.
  */
 export async function buildStrategyView(ws: Workspace, accountId: string, q: StrategyQuery) {
@@ -183,7 +184,7 @@ export async function buildStrategyView(ws: Workspace, accountId: string, q: Str
   if (!tolerances) missing.push("Risk tolerances not available: enter annual revenue or set the tolerances on this tab to run the findings");
   if (currentDeductible === null) missing.push(`The ${line} policy has no deductible, so no retention baseline exists`);
   if (optionRows.length === 0) missing.push("No retention options for this policy");
-  if (grouped.value.years.length === 0) missing.push(`No ${line} policy periods start on or before the as-of date`);
+  if (grouped.value.years.length === 0) missing.push(`No ${line} policy periods start on or before ${formatDate(asOf)}`);
   else if (years.every((y) => y.claims.length === 0)) missing.push(`No ${line} claims are recorded in the years used`);
   if (grouped.value.excludedOutsidePeriod > 0) missing.push(`${grouped.value.excludedOutsidePeriod} ${line} claim(s) fall outside every policy period and are excluded`);
   if (group && groupLayers.length === 0) missing.push(`No program layers in the ${line} group, so band and price findings have nothing to read`);

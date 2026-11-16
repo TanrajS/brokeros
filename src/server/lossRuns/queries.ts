@@ -1,13 +1,15 @@
 import "server-only";
-import { and, asc, eq } from "drizzle-orm";
-import type { LRClaim, LRPolicy } from "@/lib/domain/lossRuns";
+import { and, asc, eq, inArray } from "drizzle-orm";
+import type { LRClaim, LRPolicy, PolicyYearStatus } from "@/lib/domain/lossRuns";
 import { getDb } from "@/server/db/client";
-import { accounts, claims, policies, type Account, type Workspace } from "@/server/db/schema";
+import { accounts, claims, policies, renewalOutcomes, type Account, type Workspace } from "@/server/db/schema";
 
 export interface LossRunInputs {
   account: Account;
   policies: LRPolicy[];
   claims: LRClaim[];
+  /** v1.5: renewal status and whether an outcome exists, per policy id, for the Active / Expired groups. */
+  policyStatus: Record<string, PolicyYearStatus>;
 }
 
 /** Every policy (all lines) and every claim on the account, mapped to the loss-run domain shapes. */
@@ -27,8 +29,12 @@ export async function loadLossRunInputs(ws: Workspace, accountId: string): Promi
       .where(and(eq(claims.workspaceId, ws.id), eq(claims.accountId, accountId)))
       .orderBy(asc(claims.dateOfLoss), asc(claims.claimNumber)),
   ]);
+  const outcomeRows = policyRows.length ? await db.select({ policyId: renewalOutcomes.policyId }).from(renewalOutcomes).where(inArray(renewalOutcomes.policyId, policyRows.map((p) => p.id))) : [];
+  const withOutcome = new Set(outcomeRows.map((o) => o.policyId));
+  const policyStatus: Record<string, PolicyYearStatus> = Object.fromEntries(policyRows.map((p) => [p.id, { renewalStatus: p.renewalStatus, hasOutcome: withOutcome.has(p.id) }]));
   return {
     account,
+    policyStatus,
     policies: policyRows.map((p) => ({
       id: p.id,
       lineOfBusiness: p.lineOfBusiness,

@@ -41,12 +41,11 @@ export function TcorSection({ slug, accountId, line, fees, revenue, otherLines, 
   const cell = cn("px-3 py-2 align-top tabular-nums", print && "px-2 py-1");
   const points: TcorPoint[] = tcor.map((t) => ({ label: t.optionLabel, total: t.total, ...t.components }));
   const otherPremium = otherLines.reduce((s, l) => s + l.premium, 0);
-  const flagged = otherLines.filter((l) => l.averageRetained === null);
   const unit = (text: string) => <span className="block text-xs font-normal text-muted-foreground">{text}</span>;
 
   const table =
     tcor.length === 0 ? (
-      <p className="rounded-lg border p-4 text-sm text-muted-foreground">Total cost of risk is computed per retention option; add an option above.</p>
+      <p className="rounded-lg border p-4 text-sm text-muted-foreground">Total cost of risk is computed per retention option. Add an option above.</p>
     ) : (
       <div className="relative overflow-x-auto rounded-lg border">
         <table className={cn("w-full min-w-[36rem]", print ? "text-xs" : "text-sm")}>
@@ -204,10 +203,6 @@ export function TcorSection({ slug, accountId, line, fees, revenue, otherLines, 
   }
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-sm text-muted-foreground">
-        TCOR = premiums + expected retained losses + broker fees + risk control spend + internal claims administration. Premiums are the account&apos;s in-force policies with the
-        option&apos;s premium in place of the expiring {line} premium. Other lines&apos; expected retained losses are their five-year average below their deductibles{flagged.length ? "; lines without loss runs count as zero and are flagged" : ""}.
-      </p>
       <TcorFeesForm slug={slug} accountId={accountId} current={fees} />
       {tcor.length > 0 ? (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">

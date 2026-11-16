@@ -8,6 +8,7 @@ import { FileBadge } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/InfoTip";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, fieldA11y } from "@/components/form/Field";
@@ -70,18 +71,19 @@ export function CertificatesPanel({ slug, accountId, asOf, namedInsured, policy,
   return (
     <section aria-labelledby="certificates-heading" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="certificates-heading" className="text-lg font-semibold">
+        <h2 id="certificates-heading" className="flex items-center gap-1.5 text-lg font-semibold">
           Certificates of insurance
+          <InfoTip label="About certificates">
+            A certificate summarises this policy&apos;s current term for a holder. It is informational and confers no rights beyond the policies; it is flagged Reissue needed once the policy renews or
+            expires.
+          </InfoTip>
         </h2>
         <Button type="button" size="sm" onClick={() => setShowForm((v) => !v)} disabled={!blobReady} title={blobReady ? undefined : "Documents are not configured (BLOB_READ_WRITE_TOKEN)"}>
           <FileBadge aria-hidden="true" />
           {showForm ? "Close" : "Generate certificate"}
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">
-        A certificate summarises this policy&apos;s current term for a holder. It is informational and confers no rights beyond the policies; it is flagged for reissue once the policy renews or expires. Holder
-        details in this demo must be fictional.
-      </p>
+      <p className="text-xs text-muted-foreground">Holder details in this demo must be fictional.</p>
       {showForm ? (
         <div className="grid gap-4 lg:grid-cols-2">
           <form onSubmit={handleSubmit(onSubmit)} noValidate aria-label="Certificate inputs" className="flex flex-col gap-3 rounded-lg border p-4">
@@ -194,7 +196,6 @@ export function CertificatesPanel({ slug, accountId, asOf, namedInsured, policy,
               </table>
             ) : null}
             <p className="rounded bg-muted/40 p-2 text-xs">{preview.statement}</p>
-            <figcaption className="text-xs text-muted-foreground">Preview of the PDF that will be generated. All parties in this demo are fictional.</figcaption>
           </figure>
         </div>
       ) : null}

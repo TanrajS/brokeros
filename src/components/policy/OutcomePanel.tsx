@@ -148,7 +148,7 @@ function RecordedOutcome({ slug, policyId, outcome }: { slug: string; policyId: 
         ) : null}
         {outcome.successor ? (
           <div className="sm:col-span-2">
-            <dt className="text-xs text-muted-foreground">Renewal policy</dt>
+            <dt className="text-xs text-muted-foreground">Successor policy</dt>
             <dd>
               <Link href={outcome.successor.href} className="underline-offset-4 hover:underline">
                 {outcome.successor.label}
@@ -164,7 +164,7 @@ function RecordedOutcome({ slug, policyId, outcome }: { slug: string; policyId: 
           Undo outcome
         </Button>
         {outcome.successorHasOutcome ? (
-          <p className="mt-2 text-xs text-muted-foreground">The renewal policy already has its own outcome. Undo that one first.</p>
+          <p className="mt-2 text-xs text-muted-foreground">The successor policy already has its own outcome. Undo that one first.</p>
         ) : null}
       </div>
 
@@ -174,7 +174,7 @@ function RecordedOutcome({ slug, policyId, outcome }: { slug: string; policyId: 
             <AlertDialogTitle>Undo this outcome?</AlertDialogTitle>
             <AlertDialogDescription>
               {outcome.successor
-                ? `This deletes the renewal policy (${outcome.successor.label}) together with its checklist and tasks, `
+                ? `This deletes the successor policy (${outcome.successor.label}) together with its checklist and tasks, `
                 : "This "}
               restores the renewal status to {outcome.priorStatusLabel} and records the undo in the activity log.
             </AlertDialogDescription>
@@ -292,7 +292,7 @@ function RenewedForm({ slug, policy, prefill, onDone }: { slug: string; policy: 
       className="flex flex-col gap-4"
     >
       <p className="text-xs text-muted-foreground">
-        Creates a renewal policy from {formatDate(term.effectiveDate)} to {formatDate(term.expiryDate)} and marks this one renewed. Limits, deductible and
+        Creates a successor policy from {formatDate(term.effectiveDate)} to {formatDate(term.expiryDate)} and marks this expiring policy renewed. Limits, deductible and
         commission default to the expiring terms.
       </p>
       <div className="grid gap-4 sm:grid-cols-2">

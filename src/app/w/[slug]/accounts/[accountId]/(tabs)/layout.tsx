@@ -12,8 +12,8 @@ import { accountTabCounts } from "@/server/accounts/tabs";
 import { requireWorkspace } from "../../../lib";
 
 /**
- * The account header and tab strip (v1.3): Overview, Loss Runs, Program,
- * Marketing, Strategy. Edit and policy pages sit outside this group.
+ * The account header and tab strip (v1.3): Overview, Loss runs, Program,
+ * Documents, Strategy. Edit and policy pages sit outside this group.
  */
 export default async function AccountTabsLayout({ children, params }: { children: React.ReactNode; params: Promise<{ slug: string; accountId: string }> }) {
   const { slug, accountId } = await params;
@@ -25,7 +25,7 @@ export default async function AccountTabsLayout({ children, params }: { children
   const base = `/w/${slug}/accounts/${account.id}`;
   const tabs: AccountTab[] = [
     { segment: "overview", label: "Overview" },
-    { segment: "loss-runs", label: "Loss Runs", count: counts.claims },
+    { segment: "loss-runs", label: "Loss runs", count: counts.claims },
     { segment: "program", label: "Program", count: counts.layers },
     { segment: "documents", label: "Documents", count: counts.documents },
     { segment: "strategy", label: "Strategy", count: counts.options },

@@ -41,7 +41,6 @@ export function ForecastAssumptionsForm({ slug, query, current, retentionHint, i
       <Field id="assumed-rate" label="Assumed rate change (%)" required error={err.rateChange?.message} hint="Default 0. Use a minus sign for a decrease.">
         <Input {...register("rateChange")} {...fieldA11y("assumed-rate", err.rateChange?.message, "hint")} inputMode="decimal" />
       </Field>
-      <p className="text-xs text-muted-foreground">Commission rate: each policy&apos;s own.</p>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" disabled={!formState.isValid}>
           Apply assumptions

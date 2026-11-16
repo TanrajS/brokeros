@@ -8,6 +8,7 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/InfoTip";
 import { Input } from "@/components/ui/input";
 import {
   AlertDialog,
@@ -74,9 +75,13 @@ export function DeductibleScheduleSection({ slug, policyId, policyDeductible, ro
   return (
     <section aria-labelledby="deductibles-heading" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="deductibles-heading" className="text-lg font-semibold">
+        <h2 id="deductibles-heading" className="flex items-center gap-1.5 text-lg font-semibold">
           Deductible schedule
-          {rows.length ? <span className="ml-2 text-sm font-normal text-muted-foreground">{rows.length} {rows.length === 1 ? "deductible" : "deductibles"}</span> : null}
+          {rows.length ? <span className="ml-1 text-sm font-normal text-muted-foreground">{rows.length} {rows.length === 1 ? "deductible" : "deductibles"}</span> : null}
+          <InfoTip label="About the deductible schedule">
+            The all-other-perils row is the policy&apos;s deductible field and stays in step with it. Claims tagged with a peril use that peril&apos;s rule in the retention analysis; every other claim uses
+            the default.
+          </InfoTip>
         </h2>
         <div className="flex flex-wrap gap-2">
           <ImportScheduleDialog slug={slug} policyId={policyId} existingAppliesTo={rows.map((r) => r.appliesTo)} />
@@ -86,10 +91,6 @@ export function DeductibleScheduleSection({ slug, policyId, policyDeductible, ro
           </Button>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">
-        The all-other-perils row is the policy&apos;s deductible field and stays in step with it. Claims tagged with a peril use that peril&apos;s rule in the retention replay; every other claim uses the
-        default.
-      </p>
       {rows.length === 0 ? (
         <p className="rounded-lg border p-4 text-sm text-muted-foreground">
           {policyDeductible === null ? "No deductible on this policy. Enter one on the policy to create the default row, then add named perils." : "No schedule rows yet."}
@@ -144,7 +145,7 @@ export function DeductibleScheduleSection({ slug, policyId, policyDeductible, ro
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{dialog?.kind === "delete" ? `Delete the ${dialog.row.appliesTo} deductible?` : ""}</AlertDialogTitle>
-            <AlertDialogDescription>Claims for this peril fall back to the all-other-perils deductible in the replay. This cannot be undone.</AlertDialogDescription>
+            <AlertDialogDescription>Claims for this peril fall back to the all-other-perils deductible in the retention analysis. This cannot be undone.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

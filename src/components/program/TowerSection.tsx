@@ -23,9 +23,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Field, fieldA11y } from "@/components/form/Field";
 import { NativeSelect } from "@/components/form/NativeSelect";
+import { InfoTip } from "@/components/InfoTip";
 import { Missing } from "@/components/Missing";
 import { ShowMath } from "@/components/dashboard/ShowMath";
-import { LAYER_TYPES, LINE_GROUP_LABELS, analyzeTower, type LineGroup, type TowerLayerInput } from "@/lib/domain/program";
+import { LAYER_TYPES, LAYER_TYPE_LABELS, LINE_GROUP_LABELS, analyzeTower, type LineGroup, type TowerLayerInput } from "@/lib/domain/program";
 import { parseCurrencyInput } from "@/lib/domain/money";
 import { formatCurrency, formatRatioPercent } from "@/lib/format";
 import { towerLayerFormSchema, type TowerLayerFormInput, type TowerLayerFormValues } from "@/lib/schemas/program";
@@ -82,8 +83,12 @@ export function TowerSection({ slug, accountId, lineGroup, layers, policyOptions
   return (
     <section aria-labelledby="tower-heading" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="tower-heading" className="text-lg font-semibold">
+        <h2 id="tower-heading" className="flex items-center gap-1.5 text-lg font-semibold">
           Tower: {LINE_GROUP_LABELS[lineGroup]}
+          <InfoTip label="About the tower">
+            Layers stack from the primary up; each exhausts at attachment + limit. Rate on line = premium ÷ limit, and a higher layer normally costs less per dollar of limit than the one below it. Every layer is
+            read on a per-occurrence basis.
+          </InfoTip>
         </h2>
         <Button type="button" size="sm" onClick={() => setEditing({ mode: "create" })}>
           <Plus aria-hidden="true" />
@@ -120,13 +125,13 @@ export function TowerSection({ slug, accountId, lineGroup, layers, policyOptions
                   <TableRow>
                     <TableHead>Layer</TableHead>
                     <TableHead>Carrier</TableHead>
-                    <TableHead className="text-right">Attachment</TableHead>
-                    <TableHead className="text-right">Limit</TableHead>
-                    <TableHead className="text-right">Exhaustion</TableHead>
-                    <TableHead className="text-right">Premium</TableHead>
-                    <TableHead className="text-right">Rate on line</TableHead>
-                    <TableHead className="text-right">Per $1M</TableHead>
-                    <TableHead className="text-right">vs primary</TableHead>
+                    <TableHead className="text-right">Attachment ($)</TableHead>
+                    <TableHead className="text-right">Limit ($)</TableHead>
+                    <TableHead className="text-right">Exhaustion ($)</TableHead>
+                    <TableHead className="text-right">Premium ($ per year)</TableHead>
+                    <TableHead className="text-right">Rate on line (%)</TableHead>
+                    <TableHead className="text-right">Premium per $1M of limit ($)</TableHead>
+                    <TableHead className="text-right">Rate vs primary (×)</TableHead>
                     <TableHead className="w-24">
                       <span className="sr-only">Actions</span>
                     </TableHead>
@@ -140,7 +145,7 @@ export function TowerSection({ slug, accountId, lineGroup, layers, policyOptions
                       <TableRow key={l.id}>
                         <TableCell className="whitespace-nowrap">
                           <span className="font-medium">{l.label}</span>
-                          <span className="block text-xs text-muted-foreground capitalize">{l.layerType}</span>
+                          <span className="block text-xs text-muted-foreground">{LAYER_TYPE_LABELS[l.layerType]}</span>
                           {flags.length > 0 ? (
                             <span className="mt-1 flex flex-col gap-1">
                               {flags.map((f) => (
@@ -177,9 +182,6 @@ export function TowerSection({ slug, accountId, lineGroup, layers, policyOptions
               </Table>
             </div>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Rate on line = premium ÷ limit. A higher layer normally costs less per dollar of limit than the one below it. Relative rate = this layer&apos;s rate on line ÷ the primary&apos;s.
-          </p>
           <ShowMath lines={analysis.math.steps.lines as string[]} />
         </>
       )}
@@ -285,7 +287,7 @@ function LayerDialog({
               <NativeSelect {...register("layerType")} {...fieldA11y("layer-type", msg("layerType"))}>
                 {LAYER_TYPES.map((t) => (
                   <option key={t} value={t}>
-                    {t[0].toUpperCase() + t.slice(1)}
+                    {LAYER_TYPE_LABELS[t]}
                   </option>
                 ))}
               </NativeSelect>
@@ -299,8 +301,8 @@ function LayerDialog({
             <Field id="layer-limit" label="Limit (CAD)" required error={msg("limit")}>
               <Input {...register("limit")} {...fieldA11y("layer-limit", msg("limit"))} inputMode="decimal" />
             </Field>
-            <Field id="layer-premium" label="Premium (CAD)" required error={msg("premium")}>
-              <Input {...register("premium")} {...fieldA11y("layer-premium", msg("premium"))} inputMode="decimal" />
+            <Field id="layer-premium" label="Premium (CAD)" required error={msg("premium")} hint="One insurer at 100%, so the 100% premium and the actual premium are the same">
+              <Input {...register("premium")} {...fieldA11y("layer-premium", msg("premium"), "hint")} inputMode="decimal" />
             </Field>
             <Field id="layer-policy" label="Linked policy" error={msg("policyId")} hint="Optional; carries the policy's co-insurers into the tower">
               <NativeSelect {...register("policyId")} {...fieldA11y("layer-policy", msg("policyId"), "hint")}>

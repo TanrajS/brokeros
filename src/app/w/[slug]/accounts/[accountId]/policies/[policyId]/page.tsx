@@ -183,11 +183,11 @@ export default async function PolicyPage({ params, searchParams }: { params: Par
 
       {successor ? (
         <RateChangePanel
-          title="This term vs its renewal"
+          title="This expiring term vs its successor"
           expiring={policy}
           renewal={successor}
           otherHref={`${base}/policies/${successor.id}`}
-          otherLabel="Open the renewal policy"
+          otherLabel="Open the successor policy"
         />
       ) : null}
       {predecessor ? (
@@ -309,7 +309,7 @@ export default async function PolicyPage({ params, searchParams }: { params: Par
           </>
         ) : null}
         <Link href={`${base}/loss-runs?line=${encodeURIComponent(policy.lineOfBusiness)}`} className="w-fit text-sm underline-offset-4 hover:underline">
-          Open the Loss Runs tab for {policy.lineOfBusiness}
+          Open the Loss runs tab for {policy.lineOfBusiness}
         </Link>
       </section>
 
@@ -334,7 +334,7 @@ export default async function PolicyPage({ params, searchParams }: { params: Par
                     <TableHead className="text-right">Attachment ($)</TableHead>
                     <TableHead className="text-right">Limit ($)</TableHead>
                     <TableHead className="text-right">Placed (%)</TableHead>
-                    <TableHead className="text-right">Premium ($)</TableHead>
+                    <TableHead className="text-right">Actual premium ($ per year)</TableHead>
                     <TableHead className="text-right">Rate on line (%)</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -348,7 +348,7 @@ export default async function PolicyPage({ params, searchParams }: { params: Par
                           {s.label}
                           {l.policyId === policy.id ? <span className="ml-1 text-xs text-muted-foreground">(this policy)</span> : null}
                         </TableCell>
-                        <TableCell className="min-w-48 whitespace-normal text-xs">{l.participations.map((x) => `${x.insurer} ${x.signedLinePct}%`).join(" · ") || "Unplaced"}</TableCell>
+                        <TableCell className="min-w-48 whitespace-normal text-xs">{l.participations.map((x) => `${x.insurer} ${x.signedLinePct}%`).join(" · ") || "No insurers"}</TableCell>
                         <TableCell className="text-right tabular-nums">{formatCurrency(l.attachment)}</TableCell>
                         <TableCell className="text-right tabular-nums">{formatCurrency(l.limit)}</TableCell>
                         <TableCell className="text-right tabular-nums">{(s.placedShare * 100).toFixed(1)}%</TableCell>

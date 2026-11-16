@@ -35,7 +35,7 @@ export async function WorkspaceShell({ params, children }: { params: Promise<{ s
           <Link
             href={`/w/${slug}/settings#as-of`}
             className="ml-auto flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs text-muted-foreground hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-            title="Every date calculation uses this as-of date. Change it in Settings."
+            title="Every date in the app is counted as of this date. Change it in Settings."
           >
             <CalendarDays className="size-3.5" aria-hidden="true" />
             <span>

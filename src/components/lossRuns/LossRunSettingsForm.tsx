@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Field, fieldA11y } from "@/components/form/Field";
 import { NativeCheckbox } from "@/components/form/Checkbox";
 import { lossRunSettingsSchema, type LossRunSettingsInput, type LossRunSettingsValues } from "@/lib/schemas/claim";
-import { lossRunsHref, queryFromSettings } from "./params";
+import { lossRunsHref, queryFromSettings, type LossRunQuery } from "./params";
 
 interface Props {
   slug: string;
@@ -17,6 +17,10 @@ interface Props {
   line: string;
   current: LossRunSettingsInput;
   prospectiveYear: number | null;
+  /** The Active / Expired expansions in the URL, kept when settings are applied. */
+  keep: Pick<LossRunQuery, "active" | "expired">;
+  /** The workspace date, formatted, e.g. "16 Nov 2026". */
+  asOfLabel: string;
 }
 
 const AGES = [
@@ -28,7 +32,7 @@ const AGES = [
 ] as const;
 
 /** Editable analysis settings; Apply writes them to the URL so the view can be shared. */
-export function LossRunSettingsForm({ slug, accountId, line, current, prospectiveYear }: Props) {
+export function LossRunSettingsForm({ slug, accountId, line, current, prospectiveYear, keep, asOfLabel }: Props) {
   const router = useRouter();
   const { register, handleSubmit, formState, control } = useForm<LossRunSettingsInput, unknown, LossRunSettingsValues>({
     resolver: zodResolver(lossRunSettingsSchema),
@@ -40,7 +44,7 @@ export function LossRunSettingsForm({ slug, accountId, line, current, prospectiv
   const devOn = useWatch({ control, name: "developmentOn" });
 
   function onSubmit(v: LossRunSettingsValues) {
-    router.push(lossRunsHref(slug, accountId, queryFromSettings(v, line)), { scroll: false });
+    router.push(lossRunsHref(slug, accountId, queryFromSettings(v, line, keep)), { scroll: false });
   }
 
   return (
@@ -65,8 +69,8 @@ export function LossRunSettingsForm({ slug, accountId, line, current, prospectiv
         <legend className="sr-only">Development</legend>
         <NativeCheckbox id="dev-on" label="Apply loss development" {...register("developmentOn")} />
         <p className="text-xs text-muted-foreground">
-          Development factors come from the carrier or an actuary and are entered here, not calculated. Each policy year uses the factor for its age: whole months from
-          its effective date to the as-of date, bucketed down to 12, 24, 36, 48 or 60+ (under 12 uses 12). Developed incurred = incurred × factor.
+          Development factors come from the insurer or an actuary and are entered here, not calculated. Each policy year uses the factor for its age: whole months from
+          its effective date to {asOfLabel}, bucketed down to 12, 24, 36, 48 or 60+ (under 12 uses 12). Developed incurred = incurred × factor.
         </p>
         {devOn ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
@@ -93,7 +97,7 @@ export function LossRunSettingsForm({ slug, accountId, line, current, prospectiv
           Apply settings
         </Button>
         <Button asChild variant="ghost">
-          <Link href={lossRunsHref(slug, accountId, { line, trend: "", ldf: "", threshold: "", cap: "" })} scroll={false}>
+          <Link href={lossRunsHref(slug, accountId, { line, trend: "", ldf: "", threshold: "", cap: "", active: keep.active, expired: keep.expired })} scroll={false}>
             Reset to defaults
           </Link>
         </Button>

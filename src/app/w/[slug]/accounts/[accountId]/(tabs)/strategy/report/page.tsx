@@ -10,7 +10,7 @@ import { ConsiderationsPanel } from "@/components/strategy/ConsiderationsPanel";
 import { EstimatedOptionsTable } from "@/components/strategy/EstimatedOptionsTable";
 import { FindingsList } from "@/components/strategy/FindingsList";
 import { OptimizerTable } from "@/components/strategy/OptimizerTable";
-import { ReplayTable } from "@/components/strategy/ReplayTable";
+import { RetainedByYearTable } from "@/components/strategy/RetainedByYearTable";
 import { TcorSection } from "@/components/strategy/TcorSection";
 import { parseStrategyQuery, strategyHref } from "@/components/strategy/params";
 import { EXPOSURE_BASIS_LABELS } from "@/lib/constants";
@@ -29,7 +29,7 @@ const money = (n: number | null | undefined) => formatCurrency(n) ?? "—";
 
 /**
  * The client-facing document: profile and exposures, program, loss history,
- * findings accepted for discussion, retention options with the replay, TCOR by
+ * findings accepted for discussion, retention options with retained losses by year, TCOR by
  * option, considerations, and assumptions generated from the settings in use.
  * It compares; it never says what to buy.
  */
@@ -53,7 +53,7 @@ export default async function StrategyReportPage({ params, searchParams }: { par
   const totals = advanced ? programTotals(groupLayers, tiv).value : null;
   const scheduleRules = schedule.filter((r) => !r.isDefault);
 
-  // Five-year loss history on the same basis as the replay.
+  // Five-year loss history on the same basis as the retention analysis.
   const losses = policyYearSummary({ claims: data.claims, policies: data.lrPolicies, line, asOf: ws.asOfDate, adjustments: replay.adjustments }).value;
   const lossRows = losses.rows.slice(-5);
 
@@ -64,7 +64,7 @@ export default async function StrategyReportPage({ params, searchParams }: { par
   const dl = "grid grid-cols-[11rem_1fr] gap-x-4 gap-y-1 text-sm print:text-xs";
   const th = "px-2 py-1 text-left font-medium";
   const td = "px-2 py-1 align-top tabular-nums";
-  const yearsText = a.years.length ? `${a.years[0].label}–${a.years[a.years.length - 1].label}` : "no policy years";
+  const yearsText = a.years.length ? `${a.years[0].label} to ${a.years[a.years.length - 1].label}` : "no policy years";
 
   return (
     <article className="mx-auto flex w-full max-w-5xl flex-col gap-8 print:max-w-none print:gap-5 print:text-xs">
@@ -87,7 +87,7 @@ export default async function StrategyReportPage({ params, searchParams }: { par
       <header className="border-b pb-3">
         <h2 className="text-2xl font-semibold print:text-xl">Renewal strategy report: {acct.name}</h2>
         <p className="text-sm text-muted-foreground print:text-xs">
-          {line} renewal, expiring {formatDate(policy.expiryDate)} with {policy.carrier}. Prepared as of {formatDate(ws.asOfDate)}. Figures replayed over {yearsText} on {a.basisLabel}.
+          {line} renewal, expiring {formatDate(policy.expiryDate)} with {policy.carrier}. Prepared as of {formatDate(ws.asOfDate)}. Basis: {a.years.length} policy year{a.years.length === 1 ? "" : "s"} ({yearsText}), {a.basisLabel}.
           This report compares options; it does not state which the client should buy.
         </p>
       </header>
@@ -118,7 +118,7 @@ export default async function StrategyReportPage({ params, searchParams }: { par
                 <th className={th}>Carrier</th>
                 <th className={th}>Term</th>
                 <th className={th}>Exposure</th>
-                <th className={`${th} text-right`}>Limits ($ occ / agg)</th>
+                <th className={`${th} text-right`}>Limits ($ per occurrence / aggregate)</th>
                 <th className={`${th} text-right`}>Deductible ($)</th>
                 <th className={`${th} text-right`}>Premium ($ per year)</th>
               </tr>
@@ -172,22 +172,22 @@ export default async function StrategyReportPage({ params, searchParams }: { par
         {advanced && profile && totals && group ? (
           <>
             <p className="text-sm text-muted-foreground print:text-xs">
-              {LINE_GROUP_LABELS[group]} placed on a subscription basis across {new Set(groupLayers.map((l) => l.towerLabel)).size} tower{new Set(groupLayers.map((l) => l.towerLabel)).size === 1 ? "" : "s"}: program premium {money(totals.totalPremium)}, placed limit{" "}
+              {LINE_GROUP_LABELS[group]} placed on a subscription basis across {new Set(groupLayers.map((l) => l.towerLabel)).size} tower{new Set(groupLayers.map((l) => l.towerLabel)).size === 1 ? "" : "s"}: program premium {money(totals.totalPremium)} (actual), placed limit{" "}
               {money(totals.totalPlacedLimit)}
-              {totals.ratePer100Tiv !== null ? `, $${totals.ratePer100Tiv.toFixed(4)} per $100 of the ${money(tiv)} TIV` : ""}. Coverage is {profile.fullyPlaced ? "100% at every point" : `not fully placed (${money(profile.totalUnplacedDollars)} unplaced)`}.
+              {totals.ratePer100Tiv !== null ? `, $${totals.ratePer100Tiv.toFixed(4)} per $100 of the ${money(tiv)} TIV` : ""}. Placed {profile.fullyPlaced ? "100% at every point" : `${money(profile.totalUnplacedDollars)} short of 100%`}.
               {" "}
-              Every layer is read per occurrence.
+              Insurer premiums are quoted at 100% of the layer; the actual premium is 100% premium × signed line. Every layer is read per occurrence.
             </p>
             <div className="relative overflow-x-auto rounded-lg border">
               <table className="w-full min-w-[30rem] text-sm print:text-xs">
-                <caption className="sr-only">Coverage profile</caption>
+                <caption className="sr-only">Placement by segment</caption>
                 <thead className="border-b bg-muted/40">
                   <tr>
                     <th className={th}>Segment ($)</th>
                     <th className={th}>Layers</th>
                     <th className={`${th} text-right`}>Placed (%)</th>
                     <th className={th}>Status</th>
-                    <th className={`${th} text-right`}>Unplaced ($)</th>
+                    <th className={`${th} text-right`}>Short ($)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -206,16 +206,17 @@ export default async function StrategyReportPage({ params, searchParams }: { par
               </table>
             </div>
             <div className="relative overflow-x-auto rounded-lg border">
-              <table className="w-full min-w-[40rem] text-sm print:text-xs">
-                <caption className="sr-only">Participations</caption>
+              <table className="w-full min-w-[48rem] text-sm print:text-xs">
+                <caption className="sr-only">Insurer lines</caption>
                 <thead className="border-b bg-muted/40">
                   <tr>
                     <th className={th}>Tower</th>
                     <th className={th}>Layer</th>
                     <th className={th}>Insurer</th>
-                    <th className={`${th} text-right`}>Written (%)</th>
-                    <th className={`${th} text-right`}>Signed (%)</th>
-                    <th className={`${th} text-right`}>Premium ($)</th>
+                    <th className={`${th} text-right`}>Written line (%)</th>
+                    <th className={`${th} text-right`}>Signed line (%)</th>
+                    <th className={`${th} text-right`}>100% premium ($ per year)</th>
+                    <th className={`${th} text-right`}>Actual premium ($ per year)</th>
                     <th className={`${th} text-right`}>Exposed limit ($)</th>
                     <th className={`${th} text-right`}>Rate on line (%)</th>
                   </tr>
@@ -232,7 +233,8 @@ export default async function StrategyReportPage({ params, searchParams }: { par
                         </td>
                         <td className={`${td} text-right`}>{p.writtenLinePct === null ? "—" : `${p.writtenLinePct}%`}</td>
                         <td className={`${td} text-right`}>{p.signedLinePct}%</td>
-                        <td className={`${td} text-right`}>{money(p.premium)}</td>
+                        <td className={`${td} text-right`}>{money(p.premium100)}</td>
+                        <td className={`${td} text-right`}>{money(p.actualPremium)}</td>
                         <td className={`${td} text-right`}>{money(p.exposedLimit)}</td>
                         <td className={`${td} text-right`}>{p.rateOnLine === null ? "—" : `${(p.rateOnLine * 100).toFixed(4)}%`}</td>
                       </tr>
@@ -242,7 +244,8 @@ export default async function StrategyReportPage({ params, searchParams }: { par
                         {s.layer.towerLabel} {s.label}: layer total
                       </td>
                       <td className={td} />
-                      <td className={`${td} text-right`}>{(s.placedShare * 100).toFixed(1)}%</td>
+                      <td className={`${td} text-right`}>{(s.placedShare * 100).toFixed(1)}% placed</td>
+                      <td className={`${td} text-right`}>{s.premium100Equivalent === null ? "—" : `${money(s.premium100Equivalent)} (100% equivalent)`}</td>
                       <td className={`${td} text-right`}>{money(s.layerPremium)}</td>
                       <td className={`${td} text-right`}>{money(s.placedLimit)}</td>
                       <td className={`${td} text-right`}>{s.rateOnLine === null ? "—" : `${(s.rateOnLine * 100).toFixed(4)}%`}</td>
@@ -303,7 +306,7 @@ export default async function StrategyReportPage({ params, searchParams }: { par
           {losses.adjusted
             ? `adjusted (${[replay.adjustments.trendRate !== null ? `trend ${formatRatioPercent(replay.adjustments.trendRate)} a year to ${losses.prospectiveYear}` : null, replay.adjustments.factors ? "development factors by age" : null].filter(Boolean).join(", ")})`
             : "raw incurred (paid + reserved), no trend, no development"}
-          . The running year&apos;s premium is earned to date.
+          . The current year&apos;s premium is earned to date.
         </p>
         <div className="relative overflow-x-auto rounded-lg border">
           <table className="w-full min-w-[36rem] text-sm print:text-xs">
@@ -326,7 +329,7 @@ export default async function StrategyReportPage({ params, searchParams }: { par
                 <tr key={r.period.policyId}>
                   <td className={`${td} whitespace-nowrap`}>
                     {r.label}
-                    {r.current ? <Badge variant="outline" className="ml-2">running</Badge> : null}
+                    {r.current ? <Badge variant="outline" className="ml-2">current year</Badge> : null}
                   </td>
                   <td className={`${td} text-right`}>{r.claimCount}</td>
                   <td className={`${td} text-right`}>{r.openCount}</td>
@@ -378,18 +381,18 @@ export default async function StrategyReportPage({ params, searchParams }: { par
         </h2>
         <EstimatedOptionsTable rows={optionRows} premiumSource={premiumSource} manualHref="" estimatedHref="" tolerancePerYear={tolerances?.perYear ?? null} print />
         <p className="text-sm text-muted-foreground print:text-xs">
-          Each option replayed against {yearsText} ({a.years.length} year{a.years.length === 1 ? "" : "s"}) on {a.basisLabel}; the lowest deductible is the base. Retained = Σ min(incurred, deductible) per
-          year, then the aggregate cap where one exists.
+          Each option applies its deductible to the account&apos;s actual claims, year by year, over {yearsText} ({a.years.length} year{a.years.length === 1 ? "" : "s"}) on {a.basisLabel}; the lowest
+          deductible is the base. Retained = Σ min(incurred, deductible) per year, then the aggregate cap where one exists.
         </p>
         <OptimizerTable analysis={a} mathLines={[]} print />
-        <h3 className={h3}>Per-year replay</h3>
-        <ReplayTable analysis={a} print />
+        <h3 className={h3}>Retained losses by year at each deductible</h3>
+        <RetainedByYearTable analysis={a} print />
       </section>
 
       {/* 7. TCOR */}
       <section aria-labelledby="rp-tcor" className={sec}>
         <h2 id="rp-tcor" className={h2}>
-          6. Total cost of risk by option
+          6. Total cost of risk (TCOR) by option
         </h2>
         <p className="text-sm text-muted-foreground print:text-xs">
           TCOR = premiums + expected retained losses + broker fees ({money(acct.brokerFees)}) + risk control spend ({money(acct.riskControlSpend)}) + internal claims administration (
@@ -430,7 +433,7 @@ export default async function StrategyReportPage({ params, searchParams }: { par
       </section>
 
       <footer className="border-t pt-2 text-xs text-muted-foreground">
-        Prepared with Broker OS as of {formatDate(ws.asOfDate)}. All inputs are exportable as JSON for audit. Carriers and companies in the demo book are fictional.
+        Prepared with Broker OS as of {formatDate(ws.asOfDate)}. All inputs are exportable as JSON for audit. Insurers and companies in the demo book are fictional.
       </footer>
     </article>
   );

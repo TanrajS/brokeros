@@ -11,6 +11,7 @@ import { ExpiringChart } from "@/components/dashboard/ExpiringChart";
 import { ForecastAssumptionsForm } from "@/components/dashboard/ForecastAssumptionsForm";
 import { MetricTile } from "@/components/dashboard/MetricTile";
 import { ShowMath } from "@/components/dashboard/ShowMath";
+import { InfoTip } from "@/components/InfoTip";
 import { dashboardHref, type DashboardQuery } from "@/components/dashboard/params";
 import { ReadinessMeter } from "@/components/renewals/ReadinessMeter";
 import { renewalsHref } from "@/components/renewals/params";
@@ -92,10 +93,7 @@ export default async function DashboardPage({ params, searchParams }: { params: 
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Every figure is computed from the as-of date ({formatDate(asOf)}). Open &ldquo;Show the math&rdquo; on any tile to see how.</p>
-        </div>
+        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <DashboardFilters slug={slug} query={query} producers={inputs.producers} />
         <dl className="grid gap-2 text-sm sm:grid-cols-2">
           <div className="rounded-lg bg-muted/60 p-2.5">
@@ -128,10 +126,10 @@ export default async function DashboardPage({ params, searchParams }: { params: 
 
       {/* ---------------- Book ---------------- */}
       <section aria-labelledby="book-heading" className="flex flex-col gap-3">
-        <h2 id="book-heading" className="text-lg font-semibold">
+        <h2 id="book-heading" className="flex items-center gap-1.5 text-lg font-semibold">
           Book in force on {formatDate(asOf)}
+          <InfoTip label="About in force">In force means effective on or before {formatDate(asOf)}, expiring after it, and not lost or non-renewed.</InfoTip>
         </h2>
-        <p className="text-xs text-muted-foreground">In force means effective on or before the as-of date, expiring after it, and not lost or non-renewed.</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <MetricTile label="In-force premium" value={dash(formatCurrency(b.inForcePremium))} missing="In-force premium (no policies)" detail={`Sum over ${b.inForceCount} in-force policies`} lines={book.math.steps.lines as string[]} />
           <MetricTile label="In-force policies" value={dash(String(b.inForceCount))} missing="Policy count (no policies)" detail={`Of ${policies.length} policies on file`} lines={book.math.steps.lines as string[]} />
@@ -155,12 +153,12 @@ export default async function DashboardPage({ params, searchParams }: { params: 
 
       {/* ---------------- Retention ---------------- */}
       <section aria-labelledby="retention-heading" className="flex flex-col gap-3">
-        <h2 id="retention-heading" className="text-lg font-semibold">
+        <h2 id="retention-heading" className="flex items-center gap-1.5 text-lg font-semibold">
           Retention, {formatDate(lookback.start)} to {formatDate(lookback.end)}
+          <InfoTip label="About retention">
+            Over the {r.resolvedCount} expiring policies that expired in the lookback window and are resolved: renewed, lost, non-renewed, or expired with no outcome (treated as lost).
+          </InfoTip>
         </h2>
-        <p className="text-xs text-muted-foreground">
-          Over the {r.resolvedCount} policies that expired in the lookback window and are resolved: renewed, lost, non-renewed, or expired with no outcome (treated as lost).
-        </p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <MetricTile
             label="Premium retention"
@@ -193,7 +191,7 @@ export default async function DashboardPage({ params, searchParams }: { params: 
                 {formatCurrency(r.successorPremium)} renewal premium ÷ {formatCurrency(r.resolvedPremium)} resolved expiring premium. Can exceed 100% when rates rise.
               </>
             }
-            note={r.successorsMissing > 0 ? `${r.successorsMissing} renewed ${r.successorsMissing === 1 ? "policy has" : "policies have"} no renewal policy on file, counted as $0.` : undefined}
+            note={r.successorsMissing > 0 ? `${r.successorsMissing} renewed ${r.successorsMissing === 1 ? "policy has" : "policies have"} no successor policy on file, counted as $0.` : undefined}
             lines={ret.math.steps.lines as string[]}
           />
         </div>
@@ -259,8 +257,8 @@ export default async function DashboardPage({ params, searchParams }: { params: 
         <h2 id="expiring-heading" className="text-lg font-semibold">
           Expiring premium, {formatDate(forward.start)} to {formatDate(forward.end)}
         </h2>
-        <p className="text-xs text-muted-foreground">
-          Open policies (no outcome yet) by expiry month: {formatCurrency(months.value.reduce((n, m) => n + m.premium, 0))} across {months.math.steps.openCount as number} policies. Select a month to open it in Renewals.
+        <p className="text-sm">
+          {formatCurrency(months.value.reduce((n, m) => n + m.premium, 0))} across {months.math.steps.openCount as number} open policies (no outcome yet), by expiry month.
         </p>
         <div className="rounded-lg border p-3">
           <ExpiringChart buckets={chartBuckets} />
@@ -340,8 +338,11 @@ export default async function DashboardPage({ params, searchParams }: { params: 
 
       {/* ---------------- Forecast ---------------- */}
       <section aria-labelledby="forecast-heading" className="flex flex-col gap-3">
-        <h2 id="forecast-heading" className="text-lg font-semibold">
+        <h2 id="forecast-heading" className="flex items-center gap-1.5 text-lg font-semibold">
           Revenue forecast, {formatDate(forward.start)} to {formatDate(forward.end)}
+          <InfoTip label="About the forecast">
+            Forecast commission = Σ over the open policies expiring in the window of premium × assumed retention × (1 + assumed rate change) × each policy&apos;s own commission rate.
+          </InfoTip>
         </h2>
         <p className="text-sm font-medium">A projection from the assumptions above, not a prediction.</p>
         <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
@@ -361,9 +362,8 @@ export default async function DashboardPage({ params, searchParams }: { params: 
             ) : null}
           </div>
           <div className="flex flex-col gap-3">
-            <p className="text-xs text-muted-foreground">
-              Forecast commission = Σ over {f.policyCount} open policies expiring in the window ({formatCurrency(f.expiringPremium)} expiring premium) of premium × retention × (1 + rate change) × the policy&apos;s
-              commission rate.
+            <p className="text-sm">
+              {f.policyCount} open {f.policyCount === 1 ? "policy" : "policies"} expiring in the window, {formatCurrency(f.expiringPremium)} expiring premium.
             </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {(

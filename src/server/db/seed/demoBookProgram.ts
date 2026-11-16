@@ -20,12 +20,12 @@ export function demoProgramLayers(account: DemoAccount, lineGroup: LineGroup): P
       attachment: t.attachment,
       limit: t.limit,
       policyId: t.policyKey,
-      participations: (t.participations ?? [{ insurer: t.carrier, writtenLinePct: null, signedLinePct: 100, premium: t.premium, isLead: true }]).map((x, j) => ({
+      participations: (t.participations ?? [{ insurer: t.carrier, writtenLinePct: null, signedLinePct: 100, premium100: t.premium, isLead: true }]).map((x, j) => ({
         id: `${lineGroup}-l${i}-p${j}`,
         insurer: x.insurer,
         writtenLinePct: x.writtenLinePct,
         signedLinePct: x.signedLinePct,
-        premium: x.premium,
+        premium100: x.premium100,
         policyNumber: x.policyNumber ?? null,
         isLead: x.isLead ?? false,
       })),

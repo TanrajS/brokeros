@@ -215,7 +215,7 @@ export function PolicyForm({ slug, accountId, policyId, defaultValues, previousO
 
       <fieldset className="grid gap-4 sm:grid-cols-2">
         <legend className="mb-3 text-base font-semibold">History and notes</legend>
-        <Field id="previousPolicyId" label="Previous policy" error={msg("previousPolicyId")} hint="The policy this one renewed, if any">
+        <Field id="previousPolicyId" label="Expiring policy this one succeeds" error={msg("previousPolicyId")} hint="Links this term to the one it renewed, if any">
           <NativeSelect {...register("previousPolicyId")} {...fieldA11y("previousPolicyId", msg("previousPolicyId"))}>
             <option value="">None</option>
             {previousOptions.map((o) => (

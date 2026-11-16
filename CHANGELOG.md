@@ -1,5 +1,95 @@
 # Changelog
 
+## v1.5 — Polish: 100% premium basis for participations, proportional layer widths, program PDF export, loss-runs grouping, partial-line retention candidates, copy and wording audit (2026-11-16)
+
+- **100% premium basis.** `layer_participations.premium` is renamed
+  `premium_100` (`0013_premium_100`, a rename with no value conversion: entered
+  values were already quoted at 100%). The domain computes `actualPremium` =
+  100% premium × signed line ÷ 100 and never stores it. `layerSummary` now
+  returns, per insurer, the actual premium, `shareOfPlaced` (signed line ÷
+  placed share) and a rate on line defined as 100% premium ÷ layer limit (equal
+  to actual premium ÷ exposed limit; the math shows both forms), and per layer
+  the `premium100Equivalent` (Σ actual ÷ placed share). Program premium, rate per
+  $100 of TIV, blended rate on line, the strategy report and the findings engine
+  use actual premiums. The participation table has the columns Insurer, Written
+  line, Signed line, 100% premium, Actual premium, Exposed limit, Rate on line and
+  Share of layer premium; the layer total row shows the placed %, the sum of
+  actual premiums and the labelled 100% equivalent. CSV import and export use
+  `premium_100`, the export opens with a "# premium_100: premium quoted at 100%
+  of the layer" note line the import skips, and the import preview shows the
+  computed actual premium per row. The Pacific Northwest Terminals seed is
+  restated at 100% (Westcoast Re 800,000, Summit 720,000, Granville 780,000,
+  Kitsilano 800,000; Cascadia 450,000, Northgate 480,000, Thames 420,000; Pacific
+  Crest 300,000, Ironwood 320,000, Maplewood 280,000) and Kootenay's shared
+  primary at 330,000 each, so every actual premium, layer premium (310,000 /
+  264,000 / 181,000), the 755,000 program premium and every rate on line are
+  unchanged and the existing expected values hold. The "line priced above the
+  layer" test re-prices Maplewood's 100% premium to 560,000 (actual 84,000) and
+  still expects 0.28%.
+- **Layer block widths.** Insurer segments share a layer block in proportion to
+  their share of the layer's placed total (a single insurer at 50% fills the
+  block; 15% and 35% fill 30% and 70%). The placed percentage moved to a small
+  "50% placed" label in the block's top-left corner and to the layer total row;
+  the Placement column and segment table remain the only places under- or
+  over-placement shows. Mobile uses the same blocks.
+- **Program PDF export.** Export PDF on the Program tab renders
+  `programSummaryContent` (pure, `src/lib/domain/programSummary.ts`, tested on
+  the Terminals case) with `@react-pdf/renderer` (`src/server/program/pdf.tsx`):
+  landscape Letter, title with account, line group, as-of date and workspace
+  name, the summary tiles, the tower diagram redrawn to scale with insurer
+  segments by placed share (each labelled with an insurer key so nothing rests
+  on colour), the Placement column and legend, the segment table, the
+  participation table with 100% and actual premiums, program totals and a footer
+  stating the data is fictional and premiums are as entered. `exportProgramPdf`
+  files it under Documents → Policy documents as "Program summary — <line
+  group> — <as-of date>" and the button opens it in a new tab. Disabled, with
+  the reason, when Blob is not configured.
+- **Loss runs tab.** The Data quality panel is gone; every flag stays as a small
+  badge on its claim row with the reason on hover (`CLAIM_FLAG_REASONS`), and a
+  "Flagged only" filter narrows the claims table. The policy-year table is split
+  into Active and in progress (in force, or in a renewal stage with no outcome;
+  soonest expiry first) and Expired (expired or closed; most recent first) by
+  `groupPolicyYears`, three rows each with a "Show N more" link remembered in the
+  URL (`active=all`, `expired=all`) and counts in the group headers.
+  `loadLossRunInputs` now carries each policy's renewal status and whether an
+  outcome exists.
+- **Strategy wording and partial-line retention.** "Replay" and "replaying" are
+  gone from every user-facing string, the README and the report: the basis line
+  reads "Basis: 3 policy years (PY2024 to PY2026; current year included as
+  incomplete), raw incurred, as of 16 Nov 2026.", the per-year table is
+  "Retained losses by year at each deductible" (`RetainedByYearTable` replaces
+  `ReplayTable`), the method sentence is "Each option applies its deductible to
+  the account's actual claims, year by year.", and "running year" became
+  "current year" everywhere a user reads it (two wording assertions in
+  `strategy.test.ts` restated; no figure changed). New `partial_line` finding in
+  `bandAnalysis`: for a working band whose limit exceeds the per-occurrence
+  tolerance, client line = the largest whole % with line × band limit ≤
+  per-occurrence tolerance and line × worst-year in-band ≤ annual tolerance
+  (minimum 1%); saving = line × 100% equivalent premium, expected retained =
+  line × average in-band, worst-year retained = line × worst-year in-band, net =
+  saving − expected retained, candidate when net > 0, with the sentence "This
+  line would also reduce the unplaced share of the segment from X% to Y%." when
+  a segment is short. The suggested action reads "Candidate: client retains a
+  12% line of Tower 1 $1M primary alongside the insurers; recommended for
+  discussion." and the finding sits beside the raise-deductible candidate for
+  the same band. Hand-verified in `findings.test.ts` (Harbourline 142,000: line
+  12%, saving 17,040, expected retained 5,088, worst-year retained 13,800, net
+  11,952; 0% and no candidate at a 5,000 tolerance).
+- **Copy audit.** Helper sentences a finished product would not show were
+  removed from the Book, Dashboard, Renewals, Program, Loss runs, Strategy,
+  Documents and Policy pages; where a new user might need the content it moved
+  to an info icon tooltip on the heading (`InfoTip`). Units in column headers,
+  the as-of date in the header, Show the math, validation messages, empty states
+  and every statement of a changeable assumption stay. Wording follows the
+  glossary in `CLAUDE.md` (expiring policy, successor policy, signed line,
+  written line, 100% premium, actual premium, placed, short, exposed limit, rate
+  on line, band, deductible, retention, tolerance, basis); sentence case; dates
+  as 16 Nov 2026; "as of" in prose; buttons are verbs (Export PDF, Save option,
+  Save tolerances). The tab is "Loss runs". The per-occurrence basis is stated
+  once, in the Program heading's tooltip.
+- Browser smoke tests updated for the new strings (`e2e-strategy`,
+  `e2e-lossruns`, `e2e-advanced`, `e2e-program`); not run in this session.
+
 ## v1.4 — Documents tab with Vercel Blob; Policy page with certificate generation; automatic strategy findings and estimated retention options; removed Marketing, contract requirements, layer basis, coverage strip and Workers Compensation; ten-account demo book (2026-11-14)
 
 - **Removals.** The Marketing tab, `submissions` and `quotes` tables, the

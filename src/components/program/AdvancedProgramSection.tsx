@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertTriangle, Check, Download, Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -24,12 +24,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field, fieldA11y } from "@/components/form/Field";
 import { NativeCheckbox } from "@/components/form/Checkbox";
 import { NativeSelect } from "@/components/form/NativeSelect";
+import { InfoTip } from "@/components/InfoTip";
 import { Missing } from "@/components/Missing";
 import { ShowMath } from "@/components/dashboard/ShowMath";
 import {
   COVERAGE_STATUS_LABELS,
   LAYER_TYPES,
   LAYER_TYPE_LABELS,
+  actualPremium,
   analyzeTower,
   coverageProfile,
   layerSummary,
@@ -41,6 +43,7 @@ import {
   type ParticipationInput,
   type ProgramLayerInput,
 } from "@/lib/domain/program";
+import { INSURER_PALETTE, PLACEMENT_FILL } from "@/lib/domain/programSummary";
 import { formatCompactDollars, parseCurrencyInput } from "@/lib/domain/money";
 import { formatCurrency } from "@/lib/format";
 import { layerFormSchema, participationFormSchema, type LayerFormInput, type LayerFormValues, type ParticipationFormInput, type ParticipationFormValues } from "@/lib/schemas/program";
@@ -63,20 +66,17 @@ interface Props {
   exportHref: string;
 }
 
-type Draft = { insurer: string; written: string; signed: string; premium: string };
+type Draft = { insurer: string; written: string; signed: string; premium100: string };
 type Dialogs = { kind: "layer"; layer: ProgramLayerInput | null } | { kind: "participation"; layer: ProgramLayerInput } | { kind: "delete-layer"; layer: ProgramLayerInput } | { kind: "delete-participation"; layer: ProgramLayerInput; p: ParticipationInput } | null;
 
 // Dataviz palette: fully placed aqua; anything below or above 100% red-orange.
 const STATUS_COLOR: Record<CoverageStatus, string> = { fully_placed: "#1baf7a", under_placed: "#d6473c", over_placed: "#d6473c", not_covered: "#d6473c" };
-/** Twelve distinct insurer swatches, assigned in order of first appearance and stable across towers. */
-const INSURER_COLORS = ["#2a78d6", "#1baf7a", "#eda100", "#e87ba4", "#7c6fd6", "#eb6834", "#52514e", "#0e7490", "#a16207", "#be185d", "#4d7c0f", "#6d28d9"];
-/** Placement column fills: dark enough for white text at 4.5:1 or better (green 6.6:1, red 7.3:1). */
-const PLACEMENT_FILL = { full: "#0b6b4a", off: "#9b1c1c" } as const;
 /** The placed % rounded to whole points for the big label; 100.00% ± 0.01 reads "100%". */
 const bigPct = (share: number) => `${Math.round(share * 100)}%`;
 const pct = (ratio: number, d = 2) => `${(ratio * 100).toFixed(d)}%`;
 const pctPts = (n: number) => `${(+n.toFixed(3)).toString()}%`;
 const str = (n: number | null) => (n === null ? "" : String(n));
+const shortName = (s: string) => s.replace(" (fictional)", "");
 
 /** Applies the inline drafts to the layers so every figure recomputes as the user types. */
 function withDrafts(layers: ProgramLayerInput[], drafts: Record<string, Draft>): ProgramLayerInput[] {
@@ -87,22 +87,24 @@ function withDrafts(layers: ProgramLayerInput[], drafts: Record<string, Draft>):
       if (!d) return p;
       const written = d.written.trim() === "" ? null : Number(d.written);
       const signed = Number(d.signed);
-      const premium = parseCurrencyInput(d.premium).value;
+      const premium100 = parseCurrencyInput(d.premium100).value;
       return {
         ...p,
         insurer: d.insurer.trim() || p.insurer,
         writtenLinePct: written !== null && Number.isFinite(written) ? written : p.writtenLinePct,
         signedLinePct: Number.isFinite(signed) && d.signed.trim() !== "" ? signed : p.signedLinePct,
-        premium: premium ?? p.premium,
+        premium100: premium100 ?? p.premium100,
       };
     }),
   }));
 }
 
 /**
- * The subscription view: towers side by side on one dollar scale with a
- * coverage strip, then the participation table (editable inline) with layer and
- * program totals. Every figure recomputes from the drafts before anything is saved.
+ * The subscription view: towers side by side on one dollar scale with the
+ * Placement column, the segment table, then the participation table (editable
+ * inline) with layer and program totals. Premiums are quoted at 100% of the
+ * layer; the actual premium is 100% premium × signed line. Every figure
+ * recomputes from the drafts before anything is saved.
  */
 export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv, policyOptions, exportHref }: Props) {
   const router = useRouter();
@@ -117,7 +119,7 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
   const top = profile.value.programTop;
   const insurerColor = useMemo(() => {
     const names = [...new Set(live.flatMap((l) => l.participations.map((p) => p.insurer)))];
-    return new Map(names.map((n, i) => [n, INSURER_COLORS[i % INSURER_COLORS.length]]));
+    return new Map(names.map((n, i) => [n, INSURER_PALETTE[i % INSURER_PALETTE.length]]));
   }, [live]);
   const towerFindings = towers.map((t) => ({ tower: t, findings: analyzeTower(towerInputsFrom(live.filter((l) => l.towerLabel === t))).value.findings }));
   const segments = profile.value.segments;
@@ -135,7 +137,7 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
   }
 
   function startEdit(p: ParticipationInput) {
-    setDrafts((d) => ({ ...d, [p.id]: { insurer: p.insurer, written: str(p.writtenLinePct), signed: String(p.signedLinePct), premium: String(p.premium) } }));
+    setDrafts((d) => ({ ...d, [p.id]: { insurer: p.insurer, written: str(p.writtenLinePct), signed: String(p.signedLinePct), premium100: String(p.premium100) } }));
   }
   function cancelEdit(id: string) {
     setDrafts((d) => {
@@ -151,7 +153,7 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
     const d = drafts[p.id];
     if (!d) return;
     startTransition(async () => {
-      const res = await saveParticipation(slug, layer.id, p.id, { insurer: d.insurer, writtenLinePct: d.written, signedLinePct: d.signed, premium: d.premium, policyNumber: p.policyNumber ?? "", isLead: p.isLead, notes: "" });
+      const res = await saveParticipation(slug, layer.id, p.id, { insurer: d.insurer, writtenLinePct: d.written, signedLinePct: d.signed, premium100: d.premium100, policyNumber: p.policyNumber ?? "", isLead: p.isLead, notes: "" });
       if (!res.ok) {
         toast.error(res.message, { description: Object.values(res.fieldErrors ?? {}).join("; ") || undefined });
         return;
@@ -180,8 +182,12 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
   return (
     <section aria-labelledby="advanced-heading" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="advanced-heading" className="text-lg font-semibold">
+        <h2 id="advanced-heading" className="flex items-center gap-1.5 text-lg font-semibold">
           Subscription placement
+          <InfoTip label="About subscription placements">
+            Each block is a layer drawn to scale; insurer segments share the block in proportion to the layer&apos;s placed total. The Placement column adds every tower&apos;s share per segment. Premiums are
+            quoted at 100% of the layer; the actual premium is 100% premium × signed line. Every layer is read on a per-occurrence basis.
+          </InfoTip>
         </h2>
         <div className="flex flex-wrap gap-2">
           <ImportPlacementDialog slug={slug} accountId={accountId} lineGroup={lineGroup} />
@@ -204,10 +210,10 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
         <>
           {/* Totals */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Tile label="Program premium ($ per year)" value={formatCurrency(totals.value.totalPremium)} />
+            <Tile label="Program premium ($ per year, actual)" value={formatCurrency(totals.value.totalPremium)} />
             <Tile label="Placed limit ($)" value={formatCurrency(totals.value.totalPlacedLimit)} />
             <Tile label="Rate per $100 of TIV" value={totals.value.ratePer100Tiv === null ? null : `$${totals.value.ratePer100Tiv.toFixed(4)}`} missing="Rate per $100 (no TIV on the linked policy)" detail={tiv !== null ? `TIV ${formatCurrency(tiv)}` : "Enter an insurable value on the property policy"} />
-            <Tile label="Coverage" value={profile.value.fullyPlaced ? "100% at every point" : `${formatCurrency(profile.value.totalUnplacedDollars)} unplaced`} detail={`${profile.value.segments.length} segment${profile.value.segments.length === 1 ? "" : "s"} to ${formatCurrency(top)}`} />
+            <Tile label="Placed" value={profile.value.fullyPlaced ? "100% at every point" : `${formatCurrency(profile.value.totalUnplacedDollars)} short`} detail={`${profile.value.segments.length} segment${profile.value.segments.length === 1 ? "" : "s"} to ${formatCurrency(top)}`} />
           </div>
           {towerFindings.some((t) => t.findings.length) ? (
             <ul className="flex flex-col gap-1.5">
@@ -230,7 +236,7 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
               {[...insurerColor.entries()].map(([name, color]) => (
                 <li key={name} className="flex items-center gap-1">
                   <span className="inline-block size-3 rounded-sm" style={{ background: color }} aria-hidden="true" />
-                  {name.replace(" (fictional)", "")}
+                  {shortName(name)}
                 </li>
               ))}
               <li className="flex items-center gap-1">
@@ -250,7 +256,11 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
                   </span>
                 ))}
               </div>
-              <div className="flex flex-col gap-3 md:flex-1 md:flex-row" role="img" aria-label={`${towers.length} tower${towers.length === 1 ? "" : "s"} drawn to ${formatCurrency(top)}; coverage ${profile.value.fullyPlaced ? "fully placed" : "not fully placed"}`}>
+              <div
+                className="flex flex-col gap-3 md:flex-1 md:flex-row"
+                role="img"
+                aria-label={`${towers.length} tower${towers.length === 1 ? "" : "s"} drawn to ${formatCurrency(top)}; ${summaries.map((s) => `${s.layer.towerLabel} ${s.label} ${bigPct(s.placedShare)} placed: ${s.participations.map((p) => `${shortName(p.insurer)} ${pctPts(p.signedLinePct)}`).join(", ") || "no insurers"}`).join("; ")}; coverage ${profile.value.fullyPlaced ? "fully placed" : "not fully placed"}`}
+              >
                 {towers.map((t) => (
                   <div key={t} className="flex flex-col gap-1 md:min-w-44 md:flex-1">
                     <div className="relative h-80 rounded border bg-background">
@@ -260,14 +270,17 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
                           const bottom = (s.layer.attachment / top) * 100;
                           const height = Math.max(2, ((s.exhaustion - s.layer.attachment) / top) * 100);
                           return (
-                            <div key={s.layer.id} className="absolute inset-x-1 flex overflow-hidden rounded border border-primary/40 bg-background text-[10px] leading-tight" style={{ bottom: `${bottom}%`, height: `${Math.min(height, 100 - bottom)}%` }} title={`${s.label}: ${pct(s.placedShare, 1)} placed, ${formatCurrency(s.layerPremium)}`}>
+                            <div key={s.layer.id} className="absolute inset-x-1 flex overflow-hidden rounded border border-primary/40 bg-background text-[10px] leading-tight" style={{ bottom: `${bottom}%`, height: `${Math.min(height, 100 - bottom)}%` }} title={`${s.label}: ${pct(s.placedShare, 1)} placed, ${formatCurrency(s.layerPremium)} actual premium`}>
+                              {/* Segments share the block in proportion to the layer's placed total (v1.5). */}
                               {s.participations.map((p) => (
-                                <div key={p.id} className="flex items-center justify-center overflow-hidden px-0.5 text-white" style={{ width: `${p.signedLinePct}%`, background: insurerColor.get(p.insurer) }}>
+                                <div key={p.id} className="flex items-center justify-center overflow-hidden px-0.5 text-white" style={{ width: `${(p.shareOfPlaced ?? 0) * 100}%`, background: insurerColor.get(p.insurer) }}>
                                   <span className="truncate">
-                                    {p.insurer.replace(" (fictional)", "")} {pctPts(p.signedLinePct)}
+                                    {shortName(p.insurer)} {pctPts(p.signedLinePct)}
                                   </span>
                                 </div>
                               ))}
+                              {s.participations.length === 0 ? <div className="flex flex-1 items-center justify-center text-muted-foreground">No insurers</div> : null}
+                              <span className="absolute top-0 left-0 rounded-br bg-background/90 px-1 py-px text-[9px] font-medium text-foreground">{bigPct(s.placedShare)} placed</span>
                             </div>
                           );
                         })}
@@ -293,12 +306,12 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
                         type="button"
                         onClick={() => focusSegment(i)}
                         title={contributorsOf(seg)}
-                        aria-label={`${formatCurrency(seg.from)} to ${formatCurrency(seg.to)}: ${bigPct(seg.placedShare)} placed${seg.status === "over_placed" ? ", over-placed" : ""}. ${contributorsOf(seg)}. Show in the segment table`}
+                        aria-label={`${formatCurrency(seg.from)} to ${formatCurrency(seg.to)}: ${bigPct(seg.placedShare)} placed${seg.status === "over_placed" ? ", over-placed" : seg.status === "under_placed" ? `, short ${pct(seg.shortfallShare, 1)}` : ""}. ${contributorsOf(seg)}. Show in the segment table`}
                         className="absolute flex flex-col items-center justify-center overflow-hidden rounded border border-white/70 text-white outline-none focus-visible:ring-3 focus-visible:ring-ring/50 max-md:inset-y-1 max-md:left-[var(--from)] max-md:w-[var(--size)] md:inset-x-1 md:bottom-[var(--from)] md:h-[var(--size)]"
                         style={{ "--from": `${from}%`, "--size": `${Math.min(size, 100 - from)}%`, background: full ? PLACEMENT_FILL.full : PLACEMENT_FILL.off } as React.CSSProperties}
                       >
                         <span className="text-base font-semibold leading-none">{bigPct(seg.placedShare)}</span>
-                        {seg.status === "over_placed" ? <span className="text-[10px] leading-tight">over</span> : null}
+                        {seg.status === "over_placed" ? <span className="text-[10px] leading-tight">over</span> : seg.status !== "fully_placed" ? <span className="text-[10px] leading-tight">short</span> : null}
                         <span className="max-w-full truncate px-0.5 text-[10px] leading-tight opacity-90">
                           {formatCompactDollars(seg.from).value} to {formatCompactDollars(seg.to).value}
                         </span>
@@ -309,20 +322,19 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
                 <p className="text-center text-xs font-medium">Placement</p>
               </div>
             </div>
-            <figcaption className="text-xs text-muted-foreground">Each block is a layer split by insurer share; the Placement column adds every tower&apos;s share per segment. Red means a segment is below or above 100%.</figcaption>
           </figure>
 
           {/* Coverage table */}
           <div className="relative overflow-x-auto rounded-lg border">
             <table className="w-full min-w-[32rem] text-sm">
-              <caption className="sr-only">Coverage profile by segment</caption>
+              <caption className="sr-only">Placement by segment</caption>
               <thead className="border-b bg-muted/40">
                 <tr>
                   <th className={head}>Segment ($)</th>
                   <th className={head}>Layers covering it</th>
                   <th className={`${head} text-right`}>Placed (%)</th>
                   <th className={head}>Status</th>
-                  <th className={`${head} text-right`}>Unplaced ($)</th>
+                  <th className={`${head} text-right`}>Short ($)</th>
                   <th className={`${head} text-right`}>Blended rate on line (%)</th>
                 </tr>
               </thead>
@@ -350,16 +362,17 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
 
           {/* Participation table */}
           <div className="relative overflow-x-auto rounded-lg border">
-            <table className="w-full min-w-[56rem] text-sm">
-              <caption className="sr-only">Participations by tower and layer; edit a row inline</caption>
+            <table className="w-full min-w-[64rem] text-sm">
+              <caption className="sr-only">Insurer lines by tower and layer, with 100% and actual premiums; edit a row inline</caption>
               <thead className="border-b bg-muted/40">
                 <tr>
                   <th className={head}>Tower</th>
                   <th className={head}>Layer</th>
                   <th className={head}>Insurer</th>
-                  <th className={`${head} text-right`}>Written (%)</th>
-                  <th className={`${head} text-right`}>Signed (%)</th>
-                  <th className={`${head} text-right`}>Premium ($ per year)</th>
+                  <th className={`${head} text-right`}>Written line (%)</th>
+                  <th className={`${head} text-right`}>Signed line (%)</th>
+                  <th className={`${head} text-right`}>100% premium ($ per year)</th>
+                  <th className={`${head} text-right`}>Actual premium ($ per year)</th>
                   <th className={`${head} text-right`}>Exposed limit ($)</th>
                   <th className={`${head} text-right`}>Rate on line (%)</th>
                   <th className={`${head} text-right`}>Share of layer premium (%)</th>
@@ -375,8 +388,8 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
               </tbody>
               <tfoot className="border-t bg-muted/20 font-semibold">
                 <tr>
-                  <td className={cell} colSpan={5}>
-                    Program total
+                  <td className={cell} colSpan={6}>
+                    Program total (actual premiums)
                   </td>
                   <td className={`${cell} text-right`}>{formatCurrency(totals.value.totalPremium)}</td>
                   <td className={`${cell} text-right`}>{formatCurrency(totals.value.totalPlacedLimit)}</td>
@@ -386,10 +399,6 @@ export function AdvancedProgramSection({ slug, accountId, lineGroup, layers, tiv
               </tfoot>
             </table>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Placed share = Σ signed lines. Layer premium = Σ participation premiums. Placed limit = limit × placed share. Rate on line = premium ÷ placed limit (per insurer: ÷ limit × signed line).
-            Edits recompute every figure before you save; the server re-validates.
-          </p>
           <ShowMath lines={[...(totals.math.steps.lines as string[]), ...(profile.math.steps.lines as string[]), ...summaries.flatMap((s) => layerSummary(s.layer).math.steps.lines as string[])]} />
         </>
       )}
@@ -491,9 +500,10 @@ function LayerRows({
                 </Badge>
               ) : null}
             </td>
-            <td className={`${cell} text-right`}>{d ? <Input aria-label="Written line %" value={d.written} onChange={(e) => onChange(p.id, { written: e.target.value })} inputMode="decimal" className={inputCls} /> : p.writtenLinePct === null ? <span className="text-muted-foreground">—</span> : pctPts(p.writtenLinePct)}</td>
-            <td className={`${cell} text-right`}>{d ? <Input aria-label="Signed line %" value={d.signed} onChange={(e) => onChange(p.id, { signed: e.target.value })} inputMode="decimal" className={inputCls} /> : pctPts(p.signedLinePct)}</td>
-            <td className={`${cell} text-right`}>{d ? <Input aria-label="Premium" value={d.premium} onChange={(e) => onChange(p.id, { premium: e.target.value })} inputMode="decimal" className="h-7 w-28 text-right text-xs" /> : formatCurrency(p.premium)}</td>
+            <td className={`${cell} text-right`}>{d ? <Input aria-label="Written line (%)" value={d.written} onChange={(e) => onChange(p.id, { written: e.target.value })} inputMode="decimal" className={inputCls} /> : p.writtenLinePct === null ? <span className="text-muted-foreground">—</span> : pctPts(p.writtenLinePct)}</td>
+            <td className={`${cell} text-right`}>{d ? <Input aria-label="Signed line (%)" value={d.signed} onChange={(e) => onChange(p.id, { signed: e.target.value })} inputMode="decimal" className={inputCls} /> : pctPts(p.signedLinePct)}</td>
+            <td className={`${cell} text-right`}>{d ? <Input aria-label="100% premium" value={d.premium100} onChange={(e) => onChange(p.id, { premium100: e.target.value })} inputMode="decimal" className="h-7 w-28 text-right text-xs" /> : formatCurrency(p.premium100)}</td>
+            <td className={`${cell} text-right`}>{formatCurrency(p.actualPremium)}</td>
             <td className={`${cell} text-right`}>{formatCurrency(p.exposedLimit)}</td>
             <td className={`${cell} text-right`}>{p.rateOnLine === null ? "—" : pct(p.rateOnLine, 4)}</td>
             <td className={`${cell} text-right`}>{p.shareOfPremium === null ? "—" : pct(p.shareOfPremium, 1)}</td>
@@ -550,9 +560,13 @@ function LayerRows({
         </td>
         <td className={`${cell} text-right text-xs`}>{s.layer.participations.some((p) => p.writtenLinePct !== null) ? pctPts(s.layer.participations.reduce((t, p) => t + (p.writtenLinePct ?? 0), 0)) : "—"}</td>
         <td className={`${cell} text-right font-medium`}>
-          {pct(s.placedShare, 1)}
-          {s.underPlacedPct > 0 ? <span className="block text-xs text-amber-900">short {pctPts(s.underPlacedPct)}</span> : null}
-          {s.overPlacedPct > 0 ? <span className="block text-xs text-red-800">over {pctPts(s.overPlacedPct)}</span> : null}
+          {pct(s.placedShare, 1)} placed
+          {s.underPlacedPct > 0 ? <span className="block text-xs font-normal text-amber-900">short {pctPts(s.underPlacedPct)}</span> : null}
+          {s.overPlacedPct > 0 ? <span className="block text-xs font-normal text-red-800">over {pctPts(s.overPlacedPct)}</span> : null}
+        </td>
+        <td className={`${cell} text-right`}>
+          {s.premium100Equivalent === null ? "—" : formatCurrency(s.premium100Equivalent)}
+          <span className="block text-xs font-normal text-muted-foreground">100% equivalent</span>
         </td>
         <td className={`${cell} text-right font-medium`}>{formatCurrency(s.layerPremium)}</td>
         <td className={`${cell} text-right font-medium`}>{formatCurrency(s.placedLimit)}</td>
@@ -594,7 +608,7 @@ function LayerDialog({ slug, accountId, lineGroup, layer, towers, policyOptions,
         <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>{layer ? "Edit layer" : "Add layer"}</DialogTitle>
-            <DialogDescription>A layer belongs to a tower; name a new tower to split the risk horizontally. Limits are per occurrence. Insurers are added to the layer afterwards.</DialogDescription>
+            <DialogDescription>A layer belongs to a tower; name a new tower to split the risk side by side. Limits are per occurrence. Insurers are added to the layer afterwards.</DialogDescription>
           </DialogHeader>
           <input type="hidden" {...register("lineGroup")} />
           <div className="grid gap-3 sm:grid-cols-2">
@@ -652,12 +666,17 @@ function LayerDialog({ slug, accountId, lineGroup, layer, towers, policyOptions,
 function ParticipationDialog({ slug, layer, onClose }: { slug: string; layer: ProgramLayerInput; onClose: () => void }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const { register, handleSubmit, formState, getValues, setError } = useForm<ParticipationFormInput, unknown, ParticipationFormValues>({
+  const { register, handleSubmit, formState, getValues, setError, control } = useForm<ParticipationFormInput, unknown, ParticipationFormValues>({
     resolver: zodResolver(participationFormSchema),
-    defaultValues: { insurer: "", writtenLinePct: "", signedLinePct: "", premium: "", policyNumber: "", isLead: layer.participations.length === 0, notes: "" },
+    defaultValues: { insurer: "", writtenLinePct: "", signedLinePct: "", premium100: "", policyNumber: "", isLead: layer.participations.length === 0, notes: "" },
     mode: "onChange",
   });
   const msg = (k: keyof ParticipationFormInput) => formState.errors[k]?.message;
+  // The actual premium is shown as the user types: 100% premium × signed line.
+  const [signedRaw, premiumRaw] = useWatch({ control, name: ["signedLinePct", "premium100"] });
+  const signed = Number(signedRaw);
+  const premium100 = parseCurrencyInput(premiumRaw ?? "").value;
+  const actual = premium100 !== null && Number.isFinite(signed) && String(signedRaw ?? "").trim() !== "" ? actualPremium(premium100, signed) : null;
   function onSubmit() {
     startTransition(async () => {
       const res = await saveParticipation(slug, layer.id, null, getValues());
@@ -679,20 +698,20 @@ function ParticipationDialog({ slug, layer, onClose }: { slug: string; layer: Pr
             <DialogTitle>
               Add insurer to {layer.towerLabel} {layerSummary(layer).value.label}
             </DialogTitle>
-            <DialogDescription>Written line is what the insurer offered; signed line is what it kept after sign-down. Leave written blank when lines were signed directly.</DialogDescription>
+            <DialogDescription>Written line is what the insurer offered; signed line is what it kept after sign-down. The premium is quoted as if the insurer wrote the whole layer (100%); the actual premium is 100% premium × signed line.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field id="ap-insurer" label="Insurer" required error={msg("insurer")} className="flex flex-col gap-1.5 sm:col-span-2">
               <Input {...register("insurer")} {...fieldA11y("ap-insurer", msg("insurer"))} autoComplete="off" />
             </Field>
-            <Field id="ap-written" label="Written line (%)" error={msg("writtenLinePct")}>
-              <Input {...register("writtenLinePct")} {...fieldA11y("ap-written", msg("writtenLinePct"))} inputMode="decimal" />
+            <Field id="ap-written" label="Written line (%)" error={msg("writtenLinePct")} hint="Leave blank when lines were signed directly">
+              <Input {...register("writtenLinePct")} {...fieldA11y("ap-written", msg("writtenLinePct"), "hint")} inputMode="decimal" />
             </Field>
             <Field id="ap-signed" label="Signed line (%)" required error={msg("signedLinePct")}>
               <Input {...register("signedLinePct")} {...fieldA11y("ap-signed", msg("signedLinePct"))} inputMode="decimal" />
             </Field>
-            <Field id="ap-premium" label="Premium (CAD)" required error={msg("premium")}>
-              <Input {...register("premium")} {...fieldA11y("ap-premium", msg("premium"))} inputMode="decimal" />
+            <Field id="ap-premium" label="100% premium (CAD)" required error={msg("premium100")} hint={actual === null ? "Quoted at 100% of the layer" : `Actual premium at ${signed}%: ${formatCurrency(actual)}`}>
+              <Input {...register("premium100")} {...fieldA11y("ap-premium", msg("premium100"), "hint")} inputMode="decimal" />
             </Field>
             <Field id="ap-policy" label="Policy number" error={msg("policyNumber")}>
               <Input {...register("policyNumber")} {...fieldA11y("ap-policy", msg("policyNumber"))} />

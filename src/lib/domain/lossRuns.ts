@@ -3,7 +3,7 @@
  * date in; { value, math } out. No React, no database, no clock.
  * `math.steps.lines` is the human-readable "Show the math".
  */
-import { LINES_OF_BUSINESS, type ClaimStatus, type ExposureBasis, type LineOfBusiness } from "@/lib/constants";
+import { LINES_OF_BUSINESS, type ClaimStatus, type ExposureBasis, type LineOfBusiness, type RenewalStatus } from "@/lib/constants";
 import { daysBetween, isISODate } from "./dates";
 import { parseCurrencyInput } from "./money";
 import type { Calc, ISODate } from "./types";
@@ -157,8 +157,66 @@ export const CLAIM_FLAG_LABELS: Record<ClaimFlag, string> = {
   duplicate_number: "Duplicate claim number",
   closed_with_reserve: "Closed with a reserve",
   reported_before_loss: "Reported before the date of loss",
-  dated_after_as_of: "Dated after the as-of date",
+  dated_after_as_of: "Dated in the future",
 };
+/** v1.5: the reason behind each flag, shown on hover on the claim row. */
+export const CLAIM_FLAG_REASONS: Record<ClaimFlag, string> = {
+  outside_period: "The date of loss falls outside every policy period for this line, so the claim is left out of the policy-year summaries until a policy covers it.",
+  duplicate_number: "Another claim on this account has the same claim number.",
+  closed_with_reserve: "The claim is closed but still carries a reserve. Reopened files do this; otherwise the reserve should be zero.",
+  reported_before_loss: "The date reported is earlier than the date of loss.",
+  dated_after_as_of: "The date of loss or the date reported is after the workspace date, so the claim has not happened yet on this basis.",
+};
+
+/* ------------------------------------------------------------------ */
+/* Policy-year groups (v1.5)                                           */
+/* ------------------------------------------------------------------ */
+
+export interface PolicyYearStatus {
+  renewalStatus: RenewalStatus;
+  /** True when an outcome (renewed, lost, non-renewed) is recorded on the policy. */
+  hasOutcome: boolean;
+}
+
+export interface PolicyYearGroups<T> {
+  /** In force at the as-of date, or in a renewal stage with no outcome yet; soonest expiry first. */
+  active: T[];
+  /** Expired or closed; most recent expiry first. */
+  expired: T[];
+}
+
+const CLOSED_STATUSES: readonly RenewalStatus[] = ["renewed", "lost", "non_renewed"];
+
+/**
+ * Splits policy-year rows into "Active and in progress" and "Expired".
+ *   in force = effective ≤ as-of < expiry
+ *   active = in force, or no outcome and an open status (a renewal stage without an outcome)
+ *   expired = everything else (expired or closed)
+ * Active rows sort by expiry ascending (soonest first); expired rows by expiry descending.
+ */
+export function groupPolicyYears<T extends { period: PolicyPeriod }>(rows: T[], asOf: ISODate, status: Record<string, PolicyYearStatus>): Calc<PolicyYearGroups<T>> {
+  const active: T[] = [];
+  const expired: T[] = [];
+  const lines: string[] = [];
+  for (const r of rows) {
+    const s = status[r.period.policyId] ?? { renewalStatus: "not_started" as RenewalStatus, hasOutcome: false };
+    const inForce = r.period.effectiveDate <= asOf && asOf < r.period.expiryDate;
+    const open = !s.hasOutcome && !CLOSED_STATUSES.includes(s.renewalStatus);
+    const isActive = inForce || open;
+    (isActive ? active : expired).push(r);
+    lines.push(`${r.period.label}: ${inForce ? "in force" : asOf < r.period.effectiveDate ? "not yet effective" : "expired"}, ${s.hasOutcome ? "outcome recorded" : "no outcome"}, status ${s.renewalStatus} → ${isActive ? "active and in progress" : "expired"}`);
+  }
+  active.sort((a, b) => a.period.expiryDate.localeCompare(b.period.expiryDate));
+  expired.sort((a, b) => b.period.expiryDate.localeCompare(a.period.expiryDate));
+  return {
+    value: { active, expired },
+    math: {
+      inputs: { rows: rows.length, asOf },
+      formula: "active = in force (effective ≤ as-of < expiry) or no outcome with an open status; expired = the rest; active soonest expiry first, expired most recent first",
+      steps: { lines },
+    },
+  };
+}
 
 const normalizeNumber = (s: string) => s.trim().toLowerCase();
 
@@ -278,7 +336,7 @@ export interface SummaryRow {
   reserved: number;
   incurred: number;
   earnedPremium: number;
-  /** True for the running year: premium pro-rated by days elapsed to the as-of date. */
+  /** True for the current year: premium pro-rated by days elapsed to the as-of date. */
   earnedToDate: boolean;
   lossRatio: number | null;
   frequency: Frequency;
@@ -339,7 +397,7 @@ function frequencyUnit(basis: ExposureBasis): { divisor: number; unit: string } 
  *   loss ratio = incurred ÷ earned premium
  *   frequency = claims ÷ exposure units ($1M of revenue/payroll, 100 employees/vehicles)
  *   severity = incurred ÷ claim count
- * The running year's earned premium (and exposure) is pro-rated by days elapsed to the as-of date.
+ * The current year's earned premium (and exposure) is pro-rated by days elapsed to the as-of date.
  */
 export function policyYearSummary(input: {
   claims: LRClaim[];
@@ -475,7 +533,7 @@ export function policyYearSummary(input: {
     math: {
       inputs: { line, asOf, adjustments },
       formula:
-        "loss ratio = incurred ÷ earned premium; frequency = claims ÷ exposure units; severity = incurred ÷ claims; the running year is earned to date",
+        "loss ratio = incurred ÷ earned premium; frequency = claims ÷ exposure units; severity = incurred ÷ claims; the current year is earned to date",
       steps: { lines },
     },
   };
