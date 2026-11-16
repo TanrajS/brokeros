@@ -1,3 +1,170 @@
+BROKER OS
+
+A renewal-first workspace for a commercial insurance brokerage: run the book of business, analyse each client's loss history and insurance program, and turn both into a renewal strategy the client can read.
+
+Live application: brokeros-nine.vercel.app
+Repository: (https://github.com/TanrajS/brokeros)
+Course: ACCT 4500
+Group: Tanraj Sidhu, Arsh Sandhu, Matthew Yen
+
+
+
+# Problem
+
+Who it is for: Account managers and producers at a commercial lines brokerage, the leadership team that oversees the book, and pages can be exported to show to the client's risk manager or CFO.
+
+What problem it addresses: A brokerage's system of record (Applied Epic and similar) is built for data entry and documents. It tracks which policies exist, but it does not help a broker *decide*: which renewals need action this week, whether a renewal's premium increase is really a rate increase or just exposure growth, whether a client's deductible is in the right place given their actual claims, whether a layered placement is fully subscribed, or what the client's total cost of risk is under each option. 
+
+Today that analysis is rebuilt by hand in Excel for each renewal, inconsistently between producers, and the client receives a proposal with a recommendation but no visible math.
+
+Broker OS keeps the operational records and the analytics in one place, so the strategy numbers come from the same accounts, policies and claims the account manager already maintains, and every figure shows the arithmetic behind it.
+
+If our team were to sell this product a good addition would be training models on insurer provided policy documents, then the process would be as simple as uploading the policy documents then having AI fill all the required fields, this would replace almost all the physical data entry in this application.
+
+
+
+# Core Function
+
+A user opens an account, reviews its renewals, loss history and program, and produces a renewal strategy that compares deductible and retention options on the client's own claims, with every number traceable. From there brokers can enter in policy details and generate program structures which have a simplized view of the entire placement.
+
+
+Modules: Workspaces and Settings (v0.1); Book with deductible schedules (v0.1, v1.3); Renewals (v0.2); Dashboard (v0.3); Loss Runs (v0.4); Program with subscription placements and PDF export (v1, v1.3, v1.5); Documents (v1.4); Policy page and certificates (v1.4); Strategy with automatic findings + Fixes + Simplizing Scope (v1.2, v1.4, v1.5).
+
+
+# BUSINESS RULES
+
+Stages. Days to expiry = expiry date minus as-of date. More than 120 days: not yet due. 91 to 120: 120-day. 61 to 90: 90-day. 31 to 60: 60-day. 1 to 30: 30-day. 0 or less: expired.
+
+Rate change vs premium change. Rate = premium / exposure. Premium change = renewal premium / expiring premium - 1; exposure change likewise; rate change = renewal rate / expiring rate - 1. (1 + premium change) = (1 + rate change) x (1 + exposure change). Example: $100,000 on $20M revenue renewed at $108,000 on $23M gives premium +8.0%, exposure +15.0%, rate -6.09%.
+
+Retention. Over policies that expired in the look-back window and are resolved: count retention = renewed / resolved; premium retention = expiring premium of renewed policies / expiring premium of all resolved. Expired policies with no outcome count as lost and are flagged. Demo book: 8 of 10 renewed = 80.0%; $1,085,000 of $1,240,000 = 87.5%.
+
+Revenue forecast. Per open expiring policy: expiring premium x assumed retention x (1 + assumed rate change) x commission rate. Low and high cases move retention by 10 points and rate change by 5 points. Labelled as a projection from stated assumptions.
+
+Loss statistics. Incurred = paid + reserved. Loss ratio = incurred / earned premium. Frequency = claims per $1M of revenue or payroll. Severity = incurred / claim count. Trend and development factors are entered, not calculated. Example: Harbourline PY2023, incurred $135,000 on $140,000 premium = 96.4%; two claims, severity $67,500; on $25M revenue, 0.08 per $1M.
+
+Program tower. Within a tower a layer must attach where the layer below exhausts, otherwise a gap or overlap is reported. Rate on line = premium / limit. Example: umbrella $5M xs $1M for $22,000 = 0.44%.
+
+Subscription placements. A layer may have several insurers, each with a signed line. Insurers quote a premium at 100% of the layer; actual premium = 100% premium x signed line. Rate on line = 100% premium / layer limit. A risk may be split across towers; the coverage profile cuts the program into dollar bands at every attachment and exhaustion point and sums every tower's signed share per band. 100% is fully placed, below is short, above is over-placed. Sign-down: when written lines exceed the target, signed = written x target / sum of written. Example: Tower 1 one $300M layer at 40%; Tower 2 $100M at 60% and $200M xs $100M at 60%; both bands 100% placed; program premium $755,000; $0.2517 per $100 of TIV.
+
+Property adequacy. Required = insurable value x coinsurance %. If carried is below required, payment = (carried / required) x loss - deductible, capped at the limit. Example: $1,000,000 at 80%, $600,000 carried, $100,000 loss, $5,000 deductible = $70,000 paid, $30,000 absorbed.
+
+Deductible schedules. A policy carries a default deductible plus per-peril rules: flat, percent of loss or value with minimum and maximum, or waiting period. Each claim applies the rule matching its peril. Example: earthquake 10% of loss, minimum $100,000: $200,000 on a $2,000,000 loss, $100,000 on a $500,000 loss.
+
+Retention options. For each option and policy year, retained = sum of min(claim, applicable deductible). Expected total cost = premium + average retained. Net expected saving vs base = premium saving - additional average retained. Worst-year test = additional retained in the worst historical year vs the premium saving. Example (Harbourline, $10K / $25K / $50K at $142,000 / $124,000 / $110,000): average retained $18,600 / $33,200 / $45,000; expected total cost $160,600 / $157,200 / $155,000; in PY2023 the $50K option would have cost $13,000 more than the base despite the $32,000 saving.
+
+Estimated premiums. Where no quote exists, option premium = current premium - (increase in average retained) / permissible loss ratio (default 0.65), labelled an estimate. Example: $125,000 deductible on Harbourline, average retained $61,000, credit ($61,000 - $18,600) / 0.65 = $65,231, estimated premium $76,769.
+
+Findings engine. Inputs: claims, program, deductible schedule, per-occurrence and per-year tolerances (defaults 0.5% and 1% of revenue), permissible loss ratio. Each band is working (losses have reached it) or catastrophe (none have); retention is never proposed for catastrophe bands. Candidates: self-insure a working band that fits both tolerances; raise the deductible to the per-occurrence tolerance; retain a client line on a band (the largest whole percent whose share of the band limit and of the worst in-band year both fit the tolerances; Harbourline: 12%, saving $17,040 against expected retained $5,088). Price findings: a layer's rate on line at or above the layer below; an insurer's line priced 25% or more above the rest of its layer; a renewal rate change exceeding exposure change by 10 points. Every finding states evidence, estimated impact and caveats, and is worded as a candidate for discussion.
+
+Total cost of risk. Premiums + expected retained losses + broker fees + risk-control spend + claims administration, in dollars, as a percent of revenue and per $1,000 of revenue. Example: $300,000 + $45,000 + $15,000 + $10,000 on $25M revenue = $370,000, 1.48%, $14.80 per $1,000.
+
+Certificates. Generated for a policy's current term, filed under Documents, flagged for reissue once the policy has a successor or has expired.
+
+
+# TESTING
+
+Test plan. 
+1. Fresh incognito visit. Expected: new workspace, welcome card, Load demo book. 
+2. Load demo book, open Book. Expected: 10 accounts with totals and next expiry. 
+3. Add a valid policy. Expected: saved, correct days to expiry. 
+4. Move the as-of date forward one day. Expected: the 121-day policy enters the 120-day stage. 
+5. Cedar Ridge renewal at $108,000 on $23M. Expected: +8.0% premium, +15.0% exposure, -6.09% rate. 
+6. Same renewal with exposure unchanged. Expected: rate change equals premium change. 
+7. All generated figure have a 'show the math' option for easy verification.
+
+
+
+# IMPROVEMENT
+
+The application was revised in three rounds after we used the deployed versions ourselves as a broker would (v1.3, v1.4, v1.5), and once more after observing an outside user (v2.0). In every round the hand-verified figures for Harbourline, Cedar Ridge and Pacific Northwest Terminals had to come out unchanged and no expected value in an existing test could be edited.
+
+Round 1, after using v1.2 (shipped as v1.3)
+- Placement was a separate area, so analysing a client meant leaving the account and re-selecting it. We moved Loss Runs, Program, Marketing and Strategy to tabs on the Account page and removed the Placement navigation. Old URLs redirect.
+- A tower could hold only one insurer per layer, which is not how mid-market and large programs are placed. We added subscription placements: several insurers per layer with written and signed lines and their own premiums, several towers side by side, a coverage profile that sums every tower's share per dollar band, and sign-down. Verified against the hand-worked Terminals case.
+- A policy had one deductible, but real policies carry ten to twenty for different perils. We replaced the single field with a per-peril schedule with CSV import and taught the retention analysis to apply the rule matching each claim's peril. Because every existing demo claim is all other perils, the Harbourline figures did not move, and a test asserts that.
+- Most demo accounts had no claims or program, so the product looked empty. We added five fully populated accounts and removed 9 empty demo account.
+
+Round 2, after using v1.3 (shipped as v1.4)
+- Marketing added work and didn't reduce it when dealing with renewal. Removed, with the market-log dashboard card. Quote premiums already entered survived as manual option premiums so no verification number changed.
+- The contract-requirements checker modelled a concept none of us could verify from experience. Removed rather than left in unverified.
+- Brokers live in documents and the app had nowhere to put them. Added a Documents tab (proposals with draft or final status and policy year, submissions with the markets approached, certificates, policy documents) stored in Vercel Blob behind a workspace-checked download route, and a Policy page that generates a certificate of insurance PDF, files it and flags it for reissue when the policy renews.
+- The Strategy tab required typing retention options by hand, so it only analysed what the user already suspected. Replaced with a findings engine that generates candidates (self-insure a working band, raise the deductible to the per-occurrence tolerance), price findings (inverted layer pricing, an insurer's line priced above its layer, rate change outrunning exposure change) and limit-versus-TIV checks, each with evidence, estimated impact and caveats. Options are generated automatically with an estimated premium beside any real quote. Verified: the $125,000 candidate on Harbourline at $76,769; the catastrophe-band rule never proposes retaining a layer no loss has reached.
+- Workers Compensation appeared in demo data though no one in the group has worked with it. Removed.
+- Nineteen demo accounts were more than anyone would click through and most were thin. Cut to ten, four fully populated.
+- The layer basis field and the amber unplaced strip added nothing a user needed. Removed.
+
+Round 3, after using v1.4 (shipped as v1.5)
+- The tower diagram still drew hatched yellow unplaced blocks inside each layer, the opposite of what we had asked for: our v1.4 prompt had the two halves of the instruction reversed. We rewrote it, removed the hatching and kept a separate Placement column showing each dollar band's placed percentage, green at 100% and red otherwise. Recorded as a prompt-authoring error we caught by looking at the deployed page.
+- An insurer signed at 50% was drawn at half the block width, leaving the tower mostly white. Segments now share the full width in proportion to their share of the layer's placed total; under-placement is shown only in the Placement column and segment table.
+- Rates on line were absurd (3,333% on a test insurer) because the app treated an insurer's quoted premium as the amount it would receive. Insurers quote at 100% of a layer; actual premium is quoted premium times signed line. We renamed the field to premium_100, compute actual premium in the domain layer, show both, and restated the Terminals seed on the 100% basis (Westcoast Re $800,000 x 15% = $120,000) so every hand-verified rate on line is unchanged.
+- Clients need the program on paper. Added a program PDF export filed automatically under policy documents.
+- The Loss Runs tab listed every policy in one block and carried a usually empty Data quality panel. Policies are grouped into active and expired, three rows each with Show more; the panel was removed and its flags moved onto the claim rows with a Flagged only filter.
+- The findings engine judged a band only on its full limit, so a $1M primary was dismissed against a $125,000 tolerance. It now also considers the client taking a line on the band. On Harbourline that is a 12% line: saving $17,040 against expected retained $5,088 and a worst year of $13,800.
+- Wording: internal terms such as replaying were replaced with plain language; self-explanatory subtitles were removed; a glossary was written into CLAUDE.md so later sessions keep the vocabulary.
+- Defect: the Program tab failed with a server error immediately after the v1.5 changes. Cause: [FROM CLAUDE CODE'S DIAGNOSIS]. Fix: [COMMIT]. Retest: Program tab on all ten demo accounts and on an account with a new empty layer; unit tests added for the zero-participation case; full suite and smoke test passed.
+
+
+# LIMITATIONS
+- Historical replay is not an actuarial projection. Retention options and findings apply each deductible to the client's past claims. There is no credibility weighting, no loss distribution fitting and no allowance for claims that have not happened yet. A client with three claims in five years (Cedar Ridge) gets a result that depends almost entirely on whether one loss recurs, and the application says so rather than solving it.
+- Trend and development factors are entered, not derived. They should come from the carrier or an actuary.
+- Estimated premiums are not quotes. They are derived from the loss history and an assumed permissible loss ratio and should be replaced by real quotes before any decision.
+- Findings are heuristics. The working or catastrophe classification, the 25% line-pricing threshold and the tolerance defaults are judgment calls documented in the business rules; a licensed broker must evaluate every candidate.
+- Placements are checked on signed lines and premiums as entered. There is no order, stamp or line-slip mechanics and no carrier appetite or security rating data.
+- No taxes, fees, premium financing or multi-year structures. Commission is a flat rate per policy.
+- Workspaces are shared by link and not private. Anyone with a workspace URL can read and change it. Uploaded documents are stored in Vercel Blob on the free tier and are not virus-scanned. Only fictional documents should be uploaded.
+- The demo database may pause when idle. The first request after a quiet period can take a few seconds; the application retries once before showing an error.
+- Before real-world use the formulas would need review by a licensed broker and an actuary, real carrier data, authentication and access control, audit logging, and a privacy review for client documents.
+- If an AI Model trained on Policy Documents was implemented in the Policy and Program Page manual data entry would be drastically reduced.
+
+
+# AI USE AND CONTRIBUTIONS
+
+AI tools used. Claude Code (Anthropic) in VS Code wrote the application code, migrations, seed data and unit tests from prompts we authored. Claude (claude.ai) helped us plan the product & draft the prompt sequence. No AI features are built into the application.
+
+What the group decided.
+- The product: combining a renewal CRM and a placement-analytics tool into one platform on a single data model, rather than one small calculator.
+- The architecture: Neon Postgres database, workspaces instead of logins so an instructor can use it without an account, and all business logic regarding larger accounts was manually described as Claude did not know how to deal with advanced placements.
+- Decisions where more than one was reasonable: count and premium retention shown side by side; expired policies with no outcome treated as lost and flagged; the running policy year included but marked incomplete; premiums quoted at 100% of a layer and scaled by signed line.
+- Scope changes after using the product: removed Marketing, the contract-requirements checker and Workers Compensation; added account tabs, subscription placements, deductible schedules, Documents, certificates, the findings engine and partial-line retention; cut the demo book to ten well-populated accounts.
+- Which defects to fix and which to document as limitations.
+- Show the math on every figure generated figure
+- Recommendations with caveats attached.
+- V1, V1.3 to V1.5 Contained majority of the group decided updates. However other updates also had input from the group. The other decisions generally decided scope, calculations, limitations, whether to opt into using a database (BLOB, which brought a risk if the free plan is exceeded), export/import documents choices, and more niche insurance information.
+
+
+# SETUP
+
+git clone [GITHUB URL] and cd broker-os
+npm install
+vercel link, then vercel env pull .env.local (DATABASE_URL, BLOB_READ_WRITE_TOKEN)
+npm run db:migrate
+npm run db:seed
+npm run dev
+
+Environment variables: DATABASE_URL (Neon, via the Vercel integration), BLOB_READ_WRITE_TOKEN (Vercel Blob), CRON_SECRET (nightly demo reset, production only). See .env.example. Deployed on Vercel from main; the build runs migrations before next build.
+
+
+# VERSION HISTORY
+
+v0.1 Foundation: workspaces, accounts, contacts, policies, demo book, settings.
+v0.2 Renewals: stages, readiness checklist, tasks, activities, outcomes, rate change math.
+v0.3 Dashboard: book, retention, expiring premium, revenue forecast, concentration.
+v0.4 Loss runs: claims, CSV import, policy-year summary, trend and development, large loss and open claims.
+v1 Program: tower analysis, certificates, property adequacy, support for large placements. The jump to v1 marks the point where the placement half made Broker OS a complete product.
+v1.1 Marketing: submissions, quotes, like-for-like comparison (removed in v1.4).
+v1.2 Strategy: retention options, total cost of risk, renewal strategy report.
+v1.3 Account tabs replace Placement; subscription placements with signed lines and multiple towers; deductible schedules; more demo accounts.
+v1.4 Documents tab; Policy page with certificate generation; automatic strategy findings; removed Marketing and contract requirements; ten-account demo book.
+v1.5 100% premium basis, proportional layer widths, program PDF export, loss-runs grouping, partial-line retention candidates, wording audit.
+
+
+
+
+# Everything Below is Fully AI Generated based on Prompts, Includes In-Depth Set-Up & Product Information, Version History Sheet Link, & Business Rule Sheet Links.
+
+In-Depth Changes (AI-Generated): [CHANGELOG.md](CHANGELOG.md).
+
 # Broker OS
 
 Broker OS is a renewal-first workspace for a commercial insurance brokerage. It
