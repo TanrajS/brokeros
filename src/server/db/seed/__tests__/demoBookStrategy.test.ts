@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeRetentionOptions, groupClaimsByPolicyYear, totalCostOfRisk } from "@/lib/domain/strategy";
+import { DEFAULT_REPLAY_SETTINGS, analyzeRetentionOptions, groupClaimsByPolicyYear, totalCostOfRisk } from "@/lib/domain/strategy";
 import { buildDemoBook } from "../demoBookData";
 import { demoAccountToLossRuns } from "../demoBookLossRuns";
 import { demoRetentionOptions } from "../demoBookStrategy";
@@ -92,5 +92,52 @@ describe("Cedar Ridge retention options (low frequency, one open loss)", () => {
     expect(a.options[2].worstYearTest!.sentence).toBe("In PY2025 this option would have cost $9,000 more than the base.");
     // most claims in any year is 1, so max exposure = deductible × 1
     expect(a.options.map((o) => o.maxAnnualExposure.value)).toEqual([5_000, 10_000, 25_000]);
+  });
+});
+
+describe("coverage-part limits in the seed (v1.5.1)", () => {
+  it("no seeded claim exceeds its coverage part's occurrence limit or its policy's headline limit, so nothing is retained above limit anywhere", () => {
+    for (const account of book) {
+      const { policies, claims } = demoAccountToLossRuns(account);
+      for (const line of [...new Set(claims.map((c) => c.lineOfBusiness))]) {
+        const grouped = groupClaimsByPolicyYear(claims, policies, line, asOf).value;
+        // the current term of the line carries the schedule and the headline limit
+        const current = account.policies.filter((p) => p.lineOfBusiness === line && !p.priorTerm).sort((a, b) => b.expiryDate.localeCompare(a.expiryDate))[0];
+        if (!current) continue;
+        const schedule = current.deductibles.map((r) => ({ ...r, amount: r.amount ?? null, percent: r.percent ?? null, minimum: r.minimum ?? null, maximum: r.maximum ?? null, hours: r.hours ?? null, occurrenceLimit: r.occurrenceLimit ?? null, aggregateLimit: r.aggregateLimit ?? null, isDefault: false }));
+        const a = analyzeRetentionOptions(grouped, [{ id: "d", label: "current", carrier: current.carrier, deductible: current.deductible ?? 0, aggregateCap: null, premium: current.annualPremium }], { ...DEFAULT_REPLAY_SETTINGS, schedule, defaultOccurrenceLimit: current.occurrenceLimit }).value;
+        expect(a.anyAboveLimit, `${account.name} ${line}`).toBe(false);
+      }
+    }
+  });
+
+  it("Harbourline and Cedar Ridge keep their hand-verified averages with the headline limit applied", () => {
+    for (const [name, key, expected] of [
+      ["Harbourline Foods Inc.", "harbour-gl", [18_600, 33_200, 45_000]],
+      ["Cedar Ridge Mechanical Ltd.", "cedar-gl", null],
+    ] as const) {
+      const account = find(name);
+      const { policies, claims } = demoAccountToLossRuns(account);
+      const policy = account.policies.find((p) => p.key === key)!;
+      const grouped = groupClaimsByPolicyYear(claims, policies, "General Liability", asOf).value;
+      const plain = analyzeRetentionOptions(grouped, demoRetentionOptions(policy)).value;
+      const limited = analyzeRetentionOptions(grouped, demoRetentionOptions(policy), { ...DEFAULT_REPLAY_SETTINGS, defaultOccurrenceLimit: policy.occurrenceLimit }).value;
+      expect(limited.options.map((o) => o.averageRetained)).toEqual(plain.options.map((o) => o.averageRetained));
+      expect(limited.options.map((o) => o.expectedTotalCost)).toEqual(plain.options.map((o) => o.expectedTotalCost));
+      if (expected) expect(limited.options.map((o) => o.averageRetained)).toEqual(expected);
+    }
+  });
+
+  it("Pacific Northwest Terminals carries the terminal sublimits: Stock $25M, Flood $50M/$50M, Earthquake $100M aggregate, Equipment breakdown $10M, Transit $2M, Glass $250,000", () => {
+    const pr = find("Pacific Northwest Terminals Ltd.").policies.find((p) => p.key === "pnt-pr")!;
+    const byPart = Object.fromEntries(pr.deductibles.map((d) => [d.appliesTo, [d.occurrenceLimit ?? null, d.aggregateLimit ?? null]]));
+    expect(byPart["Stock"]).toEqual([25_000_000, null]);
+    expect(byPart["Flood"]).toEqual([50_000_000, 50_000_000]);
+    expect(byPart["Earthquake"]).toEqual([null, 100_000_000]);
+    expect(byPart["Equipment breakdown"]).toEqual([10_000_000, null]);
+    expect(byPart["Transit"]).toEqual([2_000_000, null]);
+    expect(byPart["Glass"]).toEqual([250_000, null]);
+    // the schedule still has its eleven named parts: no row was added
+    expect(pr.deductibles).toHaveLength(11);
   });
 });

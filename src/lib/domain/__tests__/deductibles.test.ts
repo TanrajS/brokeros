@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PERIL, deductibleForClaim, describeRule, flatRule, matchRule, validateScheduleRows, type DeductibleRule } from "../deductibles";
+import { DEFAULT_PERIL, checkPartLimits, deductibleForClaim, describePartLimits, describeRule, flatRule, matchRule, retainedAboveLimit, validateScheduleRows, type DeductibleRule } from "../deductibles";
 
 const rule = (over: Partial<DeductibleRule> & Pick<DeductibleRule, "appliesTo" | "kind">): DeductibleRule => ({ amount: null, percent: null, minimum: null, maximum: null, hours: null, isDefault: false, ...over });
 const earthquake = rule({ appliesTo: "Earthquake", kind: "percent_of_loss", percent: 10, minimum: 100_000 });
@@ -76,5 +76,50 @@ describe("validateScheduleRows", () => {
     expect(rs[4].reasons[0]).toMatch(/minimum \$5,000 is above maximum \$1,000/);
     expect(rs[5].reasons).toEqual(['"earthquake" already has a rule']);
     expect(rs[6].reasons).toEqual(['"Theft" already has a rule']);
+  });
+});
+
+describe("coverage parts with their own limits (v1.5.1)", () => {
+  const headline = { occurrenceLimit: 1_000_000, aggregateLimit: 2_000_000 };
+  it("describes a part's limits in words, or nothing when it has none of its own", () => {
+    expect(describePartLimits({ occurrenceLimit: 25_000_000, aggregateLimit: null })).toBe("$25,000,000 per occurrence");
+    expect(describePartLimits({ occurrenceLimit: 50_000_000, aggregateLimit: 50_000_000 })).toBe("$50,000,000 per occurrence, $50,000,000 aggregate");
+    expect(describePartLimits({ occurrenceLimit: null, aggregateLimit: 100_000_000 })).toBe("$100,000,000 aggregate");
+    expect(describePartLimits({ occurrenceLimit: null, aggregateLimit: null })).toBeNull();
+  });
+  it("blocks an aggregate below the occurrence limit and only warns above the headline", () => {
+    // 500,000 aggregate < 600,000 occurrence → error
+    expect(checkPartLimits({ appliesTo: "Stock", occurrenceLimit: 600_000, aggregateLimit: 500_000 }, headline).value.errors).toEqual(["Aggregate limit $500,000 is below the occurrence limit $600,000"]);
+    // 1,500,000 > the policy's 1,000,000 → warning, not an error (some carriers write higher sublimits)
+    const r = checkPartLimits({ appliesTo: "Flood", occurrenceLimit: 1_500_000, aggregateLimit: 2_500_000 }, headline).value;
+    expect(r.errors).toEqual([]);
+    expect(r.warnings).toEqual(["Flood: occurrence limit $1,500,000 is above the policy's $1,000,000", "Flood: aggregate limit $2,500,000 is above the policy's $2,000,000"]);
+    expect(checkPartLimits({ appliesTo: "Glass", occurrenceLimit: 250_000, aggregateLimit: null }, headline).value).toEqual({ errors: [], warnings: [] });
+    expect(checkPartLimits({ appliesTo: "Glass", occurrenceLimit: 250_000, aggregateLimit: null }, { occurrenceLimit: null, aggregateLimit: null }).value.warnings).toEqual([]);
+  });
+  it("retains the part of a loss above the occurrence limit; nothing without a limit", () => {
+    // 600,000 − 250,000 = 350,000
+    expect(retainedAboveLimit(600_000, 250_000).value).toBe(350_000);
+    expect(retainedAboveLimit(200_000, 250_000).value).toBe(0);
+    expect(retainedAboveLimit(600_000, null).value).toBe(0);
+    expect(() => retainedAboveLimit(-1, null)).toThrow();
+  });
+  it("imports occurrence_limit and aggregate_limit, rejects aggregate below occurrence and warns above the headline", () => {
+    const rs = validateScheduleRows(
+      [
+        { applies_to: "Stock", kind: "flat", amount: "10000", occurrence_limit: "25000000" },
+        { applies_to: "Flood", kind: "flat", amount: "250000", occurrence_limit: "50000000", aggregate_limit: "50000000" },
+        { applies_to: "Transit", kind: "flat", amount: "5000", occurrence_limit: "2000000", aggregate_limit: "1000000" },
+        { applies_to: "Glass", kind: "flat", amount: "1000", occurrence_limit: "abc" },
+      ],
+      { existingAppliesTo: [], headline: { occurrenceLimit: 30_000_000, aggregateLimit: null } },
+    ).value;
+    expect(rs.map((r) => r.valid)).toEqual([true, true, false, false]);
+    expect(rs[0].parsed).toMatchObject({ occurrenceLimit: 25_000_000, aggregateLimit: null });
+    expect(rs[0].warnings).toEqual([]);
+    // 50,000,000 > the 30,000,000 headline → warning only
+    expect(rs[1].warnings).toEqual(["Flood: occurrence limit $50,000,000 is above the policy's $30,000,000"]);
+    expect(rs[2].reasons).toEqual(["aggregate limit $1,000,000 is below the occurrence limit $2,000,000"]);
+    expect(rs[3].reasons).toEqual(['occurrence_limit "abc" is not a non-negative amount']);
   });
 });

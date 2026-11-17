@@ -74,6 +74,18 @@ export function CertificatePdf({ c, pdf }: { c: CertificateContent; pdf: ReactPd
               <Text style={styles.value}>{r.value}</Text>
             </View>
           ))}
+          {c.coveragePartRows.length ? (
+            <View style={styles.row}>
+              <Text style={styles.label}>Sublimits</Text>
+              <View style={styles.value}>
+                {c.coveragePartRows.map((r) => (
+                  <Text key={r.label}>
+                    {r.label}: {r.value}
+                  </Text>
+                ))}
+              </View>
+            </View>
+          ) : null}
           <View style={[styles.row, { borderBottomWidth: 0 }]}>
             <Text style={styles.label}>Endorsements present</Text>
             <Text style={styles.value}>{c.endorsementsPresent.length ? c.endorsementsPresent.join("; ") : "None of the tracked endorsements"}</Text>

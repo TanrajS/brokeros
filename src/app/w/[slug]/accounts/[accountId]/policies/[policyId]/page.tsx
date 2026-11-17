@@ -34,6 +34,7 @@ import { AdequacyPanel } from "@/components/program/AdequacyPanel";
 import { ParticipantsSection } from "@/components/program/ParticipantsSection";
 import { SublimitsSection } from "@/components/program/SublimitsSection";
 import { DeductibleScheduleSection } from "@/components/policy/DeductibleScheduleSection";
+import { CoveragePartsChip } from "@/components/policy/CoveragePartsChip";
 import { listPolicyDeductibles } from "@/server/deductibles/queries";
 import { requireWorkspace } from "../../../../lib";
 
@@ -103,6 +104,7 @@ export default async function PolicyPage({ params, searchParams }: { params: Par
               <StageBadge stage={stage} />
               <Badge variant="outline">{RENEWAL_STATUS_LABELS[policy.renewalStatus]}</Badge>
               <DaysBadge days={days} />
+              <CoveragePartsChip parts={deductibleRows} />
             </p>
           </div>
           <Button asChild variant="outline">
@@ -229,7 +231,7 @@ export default async function PolicyPage({ params, searchParams }: { params: Par
         rows={extras.participants.map((p) => ({ id: p.id, carrier: p.carrier, role: p.role, signedLine: p.signedLine, premium: p.premium, notes: p.notes }))}
       />
 
-      <DeductibleScheduleSection slug={slug} policyId={policy.id} policyDeductible={policy.deductible} rows={deductibleRows} />
+      <DeductibleScheduleSection slug={slug} policyId={policy.id} policyDeductible={policy.deductible} headline={{ occurrenceLimit: policy.occurrenceLimit, aggregateLimit: policy.aggregateLimit }} rows={deductibleRows} />
 
       <section aria-labelledby="policy-claims-heading" className="flex flex-col gap-3">
         <h2 id="policy-claims-heading" className="text-lg font-semibold">
@@ -373,9 +375,9 @@ export default async function PolicyPage({ params, searchParams }: { params: Par
         accountId={account.id}
         asOf={ws.asOfDate}
         namedInsured={{ name: account.name, province: account.province, industry: account.industry }}
-        policy={toCertificatePolicy(policy)}
+        policy={toCertificatePolicy(policy, deductibleRows)}
         insurers={insurers}
-        otherPolicies={otherInForce.map(toCertificatePolicy)}
+        otherPolicies={otherInForce.map((p) => toCertificatePolicy(p))}
         certificates={certificateRows}
         blobReady={blobReady()}
       />

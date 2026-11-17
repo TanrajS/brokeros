@@ -1,7 +1,9 @@
 /**
- * Deductible schedules (v1.3). A policy carries one default (all other perils)
- * deductible, mirrored in `policies.deductible`, plus rules for named perils or
- * coverage parts. Pure: no React, no database, no clock.
+ * Coverage schedules (v1.3 deductible schedules, extended in v1.5.1). A policy
+ * carries one default (all other perils) part, mirrored in `policies.deductible`
+ * and the policy's headline limits, plus parts for named perils or coverage
+ * parts with their own deductible rule and, optionally, their own occurrence and
+ * aggregate limits (sublimits). Pure: no React, no database, no clock.
  */
 import type { Calc } from "./types";
 
@@ -30,6 +32,50 @@ export interface DeductibleRule {
   hours: number | null;
   notes?: string | null;
   isDefault: boolean;
+  /** v1.5.1: this part's own per-occurrence limit (the headline limit on the default part); null = no limit of its own. */
+  occurrenceLimit?: number | null;
+  /** v1.5.1: this part's own aggregate limit; null = none of its own. */
+  aggregateLimit?: number | null;
+}
+
+/** A coverage part is a deductible rule with optional limits; the name used from v1.5.1 on. */
+export type CoveragePart = DeductibleRule;
+
+export interface HeadlineLimits {
+  occurrenceLimit: number | null;
+  aggregateLimit: number | null;
+}
+
+/** "$25,000,000 per occurrence", "$50,000,000 per occurrence, $50,000,000 aggregate", "$100,000,000 aggregate"; null when the part has no limits of its own. */
+export function describePartLimits(part: Pick<CoveragePart, "occurrenceLimit" | "aggregateLimit">): string | null {
+  const bits = [part.occurrenceLimit != null ? `${usd(part.occurrenceLimit)} per occurrence` : null, part.aggregateLimit != null ? `${usd(part.aggregateLimit)} aggregate` : null].filter(Boolean);
+  return bits.length ? bits.join(", ") : null;
+}
+
+/**
+ * Checks a part's limits against the policy's headline limits.
+ *   error: aggregate below occurrence (a part cannot pay less in a year than on one loss)
+ *   warning: a part limit above the headline (some carriers do write higher sublimits, so it is allowed)
+ */
+export function checkPartLimits(part: Pick<CoveragePart, "appliesTo" | "occurrenceLimit" | "aggregateLimit">, headline: HeadlineLimits): Calc<{ errors: string[]; warnings: string[] }> {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const occ = part.occurrenceLimit ?? null;
+  const agg = part.aggregateLimit ?? null;
+  if (occ !== null && agg !== null && agg < occ) errors.push(`Aggregate limit ${usd(agg)} is below the occurrence limit ${usd(occ)}`);
+  if (occ !== null && headline.occurrenceLimit !== null && occ > headline.occurrenceLimit) warnings.push(`${part.appliesTo}: occurrence limit ${usd(occ)} is above the policy's ${usd(headline.occurrenceLimit)}`);
+  if (agg !== null && headline.aggregateLimit !== null && agg > headline.aggregateLimit) warnings.push(`${part.appliesTo}: aggregate limit ${usd(agg)} is above the policy's ${usd(headline.aggregateLimit)}`);
+  return {
+    value: { errors, warnings },
+    math: { inputs: { part: part.appliesTo, occurrenceLimit: occ, aggregateLimit: agg, headline }, formula: "error when aggregate < occurrence; warning when a part limit exceeds the policy's headline limit", steps: { lines: [...errors, ...warnings].length ? [...errors, ...warnings] : ["Within the headline limits"] } },
+  };
+}
+
+/** The part of one loss above the part's occurrence limit, which the client retains: max(0, incurred − limit); 0 without a limit. */
+export function retainedAboveLimit(incurred: number, occurrenceLimit: number | null | undefined): Calc<number> {
+  if (!Number.isFinite(incurred) || incurred < 0) throw new Error(`Expected a non-negative incurred amount, received ${incurred}`);
+  const above = occurrenceLimit == null ? 0 : Math.max(0, round2(incurred - occurrenceLimit));
+  return { value: above, math: { inputs: { incurred, occurrenceLimit: occurrenceLimit ?? null }, formula: "retained above limit = max(0, incurred − occurrence limit)", steps: { lines: [occurrenceLimit == null ? "no occurrence limit: nothing above it" : `max(0, ${usd(incurred)} − ${usd(occurrenceLimit)}) = ${usd(above)}`] } } };
 }
 
 function group(n: number, decimals: number): string {
@@ -151,7 +197,7 @@ export function matchRule(rules: DeductibleRule[], peril: string | null | undefi
 
 /* ---------- Schedule CSV ---------- */
 
-export const SCHEDULE_COLUMNS = ["applies_to", "kind", "amount", "percent", "minimum", "maximum", "hours", "notes"] as const;
+export const SCHEDULE_COLUMNS = ["applies_to", "kind", "amount", "percent", "minimum", "maximum", "hours", "occurrence_limit", "aggregate_limit", "notes"] as const;
 export type ScheduleColumn = (typeof SCHEDULE_COLUMNS)[number];
 export const SCHEDULE_REQUIRED_COLUMNS: ScheduleColumn[] = ["applies_to", "kind"];
 
@@ -159,7 +205,7 @@ export function checkScheduleColumns(headers: string[]): Calc<{ missing: Schedul
   const seen = new Set(headers.map((h) => h.trim().toLowerCase()));
   const missing = SCHEDULE_REQUIRED_COLUMNS.filter((c) => !seen.has(c));
   const extra = headers.filter((h) => !(SCHEDULE_COLUMNS as readonly string[]).includes(h.trim().toLowerCase()));
-  return { value: { missing, extra }, math: { inputs: { headers }, formula: "applies_to and kind are required; the other columns depend on the kind", steps: { lines: [missing.length ? `Missing: ${missing.join(", ")}` : "All columns present"] } } };
+  return { value: { missing, extra }, math: { inputs: { headers }, formula: "applies_to and kind are required; the other columns depend on the kind; occurrence_limit and aggregate_limit are optional sublimits", steps: { lines: [missing.length ? `Missing: ${missing.join(", ")}` : "All columns present"] } } };
 }
 
 const KIND_ALIASES: Record<string, DeductibleKind> = {
@@ -195,8 +241,11 @@ const money = (v: string): number | null => {
  * Validates schedule rows with kind-specific required fields: a flat rule needs
  * an amount; a percent rule needs a percent (0–100); a waiting period needs
  * whole hours; minimum may not exceed maximum. A repeated applies_to is invalid.
+ * v1.5.1: occurrence_limit and aggregate_limit are optional; an aggregate below
+ * the occurrence limit is invalid, and a limit above the policy's headline limit
+ * (when `ctx.headline` is given) is a warning, not an error.
  */
-export function validateScheduleRows(rows: Record<string, string>[], ctx: { existingAppliesTo: string[] } = { existingAppliesTo: [] }): Calc<ScheduleRowResult[]> {
+export function validateScheduleRows(rows: Record<string, string>[], ctx: { existingAppliesTo: string[]; headline?: HeadlineLimits } = { existingAppliesTo: [] }): Calc<ScheduleRowResult[]> {
   const seen = new Set(ctx.existingAppliesTo.map(norm));
   const results: ScheduleRowResult[] = rows.map((rawIn, i) => {
     const raw: Record<string, string> = {};
@@ -208,7 +257,7 @@ export function validateScheduleRows(rows: Record<string, string>[], ctx: { exis
     const kind = KIND_ALIASES[(raw.kind ?? "").toLowerCase()] ?? null;
     if (!raw.kind) reasons.push("missing kind");
     else if (!kind) reasons.push(`unknown kind "${raw.kind}" (use flat, percent_of_loss, percent_of_value or waiting_period)`);
-    const num = (key: "amount" | "minimum" | "maximum"): number | null => {
+    const num = (key: "amount" | "minimum" | "maximum" | "occurrence_limit" | "aggregate_limit"): number | null => {
       if (!raw[key]) return null;
       const n = money(raw[key]);
       if (n === null) reasons.push(`${key} "${raw[key]}" is not a non-negative amount`);
@@ -217,6 +266,8 @@ export function validateScheduleRows(rows: Record<string, string>[], ctx: { exis
     const amount = num("amount");
     const minimum = num("minimum");
     const maximum = num("maximum");
+    const occurrenceLimit = num("occurrence_limit");
+    const aggregateLimit = num("aggregate_limit");
     let percent: number | null = null;
     if (raw.percent) {
       const s = raw.percent.replace(/%$/, "");
@@ -236,6 +287,9 @@ export function validateScheduleRows(rows: Record<string, string>[], ctx: { exis
     if (kind === "waiting_period" && hours === null && !reasons.some((r) => r.startsWith("hours"))) reasons.push("a waiting period needs hours");
     if (minimum !== null && maximum !== null && minimum > maximum) reasons.push(`minimum ${usd(minimum)} is above maximum ${usd(maximum)}`);
     if (kind === "flat" && (percent !== null || minimum !== null || maximum !== null)) warnings.push("percent, minimum and maximum are ignored for a flat rule");
+    const limitCheck = checkPartLimits({ appliesTo: appliesTo || "part", occurrenceLimit, aggregateLimit }, ctx.headline ?? { occurrenceLimit: null, aggregateLimit: null }).value;
+    reasons.push(...limitCheck.errors.map((e) => e[0].toLowerCase() + e.slice(1)));
+    warnings.push(...limitCheck.warnings);
     if (appliesTo) {
       if (seen.has(norm(appliesTo))) reasons.push(`"${appliesTo}" already has a rule`);
       else seen.add(norm(appliesTo));
@@ -247,7 +301,7 @@ export function validateScheduleRows(rows: Record<string, string>[], ctx: { exis
       valid,
       reasons,
       warnings,
-      parsed: valid ? { appliesTo, kind: kind!, amount: kind === "flat" ? amount : null, percent: kind === "percent_of_loss" || kind === "percent_of_value" ? percent : null, minimum: kind === "flat" || kind === "waiting_period" ? null : minimum, maximum: kind === "flat" || kind === "waiting_period" ? null : maximum, hours: kind === "waiting_period" ? hours : null, notes: raw.notes ? raw.notes : null } : null,
+      parsed: valid ? { appliesTo, kind: kind!, amount: kind === "flat" ? amount : null, percent: kind === "percent_of_loss" || kind === "percent_of_value" ? percent : null, minimum: kind === "flat" || kind === "waiting_period" ? null : minimum, maximum: kind === "flat" || kind === "waiting_period" ? null : maximum, hours: kind === "waiting_period" ? hours : null, occurrenceLimit, aggregateLimit, notes: raw.notes ? raw.notes : null } : null,
     };
   });
   const validCount = results.filter((r) => r.valid).length;
@@ -255,7 +309,7 @@ export function validateScheduleRows(rows: Record<string, string>[], ctx: { exis
     value: results,
     math: {
       inputs: { rows: rows.length, existing: ctx.existingAppliesTo.length },
-      formula: "flat needs amount; percent kinds need percent 0–100; waiting period needs whole hours; minimum ≤ maximum; applies_to unique per policy",
+      formula: "flat needs amount; percent kinds need percent 0–100; waiting period needs whole hours; minimum ≤ maximum; aggregate limit ≥ occurrence limit; a limit above the policy's headline is a warning; applies_to unique per policy",
       steps: { lines: [`${validCount} of ${rows.length} rows valid`, ...results.filter((r) => !r.valid).map((r) => `Row ${r.row}: ${r.reasons.join("; ")}`)] },
     },
   };

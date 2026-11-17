@@ -9,7 +9,7 @@
  * Assumptions section says so.
  */
 import type { ClaimStatus, LineOfBusiness } from "@/lib/constants";
-import { DEFAULT_PERIL, deductibleForClaim, describeRule, flatRule, matchRule, type DeductibleRule } from "./deductibles";
+import { DEFAULT_PERIL, deductibleForClaim, describeRule, flatRule, matchRule, retainedAboveLimit, type DeductibleRule } from "./deductibles";
 import { coverageProfile, layerSummary, towerLabels, type ProgramLayerInput } from "./program";
 import { getRateMetrics, type RateTerm } from "./renewals";
 import {
@@ -159,14 +159,21 @@ export interface ReplaySettings {
    * in for the default (all other perils) rule. Empty or absent = one flat deductible.
    */
   schedule?: DeductibleRule[];
+  /**
+   * v1.5.1: the policy's headline per-occurrence limit. Losses above a coverage
+   * part's occurrence limit (the part's own sublimit, else this headline limit)
+   * are retained by the client on top of the deductible.
+   */
+  defaultOccurrenceLimit?: number | null;
 }
 
 export const DEFAULT_REPLAY_SETTINGS: ReplaySettings = { yearsToUse: 5, includeCurrentYear: true, adjustments: { trendRate: null, factors: null } };
 
-/** A deductible set for the replay: the option's amount for the default rule plus the schedule's other rules. */
+/** A deductible set for one option: the option's amount for the default part, the schedule's other parts, and the headline occurrence limit (v1.5.1). */
 export interface ReplayDeductible {
   defaultAmount: number;
   rules: DeductibleRule[];
+  defaultOccurrenceLimit?: number | null;
 }
 
 export interface ReplayClaim extends YearClaim {
@@ -201,6 +208,9 @@ export interface YearReplay {
   /** After min(·, aggregate cap). */
   retained: number;
   capApplied: boolean;
+  /** v1.5.1: Σ max(0, incurred − the claim's coverage-part occurrence limit); the same for every option, retained on top of the deductible. */
+  retainedAboveLimit: number;
+  /** incurred − retained − retained above limit: what the insurer pays. */
   transferred: number;
   /** Claims left out of the dollar replay (waiting-period rules, or a percent-of-value rule with no value at risk and no minimum). */
   excludedClaims: { claimNumber: string; reason: string }[];
@@ -235,7 +245,9 @@ export interface OptionAnalysis {
   averageRetained: number;
   averageTransferred: number;
   worstYear: { label: string; retained: number; claimCount: number } | null;
-  /** premium + average retained. */
+  /** v1.5.1: average per year of retained above limit (identical across options). */
+  averageRetainedAboveLimit: number;
+  /** premium + average retained + average retained above limit (v1.5.1; the last term is zero unless a claim exceeds a part's limit). */
   expectedTotalCost: number;
   /** premium + worst-year retained. */
   worstYearTotalCost: number;
@@ -260,6 +272,8 @@ export interface RetentionAnalysis {
   adjusted: boolean;
   prospectiveYear: number | null;
   basisLabel: string;
+  /** v1.5.1: true when any year used has a loss above a coverage part's occurrence limit. */
+  anyAboveLimit: boolean;
 }
 
 /** Picks the policy years to use and restates each claim on the chosen basis. */
@@ -302,15 +316,21 @@ export function selectReplayYears(grouped: ClaimsByPolicyYear, settings: ReplayS
 
 /**
  * One option against one year: Σ min(incurred, deductible), then min(·, cap).
- * With a deductible schedule, each claim's deductible comes from the rule for
- * its peril; claims with no dollar deductible are excluded and flagged.
+ * With a coverage schedule, each claim's deductible comes from the part for its
+ * peril; claims with no dollar deductible are excluded and flagged. v1.5.1: the
+ * part of a loss above its coverage part's occurrence limit (the part's own
+ * sublimit, else the policy's headline limit) is retained above limit, kept
+ * separate so the deductible retention stays comparable across options.
  */
 export function replayYear(year: ReplayYear, deductible: number | ReplayDeductible, aggregateCap: number | null): Calc<YearReplay> {
   const defaultAmount = typeof deductible === "number" ? deductible : deductible.defaultAmount;
   if (!Number.isFinite(defaultAmount) || defaultAmount < 0) throw new Error(`Expected a non-negative deductible, received ${defaultAmount}`);
   const rules = typeof deductible === "number" ? [] : deductible.rules.filter((r) => !r.isDefault);
+  const headlineLimit = typeof deductible === "number" ? null : (deductible.defaultOccurrenceLimit ?? null);
   const terms: string[] = [];
+  const aboveTerms: string[] = [];
   const parts: number[] = [];
+  const aboves: number[] = [];
   const included: number[] = [];
   const excludedClaims: { claimNumber: string; reason: string }[] = [];
   let scheduledClaims = 0;
@@ -323,26 +343,32 @@ export function replayYear(year: ReplayYear, deductible: number | ReplayDeductib
       continue;
     }
     if (matched && !matched.isDefault) scheduledClaims += 1;
+    const limit = (matched && !matched.isDefault ? matched.occurrenceLimit : null) ?? headlineLimit;
+    const above = retainedAboveLimit(c.adjustedIncurred, limit).value;
     const part = Math.min(c.adjustedIncurred, d.amount);
     parts.push(part);
+    aboves.push(above);
     included.push(c.adjustedIncurred);
     terms.push(`min(${usd(c.adjustedIncurred)}, ${usd(d.amount)}${matched && !matched.isDefault ? ` ${c.peril}` : ""})`);
+    if (above > 0) aboveTerms.push(`max(0, ${usd(c.adjustedIncurred)} − ${usd(limit!)}${matched && !matched.isDefault ? ` ${c.peril} limit` : " policy limit"}) = ${usd(above)}`);
   }
   const incurredReplayed = sumMoney(included);
   const retainedBeforeCap = sumMoney(parts);
   const capApplied = aggregateCap !== null && retainedBeforeCap > aggregateCap;
   const retained = capApplied ? aggregateCap : retainedBeforeCap;
-  const transferred = round2(incurredReplayed - retained);
+  const aboveLimit = sumMoney(aboves);
+  const transferred = round2(incurredReplayed - retained - aboveLimit);
   const line =
     `${year.label}: retained = ${terms.length ? terms.join(" + ") : "no claims"} = ${usd(retainedBeforeCap)}` +
     (aggregateCap !== null ? `; min(${usd(retainedBeforeCap)}, cap ${usd(aggregateCap)}) = ${usd(retained)}` : "") +
-    `; transferred = ${usd(incurredReplayed)} − ${usd(retained)} = ${usd(transferred)}` +
+    (aboveLimit > 0 ? `; retained above limit = ${aboveTerms.join(" + ")} = ${usd(aboveLimit)}` : "") +
+    `; transferred = ${usd(incurredReplayed)} − ${usd(retained)}${aboveLimit > 0 ? ` − ${usd(aboveLimit)}` : ""} = ${usd(transferred)}` +
     (excludedClaims.length ? `; excluded ${excludedClaims.map((e) => `${e.claimNumber} (${e.reason})`).join(", ")}` : "");
   return {
-    value: { label: year.label, year: year.year, current: year.current, claimCount: year.claims.length - excludedClaims.length, incurred: incurredReplayed, retainedBeforeCap, retained, capApplied, transferred, excludedClaims, scheduledClaims },
+    value: { label: year.label, year: year.year, current: year.current, claimCount: year.claims.length - excludedClaims.length, incurred: incurredReplayed, retainedBeforeCap, retained, capApplied, retainedAboveLimit: aboveLimit, transferred, excludedClaims, scheduledClaims },
     math: {
-      inputs: { year: year.label, deductible: defaultAmount, aggregateCap, scheduleRules: rules.map(describeRule) },
-      formula: "retained = Σ min(incurred, deductible for the claim's peril), then min(retained, aggregate cap); transferred = incurred − retained",
+      inputs: { year: year.label, deductible: defaultAmount, aggregateCap, scheduleRules: rules.map(describeRule), headlineLimit },
+      formula: "retained = Σ min(incurred, deductible for the claim's peril), then min(retained, aggregate cap); retained above limit = Σ max(0, incurred − the part's occurrence limit); transferred = incurred − retained − retained above limit",
       steps: { lines: [line] },
     },
   };
@@ -365,8 +391,9 @@ export function analyzeRetentionOptions(grouped: ClaimsByPolicyYear, options: Re
   const sorted = [...options].sort((a, b) => a.deductible - b.deductible || a.premium - b.premium);
   const base = sorted[0] ?? null;
 
+  const withSchedule = !!settings.schedule?.length || settings.defaultOccurrenceLimit != null;
   const replays = sorted.map((o) => {
-    const rows = years.map((y) => replayYear(y, settings.schedule?.length ? { defaultAmount: o.deductible, rules: settings.schedule } : o.deductible, o.aggregateCap));
+    const rows = years.map((y) => replayYear(y, withSchedule ? { defaultAmount: o.deductible, rules: settings.schedule ?? [], defaultOccurrenceLimit: settings.defaultOccurrenceLimit ?? null } : o.deductible, o.aggregateCap));
     for (const r of rows) lines.push(`${o.label}, ${(r.math.steps.lines as string[])[0]}`);
     return { option: o, rows: rows.map((r) => r.value) };
   });
@@ -389,7 +416,8 @@ export function analyzeRetentionOptions(grouped: ClaimsByPolicyYear, options: Re
     const premiumSaving = base ? round2(base.premium - option.premium) : 0;
     const additionalRetained = baseStats ? round2(stats.averageRetained - baseStats.averageRetained) : 0;
     const netSaving = round2(premiumSaving - additionalRetained);
-    const expectedTotalCost = round2(option.premium + stats.averageRetained);
+    const averageRetainedAboveLimit = n > 0 ? round2(sumMoney(rows.map((r) => r.retainedAboveLimit)) / n) : 0;
+    const expectedTotalCost = round2(option.premium + stats.averageRetained + averageRetainedAboveLimit);
     const worstYearTotalCost = round2(option.premium + (stats.worst?.retained ?? 0));
     const averageTransferred = n > 0 ? round2(sumMoney(rows.map((r) => r.transferred)) / n) : 0;
     let worstYearTest: WorstYearTest | null = null;
@@ -412,7 +440,7 @@ export function analyzeRetentionOptions(grouped: ClaimsByPolicyYear, options: Re
         ? { value: option.aggregateCap, basis: "aggregate cap", claimCount: busiest?.claims.length ?? 0, claimYear: busiest?.label ?? null }
         : { value: byClaims, basis: "deductible × claims", claimCount: busiest?.claims.length ?? 0, claimYear: busiest?.label ?? null };
     lines.push(
-      `${option.label}: expected total cost = ${usd(option.premium)} + ${usd2(stats.averageRetained)} = ${usd2(expectedTotalCost)}` +
+      `${option.label}: expected total cost = ${usd(option.premium)} + ${usd2(stats.averageRetained)}${averageRetainedAboveLimit > 0 ? ` + ${usd2(averageRetainedAboveLimit)} above limit` : ""} = ${usd2(expectedTotalCost)}` +
         (isBase
           ? " (base)"
           : `; premium saving = ${usd(base!.premium)} − ${usd(option.premium)} = ${usd(premiumSaving)}; additional retained = ${usd2(stats.averageRetained)} − ${usd2(baseStats!.averageRetained)} = ${usd2(additionalRetained)}; net = ${usd(premiumSaving)} − ${usd2(additionalRetained)} = ${usd2(netSaving)}; break-even additional retained = ${usd(premiumSaving)}`) +
@@ -425,6 +453,7 @@ export function analyzeRetentionOptions(grouped: ClaimsByPolicyYear, options: Re
       averageRetained: stats.averageRetained,
       averageTransferred,
       worstYear: stats.worst ? { label: stats.worst.label, retained: stats.worst.retained, claimCount: stats.worst.claimCount } : null,
+      averageRetainedAboveLimit,
       expectedTotalCost,
       worstYearTotalCost,
       premiumSaving,
@@ -445,11 +474,12 @@ export function analyzeRetentionOptions(grouped: ClaimsByPolicyYear, options: Re
       adjusted: settings.adjustments.trendRate !== null || settings.adjustments.factors !== null,
       prospectiveYear: grouped.prospectiveYear,
       basisLabel: basisLabel(settings.adjustments),
+      anyAboveLimit: analysed.some((o) => o.years.some((y) => y.retainedAboveLimit > 0)),
     },
     math: {
       inputs: { line: grouped.line, asOf: grouped.asOf, options: sorted.map((o) => ({ label: o.label, deductible: o.deductible, cap: o.aggregateCap, premium: o.premium })), settings: { ...settings, schedule: (settings.schedule ?? []).map(describeRule) } },
       formula:
-        "per year: retained = Σ min(incurred, deductible), then min(·, cap); average and worst over the years used; vs the lowest-deductible base: premium saving, additional retained, expected total cost = premium + average retained, net = saving − additional, break-even = saving, worst-year test, max exposure = deductible × most claims in a year (or the cap)",
+        "per year: retained = Σ min(incurred, deductible), then min(·, cap); retained above limit = Σ max(0, incurred − part occurrence limit); average and worst over the years used; vs the lowest-deductible base: premium saving, additional retained, expected total cost = premium + average retained + average retained above limit, net = saving − additional, break-even = saving, worst-year test, max exposure = deductible × most claims in a year (or the cap)",
       steps: { lines },
     },
   };

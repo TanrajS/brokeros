@@ -85,7 +85,8 @@ export function OptimizerTable({ analysis, mathLines, print = false }: Props) {
                 ),
               "worst",
             )}
-            {row(<>Expected total cost{unit("$ per year = premium + average retained")}</>, (o) => money(o.expectedTotalCost), "etc", true)}
+            {row(<>Expected total cost{unit(analysis.anyAboveLimit ? "$ per year = premium + average retained + retained above limit" : "$ per year = premium + average retained")}</>, (o) => money(o.expectedTotalCost), "etc", true)}
+            {analysis.anyAboveLimit ? row(<>Retained above limit{unit("$ per year, above a coverage part's occurrence limit; the same for every option")}</>, (o) => money(o.averageRetainedAboveLimit), "above") : null}
             {row(<>Worst-year total cost{unit("$ = premium + worst-year retained")}</>, (o) => money(o.worstYearTotalCost), "wtc")}
             {row(<>Premium saving vs base{unit("$ per year")}</>, (o) => (o.isBase ? <span className="text-muted-foreground">—</span> : money(o.premiumSaving)), "saving")}
             {row(<>Additional expected retained vs base{unit("$ per year")}</>, (o) => (o.isBase ? <span className="text-muted-foreground">—</span> : money(o.additionalRetained)), "addl")}

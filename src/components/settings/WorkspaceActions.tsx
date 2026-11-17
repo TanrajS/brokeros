@@ -19,7 +19,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, fieldA11y } from "@/components/form/Field";
 import { RESET_CONFIRMATION } from "@/lib/schemas/workspace";
-import { loadDemoBookAction, newWorkspaceFromDemo, resetWorkspace } from "@/server/workspace/actions";
+import { loadDemoBookAction, newWorkspaceFromDemo, pruneRetiredDemoAccountsAction, resetWorkspace } from "@/server/workspace/actions";
 
 export function WorkspaceActions({ slug, accountCount }: { slug: string; accountCount: number }) {
   const router = useRouter();
@@ -72,6 +72,19 @@ export function WorkspaceActions({ slug, accountCount }: { slug: string; account
 
   const exportBase = `/w/${slug}/export`;
 
+  function onPrune() {
+    startTransition(async () => {
+      const res = await pruneRetiredDemoAccountsAction(slug);
+      if (!res.ok) {
+        toast.error(res.message);
+        return;
+      }
+      const n = res.data.removed;
+      (n > 0 ? toast.success : toast.info)(n === 0 ? "No retired demo accounts in this workspace" : `Removed ${n} retired demo ${n === 1 ? "account" : "accounts"}`, n > 0 ? { description: Object.entries(res.data.byName).map(([name, c]) => `${name} (${c})`).join(", ") } : undefined);
+      router.refresh();
+    });
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <ActionRow
@@ -116,6 +129,13 @@ export function WorkspaceActions({ slug, accountCount }: { slug: string; account
             </a>
           </Button>
         </div>
+      </ActionRow>
+
+      <ActionRow title="Remove retired demo accounts" description="Delete the demo accounts retired in v1.4 (Ashgrove, Kestrel, Prairie, Bluewater, Copperfield, Maple and Tidewater) from this workspace. Only accounts the demo seed wrote are removed; your own accounts are never touched.">
+        <Button type="button" variant="outline" onClick={onPrune} disabled={pending}>
+          <Trash2 aria-hidden="true" />
+          Remove retired demo accounts
+        </Button>
       </ActionRow>
 
       <ActionRow title="Reset this workspace" description="Delete every account, contact and policy. The workspace, its name, link and date stay.">

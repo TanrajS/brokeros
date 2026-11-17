@@ -8,7 +8,7 @@ import { ActivitySection } from "@/components/activity/ActivitySection";
 import { TasksSection } from "@/components/tasks/TasksSection";
 import { formatDate } from "@/lib/format";
 import { listAccountActivities, listAccountTasks } from "@/server/renewals/queries";
-import { countDeductibles } from "@/server/deductibles/queries";
+import { listCoveragePartsFor } from "@/server/deductibles/queries";
 import { countParticipants } from "@/server/program/queries";
 import { formatCurrency, formatInteger } from "@/lib/format";
 import { getAccountDetail } from "@/server/accounts/queries";
@@ -30,7 +30,7 @@ export default async function AccountPage({ params }: { params: Params }) {
   if (!detail) notFound();
   const { account, contacts, policies } = detail;
   const [tasks, activities] = await Promise.all([listAccountTasks(ws.id, account.id), listAccountActivities(ws.id, account.id)]);
-  const [coinsurerCounts, deductibleCounts] = await Promise.all([countParticipants(ws.id, policies.map((p) => p.id)), countDeductibles(ws.id, policies.map((p) => p.id))]);
+  const [coinsurerCounts, coverageParts] = await Promise.all([countParticipants(ws.id, policies.map((p) => p.id)), listCoveragePartsFor(ws.id, policies.map((p) => p.id))]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -60,7 +60,7 @@ export default async function AccountPage({ params }: { params: Params }) {
       </Card>
 
       <ContactsSection slug={slug} accountId={account.id} contacts={contacts} />
-      <PoliciesTable slug={slug} accountId={account.id} asOf={ws.asOfDate} policies={policies} coinsurerCounts={Object.fromEntries(coinsurerCounts)} deductibleCounts={Object.fromEntries(deductibleCounts)} />
+      <PoliciesTable slug={slug} accountId={account.id} asOf={ws.asOfDate} policies={policies} coinsurerCounts={Object.fromEntries(coinsurerCounts)} coverageParts={Object.fromEntries([...coverageParts].map(([id, rows]) => [id, rows.map((r) => ({ appliesTo: r.appliesTo, isDefault: r.isDefault, kind: r.kind, amount: r.amount, percent: r.percent, minimum: r.minimum, maximum: r.maximum, hours: r.hours, occurrenceLimit: r.occurrenceLimit, aggregateLimit: r.aggregateLimit }))]))} />
       <TasksSection
         slug={slug}
         accountId={account.id}

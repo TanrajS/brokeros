@@ -154,6 +154,12 @@ export function CertificatesPanel({ slug, accountId, asOf, namedInsured, policy,
                   <dd>{r.value}</dd>
                 </div>
               ))}
+              {preview.coveragePartRows.length ? (
+                <>
+                  <dt className="text-muted-foreground">Sublimits</dt>
+                  <dd>{preview.coveragePartRows.map((r) => `${r.label}: ${r.value}`).join("; ")}</dd>
+                </>
+              ) : null}
               <dt className="text-muted-foreground">Endorsements present</dt>
               <dd>{preview.endorsementsPresent.length ? preview.endorsementsPresent.join("; ") : "None of the tracked endorsements"}</dd>
               {preview.endorsementsAbsent.length ? (

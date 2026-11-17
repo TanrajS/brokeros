@@ -82,7 +82,8 @@ export async function buildStrategyView(ws: Workspace, accountId: string, q: Str
   const scheduleRows = await listPolicyDeductibles(ws.id, policy.id);
   const schedule = scheduleRows.map(toRule);
   const namedRules = schedule.filter((r) => !r.isDefault);
-  const replay = { ...replaySettingsFrom(settings.values), schedule: namedRules };
+  // v1.5.1: the policy's headline occurrence limit (and each part's own sublimit) bounds what the insurer pays; the rest is retained above limit.
+  const replay = { ...replaySettingsFrom(settings.values), schedule: namedRules, defaultOccurrenceLimit: policy.occurrenceLimit };
   const grouped = groupClaimsByPolicyYear(data.claims, data.lrPolicies, line, asOf);
   const years = selectReplayYears(grouped.value, replay).value.years;
   const a = data.account;

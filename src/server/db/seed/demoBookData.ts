@@ -83,7 +83,7 @@ export interface DemoTowerLayer {
   participations?: DemoLayerParticipation[];
 }
 
-/** A non-default deductible rule on a policy. */
+/** A non-default coverage part on a policy: its deductible rule and, from v1.5.1, optional sublimits. */
 export interface DemoDeductible {
   appliesTo: string;
   kind: DeductibleKind;
@@ -92,6 +92,8 @@ export interface DemoDeductible {
   minimum?: number;
   maximum?: number;
   hours?: number;
+  occurrenceLimit?: number;
+  aggregateLimit?: number;
   notes?: string;
 }
 
@@ -520,17 +522,18 @@ export function buildDemoBook(asOf: ISODate): DemoAccount[] {
       { label: "$250,000 deductible", carrier: C.westcoast, deductible: 250_000, aggregateCap: null, premium: 705_000 },
       { label: "$500,000 deductible", carrier: C.westcoast, deductible: 500_000, aggregateCap: null, premium: 655_000 },
     ],
+    // v1.5.1: sublimits a terminal operator would expect; no seeded claim exceeds any of them, so the hand-verified figures hold.
     deductibles: [
-      { appliesTo: "Earthquake", kind: "percent_of_loss", percent: 10, minimum: 100_000 },
-      { appliesTo: "Flood", kind: "flat", amount: 250_000 },
+      { appliesTo: "Earthquake", kind: "percent_of_loss", percent: 10, minimum: 100_000, aggregateLimit: 100 * M },
+      { appliesTo: "Flood", kind: "flat", amount: 250_000, occurrenceLimit: 50 * M, aggregateLimit: 50 * M },
       { appliesTo: "Named windstorm", kind: "percent_of_loss", percent: 5, minimum: 100_000 },
-      { appliesTo: "Stock", kind: "flat", amount: 10_000 },
-      { appliesTo: "Equipment breakdown", kind: "flat", amount: 25_000 },
+      { appliesTo: "Stock", kind: "flat", amount: 10_000, occurrenceLimit: 25 * M },
+      { appliesTo: "Equipment breakdown", kind: "flat", amount: 25_000, occurrenceLimit: 10 * M },
       { appliesTo: "Business interruption", kind: "waiting_period", hours: 72 },
       { appliesTo: "Sewer backup", kind: "flat", amount: 50_000 },
       { appliesTo: "Theft", kind: "flat", amount: 10_000 },
-      { appliesTo: "Glass", kind: "flat", amount: 1_000 },
-      { appliesTo: "Transit", kind: "flat", amount: 5_000 },
+      { appliesTo: "Glass", kind: "flat", amount: 1_000, occurrenceLimit: 250_000 },
+      { appliesTo: "Transit", kind: "flat", amount: 5_000, occurrenceLimit: 2 * M },
       { appliesTo: "Vehicle impact", kind: "flat", amount: 10_000 },
     ],
   });

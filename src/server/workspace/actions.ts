@@ -11,6 +11,7 @@ import { RESET_CONFIRMATION, workspaceSettingsSchema, type WorkspaceSettingsInpu
 import { getExecutor } from "@/server/db/tx";
 import { syncStages } from "@/server/renewals/stages";
 import { deleteUserBlobs } from "@/server/documents/cleanup";
+import { pruneRetiredDemoAccounts, type PruneResult } from "./prune";
 import { writeWorkspaceCookie } from "./cookie";
 import { countAccounts, createWorkspace, getWorkspaceBySlug, todayISO } from "./queries";
 
@@ -96,6 +97,19 @@ export async function newEmptyWorkspace(): Promise<ActionResult> {
     return fail(describeFailure("creating a workspace", err));
   }
   redirect(`/w/${slug}`);
+}
+
+/** v1.5.1: removes the retired demo accounts (seed rows only) from this workspace and reports how many went. */
+export async function pruneRetiredDemoAccountsAction(slug: string): Promise<ActionResult<PruneResult>> {
+  try {
+    const ws = await getWorkspaceBySlug(slug);
+    if (!ws) return fail("That workspace no longer exists.");
+    const result = await pruneRetiredDemoAccounts(getDb(), ws.id);
+    revalidatePath(`/w/${slug}`, "layout");
+    return ok(result);
+  } catch (err) {
+    return fail(describeFailure("removing the retired demo accounts", err));
+  }
 }
 
 /** Deletes every account, contact and policy in the workspace. Requires the typed confirmation. */

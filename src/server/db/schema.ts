@@ -14,7 +14,7 @@
  * (removed in v1.4 with the Marketing tab); v1.2 added
  * quote_options (retention options for the Strategy tab) and the account's
  * broker fee, risk control and claims administration figures for TCOR; v1.3
- * added program_layers, layer_participations, policy_deductibles and the
+ * added program_layers, layer_participations, policy_coverage_parts and the
  * claims' peril and value_at_risk.
  * Keep the helper column factories below so those tables stay consistent.
  */
@@ -110,9 +110,16 @@ export const accounts = pgTable(
     toleranceYear: money("tolerance_year"),
     permissibleLossRatio: rate("permissible_loss_ratio").notNull().default(0.65),
     acceptedFindings: text("accepted_findings").array().notNull().default(sql`'{}'::text[]`),
+    /** v1.5.1: true for accounts the demo seed wrote; the prune script and Settings action only ever remove these. */
+    isSeed: boolean("is_seed").notNull().default(false),
     ...timestamps,
   },
-  (t) => [index("accounts_workspace_idx").on(t.workspaceId), index("accounts_workspace_name_idx").on(t.workspaceId, t.name)],
+  (t) => [
+    index("accounts_workspace_idx").on(t.workspaceId),
+    index("accounts_workspace_name_idx").on(t.workspaceId, t.name),
+    /** v1.5.1: names are unique per workspace, case-insensitive and trimmed. */
+    uniqueIndex("accounts_workspace_name_uq").on(t.workspaceId, sql`lower(trim(${t.name}))`),
+  ],
 );
 
 export const contacts = pgTable(
@@ -177,6 +184,10 @@ export const policies = pgTable(
     index("policies_account_idx").on(t.accountId),
     index("policies_workspace_idx").on(t.workspaceId),
     index("policies_workspace_expiry_idx").on(t.workspaceId, t.expiryDate),
+    /** v1.5.1: a policy number is unique within its account, case-insensitive and trimmed; blanks are free. */
+    uniqueIndex("policies_account_number_uq")
+      .on(t.accountId, sql`lower(trim(${t.policyNumber}))`)
+      .where(sql`${t.policyNumber} is not null`),
   ],
 );
 
@@ -413,12 +424,15 @@ export const layerParticipations = pgTable(
 );
 
 /**
- * v1.3: a policy's deductible schedule. The row with is_default mirrors
- * `policies.deductible` (all other perils) and the two are kept in sync by the
- * policy and schedule actions; the other rows name a peril or coverage part.
+ * v1.5.1: a policy's coverage schedule (v1.3's deductible schedule, renamed).
+ * The row with is_default mirrors `policies.deductible`, `occurrence_limit` and
+ * `aggregate_limit` (all other perils) and is kept in sync by the policy and
+ * schedule actions; the other rows name a peril or coverage part with their own
+ * deductible rule and, optionally, their own occurrence and aggregate limits
+ * (sublimits). Losses above a part's occurrence limit are retained by the client.
  */
-export const policyDeductibles = pgTable(
-  "policy_deductibles",
+export const policyCoverageParts = pgTable(
+  "policy_coverage_parts",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     workspaceId: uuid("workspace_id")
@@ -434,14 +448,18 @@ export const policyDeductibles = pgTable(
     minimum: money("minimum"),
     maximum: money("maximum"),
     hours: integer("hours"),
+    /** Per-occurrence limit for this part (the policy's headline limit on the default row). */
+    occurrenceLimit: money("occurrence_limit"),
+    /** Aggregate limit for this part (the policy's headline aggregate on the default row). */
+    aggregateLimit: money("aggregate_limit"),
     notes: text("notes"),
     isDefault: boolean("is_default").notNull().default(false),
     ...timestamps,
   },
   (t) => [
-    index("policy_deductibles_policy_idx").on(t.policyId),
-    index("policy_deductibles_workspace_idx").on(t.workspaceId),
-    uniqueIndex("policy_deductibles_default_idx").on(t.policyId).where(sql`${t.isDefault} = true`),
+    index("policy_coverage_parts_policy_idx").on(t.policyId),
+    index("policy_coverage_parts_workspace_idx").on(t.workspaceId),
+    uniqueIndex("policy_coverage_parts_default_idx").on(t.policyId).where(sql`${t.isDefault} = true`),
   ],
 );
 
@@ -551,5 +569,5 @@ export type PolicySublimit = typeof policySublimits.$inferSelect;
 export type QuoteOption = typeof quoteOptions.$inferSelect;
 export type ProgramLayer = typeof programLayers.$inferSelect;
 export type LayerParticipation = typeof layerParticipations.$inferSelect;
-export type PolicyDeductible = typeof policyDeductibles.$inferSelect;
+export type PolicyCoveragePart = typeof policyCoverageParts.$inferSelect;
 export type Document = typeof documents.$inferSelect;

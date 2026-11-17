@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildDemoBook } from "../demoBookData";
+import { isRetiredDemoAccountName } from "@/lib/domain/book";
 import { daysBetween } from "@/lib/domain/dates";
 import { checklistTemplate, getRenewalStage, getRateMetrics, isTaskOverdue } from "@/lib/domain/renewals";
 
@@ -10,8 +11,11 @@ const allPolicies = book.flatMap((a) => a.policies.map((p) => ({ account: a.name
 const currentPolicies = allPolicies.filter((p) => !p.priorTerm);
 
 describe("buildDemoBook (v1.4: ten focused accounts)", () => {
-  it("has exactly 10 accounts across the six industries", () => {
+  it("has exactly 10 accounts across the six industries, none of them a retired v1.3 name", () => {
     expect(book).toHaveLength(10);
+    // v1.5.1: Ashgrove, Kestrel, Prairie, Bluewater, Copperfield, Maple and Tidewater are gone for good
+    expect(book.filter((a) => isRetiredDemoAccountName(a.name))).toEqual([]);
+    for (const core of ["Harbourline Foods Inc.", "Cedar Ridge Mechanical Ltd.", "Pacific Northwest Terminals Ltd.", "Kootenay Alpine Resorts Inc."]) expect(book.some((a) => a.name === core)).toBe(true);
     const industries = new Set(book.map((a) => a.industry));
     for (const i of ["construction", "manufacturing", "hospitality", "professional services", "transportation", "retail"]) {
       expect(industries.has(i as never)).toBe(true);

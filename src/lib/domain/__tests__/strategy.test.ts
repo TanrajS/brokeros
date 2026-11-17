@@ -413,3 +413,42 @@ describe("deductible schedules in the replay (v1.3)", () => {
     expect(y.retained).toBe(0);
   });
 });
+
+describe("retained above a coverage part's limit (v1.5.1)", () => {
+  const stockPart = { appliesTo: "Stock", kind: "flat" as const, amount: 10_000, percent: null, minimum: null, maximum: null, hours: null, isDefault: false, occurrenceLimit: 250_000, aggregateLimit: null };
+
+  it("leaves the Harbourline figures unchanged under the policy's $1,000,000 headline limit: no claim exceeds it", () => {
+    const plain = analyzeRetentionOptions(grouped, options).value;
+    const limited = analyzeRetentionOptions(grouped, options, { ...DEFAULT_REPLAY_SETTINGS, schedule: [stockPart], defaultOccurrenceLimit: 1_000_000 }).value;
+    expect(limited.options.map((o) => o.years.map((y) => y.retained))).toEqual(plain.options.map((o) => o.years.map((y) => y.retained)));
+    expect(limited.options.map((o) => o.averageRetained)).toEqual([18_600, 33_200, 45_000]);
+    expect(limited.options.map((o) => o.expectedTotalCost)).toEqual([160_600, 157_200, 155_000]);
+    expect(limited.options.every((o) => o.averageRetainedAboveLimit === 0 && o.years.every((y) => y.retainedAboveLimit === 0))).toBe(true);
+    expect(limited.anyAboveLimit).toBe(false);
+  });
+
+  it("a $600,000 Stock claim against a $250,000 Stock occurrence limit with a $10,000 deductible retains 10,000 below and 350,000 above", () => {
+    const tagged = [{ ...claim("2026-04-01", 600_000, 0, "py26"), peril: "Stock" }];
+    const g = groupClaimsByPolicyYear(tagged, policies, "General Liability", asOf).value;
+    const calc = analyzeRetentionOptions(g, [options[0]], { ...DEFAULT_REPLAY_SETTINGS, yearsToUse: 1, schedule: [stockPart], defaultOccurrenceLimit: 1_000_000 });
+    const a = calc.value;
+    const y = a.options[0].years[0];
+    // below: min(600,000, 10,000 Stock deductible) = 10,000; above: max(0, 600,000 − 250,000) = 350,000; the insurer pays 600,000 − 10,000 − 350,000 = 240,000
+    expect([y.retained, y.retainedAboveLimit, y.transferred]).toEqual([10_000, 350_000, 240_000]);
+    expect(y.scheduledClaims).toBe(1);
+    // one year: averages equal the year; expected total cost = 142,000 + 10,000 + 350,000 = 502,000
+    expect([a.options[0].averageRetained, a.options[0].averageRetainedAboveLimit, a.options[0].expectedTotalCost]).toEqual([10_000, 350_000, 502_000]);
+    expect(a.anyAboveLimit).toBe(true);
+    expect((calc.math.steps.lines as string[]).some((l) => /retained above limit = max\(0, \$600,000 − \$250,000 Stock limit\) = \$350,000/.test(l))).toBe(true);
+  });
+
+  it("falls back to the headline limit for a claim with no part of its own, and to nothing without a headline", () => {
+    const tagged = [claim("2026-04-01", 1_300_000, 0, "py26")];
+    const g = groupClaimsByPolicyYear(tagged, policies, "General Liability", asOf).value;
+    const withHeadline = analyzeRetentionOptions(g, [options[0]], { ...DEFAULT_REPLAY_SETTINGS, yearsToUse: 1, defaultOccurrenceLimit: 1_000_000 }).value.options[0].years[0];
+    // 1,300,000 − 1,000,000 headline = 300,000 above; 10,000 below
+    expect([withHeadline.retained, withHeadline.retainedAboveLimit, withHeadline.transferred]).toEqual([10_000, 300_000, 990_000]);
+    const noLimit = analyzeRetentionOptions(g, [options[0]], { ...DEFAULT_REPLAY_SETTINGS, yearsToUse: 1 }).value.options[0].years[0];
+    expect([noLimit.retained, noLimit.retainedAboveLimit, noLimit.transferred]).toEqual([10_000, 0, 1_290_000]);
+  });
+});

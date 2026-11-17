@@ -32,7 +32,7 @@ const optionalHours = z
     return Number(s);
   });
 
-/** One deductible rule. Required fields depend on the kind; minimum may not exceed maximum. */
+/** One coverage part: a deductible rule (required fields depend on the kind; minimum may not exceed maximum) plus optional occurrence and aggregate limits (aggregate not below occurrence). */
 export const deductibleFormSchema = z
   .object({
     appliesTo: requiredText("Applies to", 80),
@@ -42,9 +42,12 @@ export const deductibleFormSchema = z
     minimum: optionalCurrencySchema,
     maximum: optionalCurrencySchema,
     hours: optionalHours,
+    occurrenceLimit: optionalCurrencySchema,
+    aggregateLimit: optionalCurrencySchema,
     notes: optionalText(500),
   })
   .superRefine((v, ctx) => {
+    if (v.occurrenceLimit !== null && v.aggregateLimit !== null && v.aggregateLimit < v.occurrenceLimit) ctx.addIssue({ code: "custom", path: ["aggregateLimit"], message: "Aggregate limit cannot be below the occurrence limit" });
     if (v.kind === "flat" && v.amount === null) ctx.addIssue({ code: "custom", path: ["amount"], message: "A flat deductible needs an amount" });
     if ((v.kind === "percent_of_loss" || v.kind === "percent_of_value") && v.percent === null) ctx.addIssue({ code: "custom", path: ["percent"], message: "A percent deductible needs a percent" });
     if (v.kind === "waiting_period" && v.hours === null) ctx.addIssue({ code: "custom", path: ["hours"], message: "A waiting period needs hours" });

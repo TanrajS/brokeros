@@ -143,6 +143,22 @@ before changing anything, and keep it current when the rules change.
   transaction). Lock the row with `.for("update")` before checking state.
   Helpers that run in either context take an `Executor`; use `getExecutor()` for
   the HTTP client. No casts needed.
+- **Names are unique (v1.5.1).** `accounts_workspace_name_uq` on
+  `(workspace_id, lower(trim(name)))` and `policies_account_number_uq` on
+  `(account_id, lower(trim(policy_number)))` (blanks free). `nameConflict` in
+  `src/lib/domain/book.ts` is the one rule; the account and policy actions check
+  it before writing and map a unique violation to the same field error, and the
+  forms call `checkAccountName` / `checkPolicyNumber` on blur. A migration that
+  adds such an index must rename existing duplicates first (" (2)", " (3)") and
+  report them (`0015`).
+- **Demo accounts carry `accounts.is_seed = true`** (v1.5.1); the seed writer
+  sets it and `0015` back-filled it for the known fictional names without user
+  documents. `pruneRetiredDemoAccounts` (`src/server/workspace/prune.ts`,
+  importable from the CLI, so no `server-only`) deletes only `is_seed` rows
+  whose name matches `isRetiredDemoAccountName` (Ashgrove, Kestrel, Prairie,
+  Bluewater, Copperfield, Maple, Tidewater; whole first word). The five other
+  old names (Greyhawk, Lantern Hill, Northfield, Pinecrest, Summit Row) are
+  deliberately not pruned yet.
 - **The Book counts current terms only**: a policy that is some other policy's
   `previous_policy_id` is superseded and excluded from totals and next expiry.
 - Checklists are generated on first open by `ensureChecklist` (idempotent; the
@@ -298,13 +314,29 @@ before changing anything, and keep it current when the rules change.
   findings.** The segment table is the only coverage view (the strip was
   removed); Placed % is red whenever it is not 100% and the unplaced dollars are
   shown beside it.
-- **Deductible schedules** (`policy_deductibles`): the row with `is_default`
-  mirrors `policies.deductible`. Every policy write calls
-  `syncDefaultDeductible` (`src/server/deductibles/sync.ts`); editing the
-  default row writes the amount back to the policy; the default row cannot be
-  deleted (clear the policy's deductible instead) and must stay a flat amount.
-  Logic is in `src/lib/domain/deductibles.ts` (`deductibleForClaim`,
-  `matchRule`, `validateScheduleRows`).
+- **Coverage schedules** (`policy_coverage_parts`, v1.5.1; was
+  `policy_deductibles`, renamed with its data by `0017_coverage_parts`): the row
+  with `is_default` mirrors `policies.deductible`, `occurrence_limit` and
+  `aggregate_limit` and exists while any of the three is set. Every policy write
+  calls `syncDefaultCoveragePart` (`src/server/deductibles/sync.ts`); editing the
+  default row writes all three back to the policy; the default row cannot be
+  deleted and its deductible must stay a flat amount. Other rows are coverage
+  parts with their own deductible rule and optional sublimits. Logic is in
+  `src/lib/domain/deductibles.ts` (`deductibleForClaim`, `matchRule`,
+  `validateScheduleRows`, `checkPartLimits`: aggregate < occurrence is an error,
+  a part limit above the headline is a warning only, `retainedAboveLimit`,
+  `describePartLimits`). The `CoveragePartsChip` shows "N coverage parts" with
+  the parts and limits on hover; the certificate lists parts with their own
+  limits as "Sublimits".
+- **Retained above limit (v1.5.1):** `replayYear` takes
+  `ReplayDeductible.defaultOccurrenceLimit` (the policy's headline limit, passed
+  by `buildStrategyView` as `ReplaySettings.defaultOccurrenceLimit`) and each
+  part's `occurrenceLimit`; `retainedAboveLimit` = Σ max(0, incurred − that
+  limit) is reported beside `retained`, never inside it, so the hand-verified
+  deductible figures stay put. `transferred` = incurred − retained − above limit;
+  `expectedTotalCost` = premium + average retained + `averageRetainedAboveLimit`;
+  `RetentionAnalysis.anyAboveLimit` switches the column and the note on. No
+  seeded claim exceeds a part or headline limit (`demoBookStrategy.test.ts`).
 - **Claims carry `peril`** (default "All other perils") and an optional
   `value_at_risk`. The strategy replay (`replayYear` with a `ReplayDeductible`)
   uses the rule matching the claim's peril and lets the option replace only the
@@ -389,7 +421,13 @@ before changing anything, and keep it current when the rules change.
   outcome; never "renewal policy"), bound, signed line, written line, 100%
   premium, actual premium, placed, short (in labels and tiles: "$X short", "Short
   ($)"; "Under-placed" stays only as the status word), exposed limit, rate on
-  line, band, deductible, retention, tolerance, basis. Never "replay",
+  line, band, deductible, retention, tolerance, basis, coverage part (one row of
+  a policy's coverage schedule: a peril or coverage part with its own deductible
+  rule and, optionally, its own limits; the default part is all other perils),
+  sublimit (a coverage part's own occurrence or aggregate limit, below or, with a
+  warning, above the policy's headline limit), retained above limit (the part of
+  a loss above its coverage part's occurrence limit, borne by the client on top
+  of the deductible and kept separate from the deductible retention). Never "replay",
   "replaying", "running year" (say "current year"), "unplaced" in a label (the
   spec's own partial-line sentence keeps "unplaced share"), "VAR" (say "value at
   risk") or "occ / agg".
@@ -404,7 +442,9 @@ before changing anything, and keep it current when the rules change.
 ## Commands
 
 `npm run dev` · `npm run build` · `npm run typecheck` · `npm run lint` ·
-`npm test` · `npm run db:generate` · `npm run db:migrate` · `npm run db:seed`
+`npm test` · `npm run db:generate` · `npm run db:migrate` · `npm run db:seed` ·
+`npm run db:prune-demo` (deletes `is_seed` accounts whose name starts with a
+retired demo prefix, every workspace, and prints the counts)
 (`SEED_AS_OF=YYYY-MM-DD` fixes the as-of date; `SEED_WORKSPACE_SLUG=…` seeds an
 existing empty workspace; `SEED_NIGHTLY_RESET=1` flags it for the cron reset;
 with `BLOB_READ_WRITE_TOKEN` the seed PDFs are uploaded once under `seed/`). Browser smoke tests: `scripts/e2e-renewals.cjs`, `scripts/e2e-dashboard.cjs`,

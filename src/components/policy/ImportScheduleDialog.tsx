@@ -10,19 +10,21 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Label } from "@/components/ui/label";
-import { SCHEDULE_COLUMNS, checkScheduleColumns, validateScheduleRows, type ScheduleRowResult } from "@/lib/domain/deductibles";
+import { SCHEDULE_COLUMNS, checkScheduleColumns, validateScheduleRows, type HeadlineLimits, type ScheduleRowResult } from "@/lib/domain/deductibles";
 import { importDeductibleSchedule, type ScheduleImportResult } from "@/server/deductibles/actions";
 
 interface Props {
   slug: string;
   policyId: string;
   existingAppliesTo: string[];
+  /** The policy's headline limits; a part above them is warned in the preview, not blocked. */
+  headline: HeadlineLimits;
 }
 
 type Stage = { kind: "pick" } | { kind: "preview"; fileName: string; rows: Record<string, string>[]; results: ScheduleRowResult[] } | { kind: "done"; result: ScheduleImportResult };
 
 /** Import a deductible schedule CSV with the standard preview-and-validate flow. */
-export function ImportScheduleDialog({ slug, policyId, existingAppliesTo }: Props) {
+export function ImportScheduleDialog({ slug, policyId, existingAppliesTo, headline }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<Stage>({ kind: "pick" });
@@ -51,7 +53,7 @@ export function ImportScheduleDialog({ slug, policyId, existingAppliesTo }: Prop
           setFileError("The file has a header row but no rules.");
           return;
         }
-        setStage({ kind: "preview", fileName: file.name, rows: out.data, results: validateScheduleRows(out.data, { existingAppliesTo }).value });
+        setStage({ kind: "preview", fileName: file.name, rows: out.data, results: validateScheduleRows(out.data, { existingAppliesTo, headline }).value });
       },
       error: (err) => setFileError(`Could not read the file: ${err.message}`),
     });
@@ -89,10 +91,11 @@ export function ImportScheduleDialog({ slug, policyId, existingAppliesTo }: Prop
       >
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Import a deductible schedule</DialogTitle>
+            <DialogTitle>Import a coverage schedule</DialogTitle>
             <DialogDescription>
               Columns, in any order: {SCHEDULE_COLUMNS.join(", ")}. Kind is flat, percent_of_loss, percent_of_value or waiting_period; a flat rule needs an amount, a percent rule a percent, a waiting
-              period hours. Only valid rows are imported, all in one go.
+              period hours. occurrence_limit and aggregate_limit are the part&apos;s own sublimits (blank = the policy&apos;s headline limit applies); an aggregate below the occurrence limit is rejected and a
+              limit above the policy&apos;s is a warning. Only valid rows are imported, all in one go.
             </DialogDescription>
           </DialogHeader>
           {stage.kind === "pick" ? (
@@ -129,6 +132,8 @@ export function ImportScheduleDialog({ slug, policyId, existingAppliesTo }: Prop
                       <TableHead>Percent</TableHead>
                       <TableHead>Min / max</TableHead>
                       <TableHead>Hours</TableHead>
+                      <TableHead className="text-right">Occurrence limit</TableHead>
+                      <TableHead className="text-right">Aggregate limit</TableHead>
                       <TableHead>Result</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -144,6 +149,8 @@ export function ImportScheduleDialog({ slug, policyId, existingAppliesTo }: Prop
                           {r.raw.minimum || "—"} / {r.raw.maximum || "—"}
                         </TableCell>
                         <TableCell>{r.raw.hours || "—"}</TableCell>
+                        <TableCell className="text-right">{r.raw.occurrence_limit || "—"}</TableCell>
+                        <TableCell className="text-right">{r.raw.aggregate_limit || "—"}</TableCell>
                         <TableCell className="min-w-48 whitespace-normal">
                           {r.valid ? <Badge variant="outline">Valid</Badge> : <Badge variant="destructive">Invalid</Badge>}
                           {r.reasons.length > 0 ? <span className="mt-1 block text-xs text-destructive">{r.reasons.join("; ")}</span> : null}
@@ -160,6 +167,7 @@ export function ImportScheduleDialog({ slug, policyId, existingAppliesTo }: Prop
             <div className="flex flex-col gap-2" role="status">
               <p className="text-base font-medium">
                 Imported {stage.result.imported} of {stage.result.total} rows; {stage.result.skipped.length} skipped.
+                {stage.result.warnings.length ? ` ${stage.result.warnings.length} ${stage.result.warnings.length === 1 ? "part sits" : "parts sit"} above the policy's headline limit.` : ""}
               </p>
               {stage.result.skipped.length > 0 ? (
                 <ul className="rounded-lg border p-3 text-sm">

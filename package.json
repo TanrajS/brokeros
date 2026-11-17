@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:seed": "tsx scripts/seed.ts"
+    "db:seed": "tsx scripts/seed.ts",
+    "db:prune-demo": "tsx scripts/prune-demo.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^7.0.6",

@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { CertificateInsurer, CertificatePolicyInput } from "@/lib/domain/certificates";
 import { getDb } from "@/server/db/client";
-import { layerParticipations, programLayers, type Policy } from "@/server/db/schema";
+import { layerParticipations, programLayers, type Policy, type PolicyCoveragePart } from "@/server/db/schema";
 
 const groupFor = (line: string): "gl" | "auto" | "property" | null => (line === "General Liability" ? "gl" : line === "Commercial Auto" ? "auto" : line === "Property" ? "property" : null);
 
@@ -28,8 +28,10 @@ export async function certificateInsurers(workspaceId: string, policy: Policy): 
   return parts.map((p) => ({ name: p.insurer, signedLinePct: p.signedLinePct }));
 }
 
-export function toCertificatePolicy(p: Policy): CertificatePolicyInput {
+/** `parts` (v1.5.1) are the policy's coverage parts; those with their own limits appear under the headline limits. */
+export function toCertificatePolicy(p: Policy, parts: PolicyCoveragePart[] = []): CertificatePolicyInput {
   return {
+    coverageParts: parts.filter((c) => !c.isDefault).map((c) => ({ appliesTo: c.appliesTo, occurrenceLimit: c.occurrenceLimit, aggregateLimit: c.aggregateLimit })),
     id: p.id,
     lineOfBusiness: p.lineOfBusiness,
     carrier: p.carrier,

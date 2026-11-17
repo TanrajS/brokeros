@@ -10,6 +10,7 @@ import { getDb } from "@/server/db/client";
 import { accounts, documents, policies } from "@/server/db/schema";
 import { BlobNotConfiguredError, blobReady, uploadDocumentBlob } from "@/server/documents/blob";
 import { getWorkspaceBySlug } from "@/server/workspace/queries";
+import { listPolicyDeductibles } from "@/server/deductibles/queries";
 import { certificateInsurers, toCertificatePolicy } from "./queries";
 import { renderCertificatePdf } from "./pdf";
 
@@ -34,15 +35,15 @@ export async function generateCertificate(slug: string, policyId: string, input:
     const v = parsed.data;
     const included = accountPolicies.filter((p) => v.includePolicyIds.includes(p.id) && p.id !== policy.id);
     if (included.length !== v.includePolicyIds.filter((id) => id !== policy.id).length) return fail("Please fix the highlighted fields.", { includePolicyIds: "Choose policies on this account" });
-    const insurers = await certificateInsurers(ws.id, policy);
+    const [insurers, parts] = await Promise.all([certificateInsurers(ws.id, policy), listPolicyDeductibles(ws.id, policy.id)]);
     const content = certificateContent({
       namedInsured: { name: account.name, province: account.province, industry: account.industry },
       holder: { name: v.holderName, address: v.holderAddress },
       operations: v.operations,
       issueDate: ws.asOfDate,
-      policy: toCertificatePolicy(policy),
+      policy: toCertificatePolicy(policy, parts),
       insurers,
-      included: included.map(toCertificatePolicy),
+      included: included.map((p) => toCertificatePolicy(p)),
     }).value;
     const pdf = await renderCertificatePdf(content);
     const fileName = `${content.reference}.pdf`;

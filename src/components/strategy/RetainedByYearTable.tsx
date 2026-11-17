@@ -40,6 +40,12 @@ export function RetainedByYearTable({ analysis, open = false, print = false }: P
                 <span className="block text-xs font-normal text-muted-foreground">retained / transferred ($)</span>
               </th>
             ))}
+            {analysis.anyAboveLimit ? (
+              <th scope="col" className={cn(head, "text-right")}>
+                Retained above limit
+                <span className="block text-xs font-normal text-muted-foreground">$, same for every option</span>
+              </th>
+            ) : null}
           </tr>
         </thead>
         <tbody className="divide-y">
@@ -68,6 +74,7 @@ export function RetainedByYearTable({ analysis, open = false, print = false }: P
                   </td>
                 );
               })}
+              {analysis.anyAboveLimit ? <td className={cn(cell, "text-right font-medium")}>{money(opts[0].years[i].retainedAboveLimit)}</td> : null}
             </tr>
           ))}
         </tbody>
@@ -84,6 +91,7 @@ export function RetainedByYearTable({ analysis, open = false, print = false }: P
                 <span className="block text-xs font-normal text-muted-foreground">{money(o.averageTransferred)} transferred</span>
               </td>
             ))}
+            {analysis.anyAboveLimit ? <td className={cn(cell, "text-right")}>{money(opts[0].averageRetainedAboveLimit)}</td> : null}
           </tr>
         </tfoot>
       </table>
@@ -94,7 +102,10 @@ export function RetainedByYearTable({ analysis, open = false, print = false }: P
     <details open={open} className="group rounded-lg border">
       <summary className="cursor-pointer px-3 py-2 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50">Retained losses by year at each deductible</summary>
       <div className="flex flex-col gap-2 border-t p-3">
-        <p className="text-xs text-muted-foreground">Each option applies its deductible to the account&apos;s actual claims, year by year.</p>
+        <p className="text-xs text-muted-foreground">
+          Each option applies its deductible to the account&apos;s actual claims, year by year.
+          {analysis.anyAboveLimit ? " The part of a loss above its coverage part's occurrence limit is retained by the client whatever the deductible; it is shown in its own column and added to the expected total cost." : ""}
+        </p>
         {table}
       </div>
     </details>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
@@ -14,7 +14,7 @@ import { NativeSelect } from "@/components/form/NativeSelect";
 import { ACCOUNT_STATUSES, ACCOUNT_STATUS_LABELS, INDUSTRIES, PROVINCES } from "@/lib/constants";
 import { titleCase } from "@/lib/format";
 import { accountFormSchema, type AccountFormInput, type AccountFormValues } from "@/lib/schemas/account";
-import { createAccount, updateAccount } from "@/server/accounts/actions";
+import { checkAccountName, createAccount, updateAccount } from "@/server/accounts/actions";
 
 interface Props {
   slug: string;
@@ -31,7 +31,7 @@ export function AccountForm({ slug, accountId, defaultValues, cancelHref }: Prop
     defaultValues,
     mode: "onChange",
   });
-  const { register, handleSubmit, formState, getValues, setError } = form;
+  const { register, handleSubmit, formState, getValues, setError, clearErrors } = form;
   const errors = formState.errors;
 
   function onSubmit() {
@@ -53,12 +53,24 @@ export function AccountForm({ slug, accountId, defaultValues, cancelHref }: Prop
   }
 
   const msg = (k: keyof AccountFormInput) => errors[k]?.message;
+  // v1.5.1: names are unique per workspace; checked on blur so the message shows before Save.
+  const [nameTaken, setNameTaken] = useState<string | null>(null);
+  function onNameBlur(e: React.FocusEvent<HTMLInputElement>) {
+    const value = e.target.value;
+    if (!value.trim()) return;
+    void checkAccountName(slug, value, accountId ?? null).then((res) => {
+      if (!res.ok) return;
+      setNameTaken(res.data.error);
+      if (res.data.error) setError("name", { type: "duplicate", message: res.data.error });
+      else if (errors.name?.type === "duplicate") clearErrors("name");
+    });
+  }
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex max-w-2xl flex-col gap-5">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field id="name" label="Account name" required error={msg("name")} className="flex flex-col gap-1.5 sm:col-span-2">
-          <Input {...register("name")} {...fieldA11y("name", msg("name"))} autoComplete="organization" />
+          <Input {...register("name", { onBlur: onNameBlur, onChange: () => nameTaken && setNameTaken(null) })} {...fieldA11y("name", msg("name"))} autoComplete="organization" />
         </Field>
         <Field id="industry" label="Industry" required error={msg("industry")}>
           <NativeSelect {...register("industry")} {...fieldA11y("industry", msg("industry"))}>

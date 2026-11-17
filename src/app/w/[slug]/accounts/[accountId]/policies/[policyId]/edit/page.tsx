@@ -61,7 +61,7 @@ export default async function EditPolicyPage({ params }: { params: Promise<{ slu
         cancelHref={`/w/${slug}/accounts/${accountId}/policies/${p.id}`}
       />
       <div className="max-w-3xl">
-        <DeductibleScheduleSection slug={slug} policyId={p.id} policyDeductible={p.deductible} rows={deductibleRows} />
+        <DeductibleScheduleSection slug={slug} policyId={p.id} policyDeductible={p.deductible} headline={{ occurrenceLimit: p.occurrenceLimit, aggregateLimit: p.aggregateLimit }} rows={deductibleRows} />
       </div>
     </div>
   );

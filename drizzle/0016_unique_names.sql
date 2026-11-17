@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "accounts_workspace_name_uq" ON "accounts" USING btree ("workspace_id",lower(trim("name")));--> statement-breakpoint
+CREATE UNIQUE INDEX "policies_account_number_uq" ON "policies" USING btree ("account_id",lower(trim("policy_number"))) WHERE "policies"."policy_number" is not null;

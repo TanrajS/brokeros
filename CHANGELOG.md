@@ -1,5 +1,68 @@
 # Changelog
 
+## v1.5.1 — Ten-account demo book restored with prune script; unique account names and policy numbers; coverage schedule with per-part occurrence and aggregate limits and above-limit retention (2026-11-16)
+
+- **Demo book diagnosis and prune.** The seed was already the ten-account v1.4
+  book (`buildDemoBook`); the nineteen- and fourteen-account books seen in the
+  app were stale rows in 82 workspaces seeded under v1.2 and v1.3 (the nightly
+  "Demo brokerage" workspace was clean). `accounts.is_seed`
+  (`0014_account_is_seed`) marks rows the seed writes; `0015` back-fills it for
+  the known fictional names that carry no user document and renames any
+  duplicate account names or policy numbers " (2)", " (3)" with a notice (the
+  database had none). `pruneRetiredDemoAccounts` (`src/server/workspace/prune.ts`)
+  deletes `is_seed` accounts whose name starts with Ashgrove, Kestrel, Prairie,
+  Bluewater, Copperfield, Maple or Tidewater (`isRetiredDemoAccountName`, whole
+  first word, so Maplewood Underwriters is untouched), from one workspace
+  (Settings → "Remove retired demo accounts", with counts in the toast) or
+  from every workspace (`npm run db:prune-demo`, which prints counts per name).
+  Non-seed accounts are never deleted. `demoBookData.test.ts` asserts exactly
+  ten accounts and none of the seven names; the Dashboard retention test still
+  gives 80.0% / 87.5% because none of the ten resolved renewals sat on a
+  removed account.
+- **Unique names.** `0016_unique_names` adds unique indexes on
+  `accounts (workspace_id, lower(trim(name)))` and
+  `policies (account_id, lower(trim(policy_number))) where policy_number is not
+  null`. `nameConflict` / `normalizeName` (`src/lib/domain/book.ts`) apply the
+  same rule in `createAccount`, `updateAccount`, `createPolicy` and
+  `updatePolicy`, which return the field errors "An account named X already
+  exists in this workspace" and "Policy number X is already used on this
+  account" (also when the database index fires). `checkAccountName` and
+  `checkPolicyNumber` run on blur so the message shows before Save.
+- **Coverage schedule.** `policy_deductibles` is renamed `policy_coverage_parts`
+  with its data (`0017_coverage_parts`: table, indexes and constraints renamed,
+  `occurrence_limit` and `aggregate_limit` added, the default row filled from the
+  policy's headline limits and created where a policy had limits but no
+  deductible). The default row now mirrors deductible, occurrence limit and
+  aggregate limit (`syncDefaultCoveragePart`); editing it writes all three back
+  to the policy. The policy page section is "Coverage schedule" with Applies to,
+  Deductible, Occurrence limit and Aggregate limit; CSV import and export carry
+  `occurrence_limit` and `aggregate_limit`. `checkPartLimits` blocks an aggregate
+  below the occurrence limit and only warns when a part limit exceeds the
+  policy's headline (some insurers write higher sublimits): inline in the
+  dialog, in the import preview and in the save toast. The policy page and the
+  Overview table show an "N coverage parts" chip whose tooltip lists each part
+  with its deductible and limits (`CoveragePartsChip`); the certificate lists
+  parts with their own limits as "Sublimits" under the headline limits.
+- **Retained above limit.** `replayYear` now returns `retainedAboveLimit` =
+  Σ max(0, incurred − the claim's coverage-part occurrence limit), using the
+  part's own sublimit, else the policy's headline limit
+  (`ReplaySettings.defaultOccurrenceLimit`, passed by `buildStrategyView`);
+  `transferred` excludes it. The deductible retention is unchanged, so every
+  hand-verified figure holds; expected total cost = premium + average retained +
+  average retained above limit, with the extra term shown as its own column in
+  "Retained losses by year at each deductible" and its own row in the comparison
+  only when it is non-zero. Tests: Harbourline unchanged under its $1,000,000
+  headline limit; a $600,000 Stock claim against a $250,000 Stock occurrence
+  limit with a $10,000 deductible retains 10,000 below and 350,000 above
+  (expected total cost 502,000); a seed-wide test proves no demo claim exceeds a
+  part or headline limit, so Harbourline, Cedar Ridge and Terminals are
+  untouched.
+- **Seed.** Pacific Northwest Terminals' property schedule carries sublimits:
+  Stock $25,000,000 per occurrence, Flood $50,000,000 per occurrence and
+  aggregate, Earthquake $100,000,000 aggregate, Equipment breakdown
+  $10,000,000, Transit $2,000,000, Glass $250,000, on the existing eleven named
+  parts (no row added, deductibles unchanged).
+
 ## v1.5 — Polish: 100% premium basis for participations, proportional layer widths, program PDF export, loss-runs grouping, partial-line retention candidates, copy and wording audit (2026-11-16)
 
 - **100% premium basis.** `layer_participations.premium` is renamed

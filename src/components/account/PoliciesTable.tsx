@@ -7,6 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Missing } from "@/components/Missing";
 import { DaysBadge } from "@/components/book/BookTable";
 import { DeletePolicyButton } from "./DeletePolicyButton";
+import { CoveragePartsChip, type CoveragePartView } from "@/components/policy/CoveragePartsChip";
 import { daysBetween } from "@/lib/domain/dates";
 import { commissionAmount, formatLimit } from "@/lib/domain/money";
 import { formatCurrency, formatDate, formatPercent } from "@/lib/format";
@@ -22,11 +23,11 @@ interface Props {
   policies: Policy[];
   /** Co-insurer count per policy id, shown as "+N insurers" beside the carrier. */
   coinsurerCounts?: Record<string, number>;
-  /** v1.3: schedule row count per policy id, shown as an "N deductibles" chip. */
-  deductibleCounts?: Record<string, number>;
+  /** v1.5.1: coverage parts per policy id, shown as an "N coverage parts" chip with the parts and their limits on hover. */
+  coverageParts?: Record<string, CoveragePartView[]>;
 }
 
-export function PoliciesTable({ slug, accountId, asOf, policies, coinsurerCounts = {}, deductibleCounts = {} }: Props) {
+export function PoliciesTable({ slug, accountId, asOf, policies, coinsurerCounts = {}, coverageParts = {} }: Props) {
   const addHref = `/w/${slug}/accounts/${accountId}/policies/new`;
 
   return (
@@ -109,11 +110,7 @@ export function PoliciesTable({ slug, accountId, asOf, policies, coinsurerCounts
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {p.deductible === null ? <Missing what="Deductible" /> : formatCurrency(p.deductible)}
-                      {(deductibleCounts[p.id] ?? 0) > 1 ? (
-                        <Badge variant="outline" className="ml-1 font-normal">
-                          {deductibleCounts[p.id]} deductibles
-                        </Badge>
-                      ) : null}
+                      <CoveragePartsChip parts={coverageParts[p.id] ?? []} className="ml-1" />
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{formatCurrency(p.annualPremium)}</TableCell>
                     <TableCell className="text-right whitespace-nowrap tabular-nums">

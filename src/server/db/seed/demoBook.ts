@@ -59,6 +59,7 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
       brokerFees: a.brokerFees,
       riskControlSpend: a.riskControlSpend,
       claimsAdminCost: a.claimsAdminCost,
+      isSeed: true,
       toleranceOccurrence: a.toleranceOccurrence,
       toleranceYear: a.toleranceYear,
       permissibleLossRatio: a.permissibleLossRatio,
@@ -164,10 +165,12 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
   );
   if (claimRows.length > 0) await db.insert(schema.claims).values(claimRows);
 
-  // v1.3: every policy with a deductible gets its default schedule row, plus any named-peril rules.
+  // v1.3/v1.5.1: every policy with a deductible or headline limits gets its default coverage part, plus any named parts with their own deductible rule and sublimits.
   const deductibleRows = book.flatMap((a) =>
     a.policies.flatMap((p) => [
-      ...(p.deductible !== null ? [{ workspaceId, policyId: pid(p.key), appliesTo: "All other perils", kind: "flat" as const, amount: p.deductible, isDefault: true }] : []),
+      ...(p.deductible !== null || p.occurrenceLimit !== null || p.aggregateLimit !== null
+        ? [{ workspaceId, policyId: pid(p.key), appliesTo: "All other perils", kind: "flat" as const, amount: p.deductible, occurrenceLimit: p.occurrenceLimit, aggregateLimit: p.aggregateLimit, isDefault: true }]
+        : []),
       ...p.deductibles.map((r) => ({
         workspaceId,
         policyId: pid(p.key),
@@ -178,12 +181,14 @@ async function insertBook(db: AnyDb, workspaceId: string, asOf: ISODate, book: D
         minimum: r.minimum ?? null,
         maximum: r.maximum ?? null,
         hours: r.hours ?? null,
+        occurrenceLimit: r.occurrenceLimit ?? null,
+        aggregateLimit: r.aggregateLimit ?? null,
         notes: r.notes ?? null,
         isDefault: false,
       })),
     ]),
   );
-  if (deductibleRows.length > 0) await db.insert(schema.policyDeductibles).values(deductibleRows);
+  if (deductibleRows.length > 0) await db.insert(schema.policyCoverageParts).values(deductibleRows);
 
   const participantRows = book.flatMap((a) => a.policies.flatMap((p) => p.participants.map((x) => ({ workspaceId, policyId: pid(p.key), ...x, notes: null }))));
   if (participantRows.length > 0) await db.insert(schema.policyParticipants).values(participantRows);

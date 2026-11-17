@@ -22,6 +22,8 @@ export interface CertificatePolicyInput {
   exposureAmount: number | null;
   insurableValue: number | null;
   endorsements: Endorsement[];
+  /** v1.5.1: coverage parts that carry their own limits (sublimits), listed under the headline limits. */
+  coverageParts?: { appliesTo: string; occurrenceLimit: number | null; aggregateLimit: number | null }[];
 }
 
 export interface CertificateInsurer {
@@ -60,6 +62,8 @@ export interface CertificateContent {
   endorsementsPresent: string[];
   endorsementsAbsent: string[];
   includedRows: { line: string; insurer: string; policyNumber: string; period: string; limits: string }[];
+  /** v1.5.1: "Stock: $25,000,000 per occurrence" rows for parts with their own limits; empty when none. */
+  coveragePartRows: CertificateRow[];
   statement: string;
 }
 
@@ -105,6 +109,9 @@ export function certificateContent(i: CertificateInput): Calc<CertificateContent
       { label: "Exposure", value: exposure },
     ],
     insurers,
+    coveragePartRows: (p.coverageParts ?? [])
+      .filter((c) => c.occurrenceLimit !== null || c.aggregateLimit !== null)
+      .map((c) => ({ label: c.appliesTo, value: [c.occurrenceLimit !== null ? `${dollars(c.occurrenceLimit)} per occurrence` : null, c.aggregateLimit !== null ? `${dollars(c.aggregateLimit)} aggregate` : null].filter(Boolean).join(" / ") })),
     endorsementsPresent: present,
     endorsementsAbsent: absent,
     includedRows: i.included.map((x) => ({ line: x.lineOfBusiness, insurer: x.carrier, policyNumber: x.policyNumber ?? "Not entered", period: `${x.effectiveDate} to ${x.expiryDate}`, limits: limits(x) })),
@@ -115,7 +122,7 @@ export function certificateContent(i: CertificateInput): Calc<CertificateContent
     math: {
       inputs: { policy: p.id, issueDate: i.issueDate, insurers: insurers.length, included: i.included.length },
       formula: "named insured, insurers with signed lines, policy facts, endorsements present and absent, included coverages, holder, issue date and the informational statement",
-      steps: { lines: [`Reference ${reference}; ${insurers.length} insurer(s); ${present.length} of ${TRACKED_ENDORSEMENTS.length} tracked endorsements present; ${i.included.length} included coverage row(s)`] },
+      steps: { lines: [`Reference ${reference}; ${insurers.length} insurer(s); ${present.length} of ${TRACKED_ENDORSEMENTS.length} tracked endorsements present; ${content.coveragePartRows.length} coverage part(s) with their own limits; ${i.included.length} included coverage row(s)`] },
     },
   };
 }

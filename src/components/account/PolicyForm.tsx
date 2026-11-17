@@ -26,7 +26,7 @@ import {
 import { commissionAmount, parseCurrencyInput } from "@/lib/domain/money";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { policyFormSchema, type PolicyFormInput, type PolicyFormValues } from "@/lib/schemas/policy";
-import { createPolicy, updatePolicy } from "@/server/policies/actions";
+import { checkPolicyNumber, createPolicy, updatePolicy } from "@/server/policies/actions";
 
 export interface PreviousPolicyOption {
   id: string;
@@ -50,9 +50,19 @@ export function PolicyForm({ slug, accountId, policyId, defaultValues, previousO
     defaultValues,
     mode: "onChange",
   });
-  const { register, handleSubmit, formState, getValues, setError, control } = form;
+  const { register, handleSubmit, formState, getValues, setError, clearErrors, control } = form;
   const errors = formState.errors;
   const msg = (k: keyof PolicyFormInput) => errors[k]?.message;
+  // v1.5.1: policy numbers are unique within the account; checked on blur so the message shows before Save.
+  function onNumberBlur(e: React.FocusEvent<HTMLInputElement>) {
+    const value = e.target.value;
+    if (!value.trim()) return;
+    void checkPolicyNumber(slug, accountId, value, policyId ?? null).then((res) => {
+      if (!res.ok) return;
+      if (res.data.error) setError("policyNumber", { type: "duplicate", message: res.data.error });
+      else if (errors.policyNumber?.type === "duplicate") clearErrors("policyNumber");
+    });
+  }
 
   // Live commission preview, computed with the same domain function the tables use.
   const premiumRaw = useWatch({ control, name: "annualPremium" });
@@ -98,7 +108,7 @@ export function PolicyForm({ slug, accountId, policyId, defaultValues, previousO
           </NativeSelect>
         </Field>
         <Field id="policyNumber" label="Policy number" error={msg("policyNumber")}>
-          <Input {...register("policyNumber")} {...fieldA11y("policyNumber", msg("policyNumber"))} autoComplete="off" />
+          <Input {...register("policyNumber", { onBlur: onNumberBlur })} {...fieldA11y("policyNumber", msg("policyNumber"))} autoComplete="off" />
         </Field>
         {isClosedRenewalStatus(defaultValues.renewalStatus) ? (
           <div className="flex flex-col gap-1.5">
